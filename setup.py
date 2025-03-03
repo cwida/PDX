@@ -23,7 +23,7 @@ is_windows: bool = sys.platform == "win32"
 if is_windows:
     raise Exception('Windows not yet implemented')
 
-# TODO: in intel sapphirerapids & emerald rappids one have to force LLVM to use 512 registers
+# TODO: in intel sapphirerapids one have to force LLVM to use 512 registers
 if is_linux:
     compile_args.append("-std=c++17")
     compile_args.append("-O3")

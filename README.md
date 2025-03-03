@@ -1,10 +1,10 @@
 # PDX: A Vertical Data-Layout for Vector Similarity Search
 
-[PDX](https://ir.cwi.nl/pub/35044/35044.pdf) is a **vertical** data layout for vectors that stores together the dimensions of different vectors. In a nutshell, vectors are partitioned by dimensions.
+[PDX](https://ir.cwi.nl/pub/35044/35044.pdf) is a **vertical** data layout for vectors that stores together the dimensions of different vectors. In a nutshell, vectors are partitioned by their dimensions.
 
 ### What are the benefits of storing vectors vertically?
 
-- Distance calculations happen dimension-by-dimension. This (i) auto-vectorize efficiently without explicit SIMD for `float32`, (ii) is 40% faster in avg. than regular SIMD kernels and (iii) makes distance calculations on small vectors (`d < 16`) up to 8x faster.
+- Distance calculations happen dimension-by-dimension. This (i) auto-vectorize efficiently without explicit SIMD for `float32`, (ii) is 40% faster in avg than regular SIMD kernels and (iii) makes distance calculations on small vectors (`d < 16`) up to 8x faster.
 - In PDX, a search can efficiently **prune** dimensions with partial distance calculations. For instance, pairing PDX with the pruning algorithm [ADSampling](https://github.com/gaoj0017/ADSampling/), achieves 2x-7x faster IVF queries than FAISS+AVX512.
 - More efficient compressed representation of vectors (WIP)
 
@@ -12,16 +12,16 @@
 
 *Pruning* means avoiding checking *all* the dimensions of a vector to determine if it will make it onto the KNN of a query. 
 
-*Pruning* speedup vector search as (i) less data must be fetched and (ii) fewer computations must be done.
+*Pruning* speedup vector similarity search as (i) less data must be fetched and (ii) fewer computations must be done.
 
 However, pruning methods that do partial distance calculations have a hard time to be on-par to SIMD optimized kernels like the ones in [FAISS](https://github.com/facebookresearch/faiss/) and [SimSIMD](https://github.com/ashvardanian/SimSIMD). 
 
-**Thanks to the PDX layout**, pruning methods outperform SIMD optimized kernels. This is because in PDX, distance kernels efficiency are not limited by the number of dimensions inspected (which is low in pruning methods). And, the evaluation of the pruning threshold is not interleaved with distance calculations.
+**Thanks to the PDX layout**, pruning methods outperform SIMD optimized kernels. This is because in PDX, distance calculation is efficient in small vector segments. And, the evaluation of the pruning predicate is not interleaved with distance calculations.
 
 Pruning is **especially effective** when:
 - Vectors are of high dimensinality (`d > 512`) 
-- `k` is low (`k=10,20,30`) 
-- Targetting high recalls (`> 0.85`)
+- `k` is low (`k=10,20`) 
+- High recalls are needed (`> 0.85`)
 - Exact results are needed
 
 We refer to the recent research done on pruning algorithms with partial distance calculations: [ADSampling](https://github.com/gaoj0017/ADSampling/), [BSA](https://github.com/mingyu-hkustgz/Res-Infer), [DADE](https://github.com/Ur-Eine/DADE).
@@ -30,8 +30,8 @@ We refer to the recent research done on pruning algorithms with partial distance
 ### Prerequisites
 - Python 3.11 or higher
 - FAISS with Python Bindings
-- Clang++ 17 or higher
-- CMake 3.20 or higher
+- Clang++17 or higher
+- CMake 3.26 or higher
 
 ### Steps
 1. Clone the repository and init submodules (`Eigen` for efficient matrix operations and `pybind11`)
@@ -50,7 +50,7 @@ python -m pip install .
 3. Run the examples under `./examples`
 ```sh
 # Creates an IVF index with FAISS on random data
-# Then, it perform queries on it with PDXearch and FAISS
+# Then, it compares the performance of PDXearch and FAISS
 python ./examples/pdxearch_simple.py
 ```
 For more details on each example we provide, and how to use your own data, refer to [/examples/README.md](./examples/README.md). 
@@ -61,15 +61,15 @@ For more details on each example we provide, and how to use your own data, refer
 
 ## Which pruning algorithm should I use?
 
-**PDX+ADSampling** is the best option if you can tolerate little error. Expect speedups of up to 2x for low dimensional vectors (`d < 200`) and up to 10x for high dimensional vectors. See EXAMPLEXX.py
+Use **PDX+ADSampling** if you are doing approximate search. Expect speedups of up to 2x for low dimensional vectors (`d < 128`) and up to 10x for high dimensional vectors. See EXAMPLEXX.py
 
 *some table with data...*
 
-**PDX+BOND** is the best option if you need exact answers or/and you cannot transform the original vectors. Expect speedups of 1.5-4x for exact search, without any additional index. See EXAMPLEXX.py
+Use **PDX+BOND** if you need exact answers. Expect speedups of 1.5-4x for exact search, without any additional index. See EXAMPLEXX.py
 
 *some table with data...*
 
-If you want exact search, you can find huge benefits by building an IVF index and visit all the buckets. See EXAMPLEXX.py
+In PDX, building an IVF index can improve exact-search speed further. See EXAMPLEXX.py.
 
 *some table with data...*
 
