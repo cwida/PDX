@@ -31,7 +31,7 @@
 
 However, pruning methods that do partial distance calculations have a hard time being on par with SIMD-optimized kernels like the ones in [FAISS](https://github.com/facebookresearch/faiss/) and [SimSIMD](https://github.com/ashvardanian/SimSIMD). 
 
-**Only thanks to the PDX layout**, do pruning methods outperform SIMD-optimized kernels in all CPU microarchitectures (Zens, Intels, Gravitons). This is because, in PDX, distance calculations are efficient even in small vector segments. Also, the evaluation of the pruning predicate is not interleaved with distance calculations.
+**Only thanks to the PDX layout**, do pruning methods outperform SIMD-optimized kernels in all CPU microarchitectures (Zens, Intels, Gravitons). This is because, in PDX, distance calculations are efficient even in small vector segments or datasets with a low dimensionality. Also, the evaluation of the pruning predicate is not interleaved with distance calculations.
 
 Pruning algorithms are **especially effective** when:
 - Vectors are of high dimensionality (`d > 512`)
