@@ -12,7 +12,7 @@
 - ✂️ Efficient and reliable **pruning** of dimensions with partial distance calculations. 
 - ⚡ Up to [**7x faster**](#ivf-indexes) IVF queries (compared to FAISS+AVX512) when pairing PDX with the pruning algorithm [ADSampling](https://github.com/gaoj0017/ADSampling/).
 - ⚡ Up to [**13x faster**](#exact-search--ivf) exhaustive search thanks to pruning.
-- ⚡ Raw distance kernels (no pruning) in PDX are up to [**40% faster**](#no-pruning-and-no-index) than the `float32` kernels available in [SimSIMD](https://github.com/ashvardanian/SimSIMD) and [FAISS](https://github.com/facebookresearch/faiss/). 
+- ⚡ Raw distance kernels (no pruning) in PDX are up to [**1.5x faster**](#no-pruning-and-no-index) than the `float32` kernels available in [SimSIMD](https://github.com/ashvardanian/SimSIMD) and [FAISS](https://github.com/facebookresearch/faiss/). 
   - *Why?* ➡️ Distance kernels in PDX are free of dependencies and have less LOAD/STORE operations. 
 - Distance kernels auto-vectorize efficiently without explicit SIMD for `float32`.
 - Distance calculations on small vectors (`d < 16`) are up to **8x faster** than SIMD kernels in [SimSIMD](https://github.com/ashvardanian/SimSIMD).
@@ -141,7 +141,7 @@ PDX distance kernels are also faster than the state-of-the-art SIMD kernels in a
 
 | Avg. query time<br>[Graviton 4 \| r8g.2x] | FAISS SVE | PDXearch | Improvement |
 |-------------------------------------------|-----------|----------|-------------|
-| GIST · d=960 · n=1M                       | 172       | 124      | **1.4x**    |
+| GIST · d=960 · n=1M                       | 172 ms    | 124 ms   | **1.4x**    |
 | STL · d=9216 · n=90K                      | 160       | 109      | **1.5x**    |
 
 
