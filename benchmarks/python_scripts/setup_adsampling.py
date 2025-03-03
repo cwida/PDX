@@ -1,7 +1,6 @@
-import sys
-import os
 import faiss
 from setup_utils import *
+from setup_settings import *
 from pdxearch.index_base import BaseIndexPDXIVF
 from pdxearch.preprocessors import ADSampling
 

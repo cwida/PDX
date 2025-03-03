@@ -1,6 +1,8 @@
+import sys
 from benchmark_utils import *
-from setup_scripts.setup_utils import *
-from setup_scripts.WrapperBruteForce import BruteForceMilvus
+from setup_utils import *
+from setup_settings import *
+from WrapperBruteForce import BruteForceMilvus
 
 disable_multithreading()
 

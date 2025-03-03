@@ -1,12 +1,9 @@
-import sys
-import os
-import sys
-import numpy as np
 import faiss
 import json
+import sys
 from benchmark_utils import *
-from setup_scripts.setup_utils import *
-from setup_scripts.setup_settings import *
+from setup_utils import *
+from setup_settings import *
 
 disable_multithreading()
 

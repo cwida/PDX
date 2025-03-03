@@ -1,8 +1,7 @@
-import os
-import sys
 import json
-from setup_scripts.setup_utils import *
-from setup_scripts.setup_settings import *
+import sys
+from setup_utils import *
+from setup_settings import *
 from benchmark_utils import *
 from WrapperMilvus import *
 

@@ -14,12 +14,12 @@ Note that we did not use our Python bindings for our own benchmarking.
 
 ## Master Script
 
-To download all the datasets and generate all the indexes needed to run our benchmarking suite, you can use the script [`/benchmarks/python_scripts/setup_scripts/setup_data.py`](/benchmarks/python_scripts/setup_scripts/setup_data.py). For this you need Python 3.11 or higher and install the dependencies in `./benchmarks/python_scripts/requirements.txt`. **You will need approximately 300GB of disk for ALL the indexes**.
+To download all the datasets and generate all the indexes needed to run our benchmarking suite, you can use the script [`/benchmarks/python_scripts/setup_data.py`](/benchmarks/python_scripts/setup_data.py). For this you need Python 3.11 or higher and install the dependencies in `./benchmarks/python_scripts/requirements.txt`. **You will need approximately 300GB of disk for ALL the indexes**.
 
-Run the script from the root folder with the script flags `DOWNLOAD` and `GENERATE_IVF` set to `True` and the values in the `ALGORITHMS` array uncommented. You do not need to generate the `ground_truth` for k=10 as it is already present. You can further uncomment/comment the datasets you wish to create indexes for on the `DATASETS` array [here](/benchmarks/python_scripts/setup_scripts/setup_settings.py). 
+Run the script from the root folder with the script flags `DOWNLOAD` and `GENERATE_IVF` set to `True` and the values in the `ALGORITHMS` array uncommented. You do not need to generate the `ground_truth` for k=10 as it is already present. You can further uncomment/comment the datasets you wish to create indexes for on the `DATASETS` array [here](/benchmarks/python_scripts/setup_settings.py). 
 ```sh
 pip install -r ./benchmarks/python_scripts/requirements.txt
-python ./benchmarks/python_scripts/setup_scripts/setup_data.py
+python ./benchmarks/python_scripts/setup_data.py
 ```
 The indexes will be created under the `./benchmarks/datasets/` directory.
 
@@ -28,14 +28,14 @@ We also have options if you prefer to manually download the data:
 - Download an unzip ALL the 22 `.hdf5` datasets (~25GB zipped and ~40gb unzipped) manually from [here](https://drive.google.com/file/d/1I8pbwGDCSe3KqfIegAllwoP5q6F4ohj2/view?usp=sharing). These include the GloVe variants, arXiv/768, DBPedia/1536, DEEP/96, GIST/960, SIFT/128, MNIST, etc. You must put the unzipped `.hdf5` files inside `./benchmarks/datasets/downloaded`.
 - Download datasets individually from [here](https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing). 
 
-Then, run the Master Script with the flag `DOWNLOAD = False`. You can also Uncomment/comment the datasets you wish to create indexes for on the `DATASETS` array [here](/benchmarks/python_scripts/setup_scripts/setup_settings.py).
+Then, run the Master Script with the flag `DOWNLOAD = False`. You can also Uncomment/comment the datasets you wish to create indexes for on the `DATASETS` array [here](/benchmarks/python_scripts/setup_settings.py).
 
 
 ### Random collection of `float32` vectors
 For the experiment presented in Section 6.2 of our paper, we generate random collection of vectors. You can generate them by running the Master Script with the flag `GENERATE_SYNTHETIC = True`. Set the other flags to `False` and comment all the values in the `ALGORITHMS` array.  
 
 ## Configuring the IVF indexes
-Configure the IVF indexes in [/benchmarks/python_scripts/setup_scripts/setup_core_index.py](/benchmarks/python_scripts/setup_scripts/setup_core_index.py). The benchmarks presented in our publication use `n_buckets = 2 * sqrt(n)` for the number of inverted lists (buckets), and `n_training_points = 50 * n_buckets`. This will create solid indexes fairly quickly. 
+Configure the IVF indexes in [/benchmarks/python_scripts/setup_core_index.py](/benchmarks/python_scripts/setup_core_index.py). The benchmarks presented in our publication use `n_buckets = 2 * sqrt(n)` for the number of inverted lists (buckets), and `n_training_points = 50 * n_buckets`. This will create solid indexes fairly quickly. 
 
 Note that we have also run experiments with higher `n_buckets` values (`4 * sqrt(n)`, `8 * sqrt(n)`) and training the index with all the points. The effectiveness of the method does not change substantially. 
 

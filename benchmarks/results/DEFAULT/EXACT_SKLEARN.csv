@@ -1,0 +1,2 @@
+dataset,algorithm,avg,max,min,recall,knn,n_queries,num_measure_runs,avg_all,max_all,min_all,ef_search,M,ef_construction,ivf_nprobe
+har-561,sklearn,4.151257601651278,4.171848297119141,4.130840301513672,1.0,10,100,1,4.359455108642578,24.150848388671875,4.130840301513672,0,0,0,0

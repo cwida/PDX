@@ -13,7 +13,6 @@ class IVFMilvus:
         self.dimension = dimension
         self.force_create = force_create
 
-        # self.client = MilvusClient("milvus_demo.db")
         self.client = MilvusClient("http://localhost:19530")
         self.dataset = dataset.replace("-", "_") + '_ivf'
         self.just_created = False

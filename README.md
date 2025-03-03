@@ -14,8 +14,8 @@
 - ⚡ Up to [**13x faster**](#exact-search--ivf) exhaustive search thanks to pruning.
 - ⚡ Raw distance kernels (no pruning) in PDX are up to [**1.5x faster**](#no-pruning-and-no-index) than the `float32` kernels available in [SimSIMD](https://github.com/ashvardanian/SimSIMD) and [FAISS](https://github.com/facebookresearch/faiss/). 
   - *Why?* ➡️ Distance kernels in PDX are free of dependencies and have less LOAD/STORE operations. 
-- Distance kernels auto-vectorize efficiently without explicit SIMD for `float32`.
-- Distance calculations on small vectors (`d < 16`) are up to **8x faster** than SIMD kernels in [SimSIMD](https://github.com/ashvardanian/SimSIMD).
+- Distance kernels can auto-vectorize efficiently without explicit SIMD for `float32`.
+- Distance kernels on small vectors (`d < 16`) are up to **8x faster** than SIMD kernels in [SimSIMD](https://github.com/ashvardanian/SimSIMD).
 - More efficient compressed representations of vectors (WIP).
 
 
@@ -134,15 +134,15 @@ Use **PDX+BOND**, our own pruning algorithm. Here, vectors are not transformed a
 ### No pruning and no index
 PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). The following benchmarks are from [./examples/pdx_brute.py](./examples/pdx_brute.py)
 
-| Avg. query time<br>[Intel SPR \| r7iz.2x] | FAISS AVX512 | PDXearch | Improvement |
-|-------------------------------------------------|--------------|----------|-------------|
-| GIST · d=960 · n=1M                             | 247 ms       | 208 ms   | **1.2x**    |
-| STL · d=9216 · n=90K                            | 220          | 176      | **1.3x**    |
+| Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS AVX512 | PDXearch | Improvement |
+|------------------------------------------------------|--------------|----------|-------------|
+| GIST · d=960 · n=1M                                  | 247 ms       | 208 ms   | **1.2x**    |
+| STL · d=9216 · n=90K                                 | 220          | 176      | **1.3x**    |
 
-| Avg. query time<br>[Graviton 4 \| r8g.2x] | FAISS SVE | PDXearch | Improvement |
-|-------------------------------------------|-----------|----------|-------------|
-| GIST · d=960 · n=1M                       | 172 ms    | 124 ms   | **1.4x**    |
-| STL · d=9216 · n=90K                      | 160       | 109      | **1.5x**    |
+| Avg. query time<br>[<ins>Graviton 4</ins> \| r8g.2x] | FAISS SVE | PDXearch | Improvement |
+|------------------------------------------------------|-----------|----------|-------------|
+| GIST · d=960 · n=1M                                  | 172 ms    | 124 ms   | **1.4x**    |
+| STL · d=9216 · n=90K                                 | 160       | 109      | **1.5x**    |
 
 
 

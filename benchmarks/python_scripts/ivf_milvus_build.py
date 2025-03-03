@@ -1,12 +1,11 @@
-import os
 import sys
-from setup_scripts.setup_utils import *
-from setup_scripts.setup_settings import *
+import numpy as np
+from numpy.random import default_rng
+from setup_utils import *
+from setup_settings import *
 from benchmark_utils import *
 from WrapperMilvus import *
 
-import numpy as np
-from numpy.random import default_rng
 np.random.seed(42)
 
 if __name__ == '__main__':

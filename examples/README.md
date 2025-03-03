@@ -5,7 +5,7 @@ A Plug & Play example is given in `pdxearch_simple.py`. This example creates a r
 Our Python Bindings expect Numpy matrices as input. However, as they are, most examples read vectors in a `.hdf5` format expected to be located at `./benchmarks/datasets/downloaded`. These datasets follow the convention used in the [ANN-Benchmarks](https://github.com/erikbern/ann-benchmarks/) project. One `.hdf5` file with two datasets: `train` and `test`. We have a few ways in which you can download the data we used:
 - Download and unzip ALL the `.hdf5` datasets (~25GB zipped and ~40gb unzipped) manually from [here](https://drive.google.com/file/d/1I8pbwGDCSe3KqfIegAllwoP5q6F4ohj2/view?usp=sharing).
 - Download datasets individually from [here](https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing). 
-- Run the script `./benchmarks/python_scripts/setup_scripts/setup_data.py` from the root folder with the script flag `DOWNLOADED = True`. This will download and unzip ALL the `.hdf5` datasets (~25GB zipped and ~40gb unzipped). Make sure you set all the other flags to `False` and comment the elements inside the `ALGORITHMS` array.
+- Run the script `./benchmarks/python_scripts/setup_data.py` from the root folder with the script flag `DOWNLOADED = True`. This will download and unzip ALL the `.hdf5` datasets (~25GB zipped and ~40gb unzipped). Make sure you set all the other flags to `False` and comment the elements inside the `ALGORITHMS` array.
 
 You can, of course, change each example to read your own data.
 

@@ -1,7 +1,8 @@
+import sys
 from benchmark_utils import *
-from setup_scripts.setup_utils import *
-from setup_scripts.setup_settings import *
-from setup_scripts.WrapperBruteForce import BruteForceUsearch, BruteForceSKLearn
+from setup_utils import *
+from setup_settings import *
+from WrapperBruteForce import BruteForceUsearch, BruteForceSKLearn
 
 disable_multithreading()
 

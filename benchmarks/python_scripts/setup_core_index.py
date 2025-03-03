@@ -1,9 +1,8 @@
-import sys
-import os
 import math
 from numpy.random import default_rng
 from pdxearch.index_core import IVF
 from setup_utils import *
+from setup_settings import *
 
 
 # Generates core IVF index with FAISS

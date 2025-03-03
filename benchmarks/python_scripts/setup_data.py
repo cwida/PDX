@@ -9,7 +9,7 @@ from setup_core_index import generate_core_ivf
 from setup_test_data import generate_test_data
 from setup_purescan import generate_synthetic_data
 
-DOWNLOAD = True  # Download raw HDF5 data
+DOWNLOAD = False  # Download raw HDF5 data
 GENERATE_GT = False  # Creates ground truth with sklearn
 GENERATE_IVF = True  # Creates IVF indexes with FAISS
 GENERATE_SYNTHETIC = False  # Generates synthetic collections of vectors for the kernels experiment

@@ -1,6 +1,8 @@
-from setup_scripts.setup_utils import *
+import sys
 from benchmark_utils import *
-from setup_scripts.WrapperBruteForce import BruteForceFAISS
+from setup_utils import *
+from setup_settings import *
+from WrapperBruteForce import BruteForceFAISS
 
 disable_multithreading()
 

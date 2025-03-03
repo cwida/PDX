@@ -1,6 +1,7 @@
 import json
 from WrapperBruteForce import BruteForceSKLearn
 from setup_utils import *
+from setup_settings import *
 
 # Generates ground truth with SKLearn
 def generate_ground_truth(dataset, KNNS=(10, 100)):

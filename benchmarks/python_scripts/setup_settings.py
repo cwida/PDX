@@ -46,7 +46,7 @@ for needed_directory in directories:
     if not os.path.exists(needed_directory):
         os.makedirs(needed_directory)
 
-# Datasets to set up
+# Datasets to set up and use
 DATASETS = [
     # 'random-xs-20-angular',
     # 'random-s-100-euclidean',
@@ -56,18 +56,40 @@ DATASETS = [
     # 'glove-100-angular',
     # 'trevi-4096',
     # 'stl-9216',
-    # 'har-561',
+    'har-561',
 
-    'nytimes-16-angular',
-    'fashion-mnist-784-euclidean',
-    'glove-50-angular',
-    'glove-200-angular',
-    'sift-128-euclidean',
-    'msong-420',
-    'contriever-768',
-    'gist-960-euclidean',
-    'deep-image-96-angular',
-    'instructorxl-arxiv-768',
-    'openai-1536-angular'
+    # 'nytimes-16-angular',
+    # 'fashion-mnist-784-euclidean',
+    # 'glove-50-angular',
+    # 'glove-200-angular',
+    # 'sift-128-euclidean',
+    # 'msong-420',
+    # 'contriever-768',
+    # 'gist-960-euclidean',
+    # 'deep-image-96-angular',
+    # 'instructorxl-arxiv-768',
+    # 'openai-1536-angular'
 ]
 
+DIMENSIONALITIES = {
+    'random-xs-20-angular': 20,
+    'random-s-100-euclidean': 100,
+    'har-561': 561,
+    'nytimes-16-angular': 16,
+    'nytimes-256-angular': 256,
+    'mnist-784-euclidean': 784,
+    'fashion-mnist-784-euclidean': 784,
+    'glove-25-angular': 25,
+    'glove-50-angular': 50,
+    'glove-100-angular': 100,
+    'glove-200-angular': 200,
+    'sift-128-euclidean': 128,
+    'trevi-4096': 4096,
+    'msong-420': 420,
+    'contriever-768': 768,
+    'stl-9216': 9216,
+    'gist-960-euclidean': 960,
+    'deep-image-96-angular': 96,
+    'instructorxl-arxiv-768': 768,
+    'openai-1536-angular': 1536
+}

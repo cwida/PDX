@@ -1,6 +1,6 @@
 import sys
-import os
 from setup_utils import *
+from setup_settings import *
 
 
 # Transforms the queries from HDF5 format to .fvecs

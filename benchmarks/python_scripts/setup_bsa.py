@@ -1,9 +1,8 @@
-import sys
-import os
 import faiss
 from pdxearch.index_base import BaseIndexPDXIVF
 from pdxearch.preprocessors import BSA
 from setup_utils import *
+from setup_settings import *
 
 
 def generate_bsa_ivf(dataset_name: str, _types=('pdx', 'dual')):

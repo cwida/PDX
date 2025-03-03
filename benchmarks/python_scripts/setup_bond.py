@@ -1,9 +1,8 @@
-import sys
-import os
 import faiss
 from pdxearch.index_base import BaseIndexPDXIVF, BaseIndexPDXFlat
 from pdxearch.constants import PDXConstants
 from setup_utils import *
+from setup_settings import *
 
 
 def generate_bond_ivf(dataset_name: str):
