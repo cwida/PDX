@@ -66,7 +66,7 @@ pip install -r requirements.txt
 python setup.py clean --all
 python -m pip install .
 ```
-3. Run the examples under `./examples`
+3. Run the examples under `/examples`
 ```sh
 # Creates an IVF index with FAISS on random data
 # Then, it compares the search performance of PDXearch and FAISS
@@ -80,7 +80,7 @@ For more details on the available examples and how to use your own data, refer t
 
 ## Use Cases
 ### IVF indexes
-PDX paired with [ADSampling](https://github.com/gaoj0017/ADSampling/) on IVF indexes works great in most scenarios with less than 0.001 recall loss. The higher the dimensionality, the higher the gains from pruning. The following benchmarks are from [./examples/pdxearch_ivf.py](./examples/pdxearch_ivf.py)
+PDX paired with [ADSampling](https://github.com/gaoj0017/ADSampling/) on IVF indexes works great in most scenarios with less than 0.001 recall loss. The higher the dimensionality, the higher the gains from pruning. The following benchmarks are from [/examples/pdxearch_ivf.py](./examples/pdxearch_ivf.py)
 
 | Avg. query time <br> [<ins>Intel SPR</ins> \| r7iz.2x] | FAISS AVX512 <br> R@10: 0.99 · 0.95 · 0.90 | PDXearch           | Improvement            |
 |--------------------------------------------------------|-----------------------------------------|--------------------|------------------------|
@@ -97,7 +97,7 @@ PDX paired with [ADSampling](https://github.com/gaoj0017/ADSampling/) on IVF ind
 **NOTE THAT on these benchmarks: (i) Both FAISS and PDXearch are scanning exactly the same vectors. (ii) The recall loss of ADSampling is always less than 0.001.**
 
 ### Exact search + IVF
-In PDX, building an IVF index can significantly improve exact search speed (thanks to the reliable pruning). The following benchmarks are from [./examples/pdxearch_ivf_exhaustive.py](./examples/pdxearch_ivf_exhaustive.py).
+In PDX, building an IVF index can significantly improve exact search speed (thanks to the reliable pruning). The following benchmarks are from [/examples/pdxearch_ivf_exhaustive.py](./examples/pdxearch_ivf_exhaustive.py).
 
 | Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS AVX512 | PDXearch | Improvement |
 |-------------------------------------------------------------------|--------------|----------|-------------|
@@ -114,7 +114,7 @@ In PDX, building an IVF index can significantly improve exact search speed (than
 | SIFT · d=128 · 1M                                       | 21.3      | 4.7      | **4.5x**    |
 
 ### Exact search without an index
-Use **PDX+BOND**, our pruning algorithm. Here, vectors are not transformed, and we do not use any additional index. Gains vary depending on the dimensions distribution. The following benchmarks are from [./examples/pdxearch_exact_bond.py](./examples/pdxearch_exact_bond.py)
+Use **PDX+BOND**, our pruning algorithm. Here, vectors are not transformed, and we do not use any additional index. Gains vary depending on the dimensions distribution. The following benchmarks are from [/examples/pdxearch_exact_bond.py](./examples/pdxearch_exact_bond.py)
 
 | Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS AVX512 | PDXearch | Improvement |
 |------------------------------------------------------|--------------|----------|-------------|
@@ -132,7 +132,7 @@ Use **PDX+BOND**, our pruning algorithm. Here, vectors are not transformed, and 
 
 
 ### No pruning and no index
-PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). The following benchmarks are from [./examples/pdx_brute.py](./examples/pdx_brute.py)
+PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). The following benchmarks are from [/examples/pdx_brute.py](./examples/pdx_brute.py)
 
 | Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | USearch | FAISS AVX512 | PDXearch | Improvement     |
 |------------------------------------------------------|---------|--------------|----------|-----------------|
