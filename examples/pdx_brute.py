@@ -13,7 +13,7 @@ if __name__ == "__main__":
     dataset_name = 'stl-9216.hdf5'
     num_dimensions = 9216
     knn = 10
-    print(f'Running example: PDX Brute-force (no index, no pruning)\nD={num_dimensions}k={knn}dataset={dataset_name}')
+    print(f'Running example: PDX Brute-force (no index, no pruning)\n- D={num_dimensions}\n- k={knn}\n- dataset={dataset_name}')
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
 
     index = IndexPDXFlat(ndim=num_dimensions)

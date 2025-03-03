@@ -65,7 +65,7 @@ class BruteForceMilvus:
         self._nbrs = None
         self.dimension = dimension
 
-        self.client = MilvusClient("http://localhost:19530")
+        self.client = MilvusClient()
         self.dataset = dataset.replace("-", "_")
         self.just_created = False
 

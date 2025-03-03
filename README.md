@@ -2,16 +2,20 @@
 
 [PDX](https://ir.cwi.nl/pub/35044/35044.pdf) is a **vertical** data layout for vectors that stores together the dimensions of different vectors. In a nutshell, PDX is a PAX for vector similarity search.
 
-<p alig"center">
+<p align="center">
         <img src="./benchmarks/results/pdx-layout.png" alt="PDX Layout" style="{max-height: 150px}">
 </p>
 
 
 ### What are the benefits of storing vectors vertically?
 
-- Distance calculations happen dimension-by-dimension. This (i) auto-vectorize efficiently without explicit SIMD for `float32`, (ii) is 40% faster in avg than regular SIMD kernels and (iii) makes distance calculations on small vectors (`d < 16`) up to 8x faster.
-- In PDX, a search can efficiently **prune** dimensions with partial distance calculations. For instance, pairing PDX with the pruning algorithm [ADSampling](https://github.com/gaoj0017/ADSampling/), achieves up to 7x faster IVF queries than FAISS+AVX512.
-- More efficient compressed representations of vectors (WIP)
+- ✂️ Efficient and reliable **pruning** of dimensions with partial distance calculations. 
+- ⚡ Up to **7x faster** IVF queries (compared to FAISS+AVX512) when pairing PDX with the pruning algorithm [ADSampling](https://github.com/gaoj0017/ADSampling/).
+- ⚡ Up to **13x faster** exhaustive search thanks to pruning.
+- Distance kernels auto-vectorize more efficiently without explicit SIMD for `float32`.
+- Distance calculations on small vectors (`d < 16`) are up to 8x faster than SIMD kernels in [SimSIMD](https://github.com/ashvardanian/SimSIMD).
+- More efficient compressed representations of vectors (WIP).
+
 
 # Contents
 - [Pruning in a Nutshell](#pruning-in-a-nutshell)
@@ -21,9 +25,7 @@
 
 ## Pruning in a nutshell
 
-*Pruning* means avoiding checking *all* the dimensions of a vector to determine if it will make it onto the KNN of a query. 
-
-*Pruning* speedup vector similarity search as (i) less data must be fetched and (ii) fewer computations must be done.
+*Pruning* means avoiding checking *all* the dimensions of a vector to determine if it will make it onto the KNN of a query. Pruning speedup vector similarity search as (i) **less data** must be fetched and (ii) **fewer computations** must be done.
 
 However, pruning methods that do partial distance calculations have a hard time to be on-par to SIMD optimized kernels like the ones in [FAISS](https://github.com/facebookresearch/faiss/) and [SimSIMD](https://github.com/ashvardanian/SimSIMD). 
 
@@ -35,7 +37,9 @@ Pruning algorithms are **especially effective** when:
 - High recalls are needed (`> 0.90`)
 - Exact results are needed
 
-We refer to the recent research done on pruning algorithms with partial distance calculations: [ADSampling](https://github.com/gaoj0017/ADSampling/), [BSA](https://github.com/mingyu-hkustgz/Res-Infer), [DADE](https://github.com/Ur-Eine/DADE). All of these rely on rotating the vectors collection to prune effectively. In [our research](https://ir.cwi.nl/pub/35044/35044.pdf), we also introduce PDX-BOND, a simpler pruning algorithm which does not need to rotate the vectors.
+We refer to the recent research done on pruning algorithms with partial distance calculations: [ADSampling](https://github.com/gaoj0017/ADSampling/), [BSA](https://github.com/mingyu-hkustgz/Res-Infer), [DADE](https://github.com/Ur-Eine/DADE). All of these rely on rotating the vectors collection to prune effectively. In [our research](https://ir.cwi.nl/pub/35044/35044.pdf), we also introduce PDX-BOND, a simpler pruning algorithm which does not need to rotate the vectors. 
+
+The complete benchmarks of PDXearch against FAISS, and ADSampling on the Nary/horizontal layout are available in [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). We performed experiments in 4 microarchitectures: Intel SPR, Zen 4, Zen 3 and Graviton 4. Furthermore, you will find details on how we adapted these pruning algorithms to work in PDX.
 
 ## Quickstart
 You can try PDX in your own data by using our Python bindings. We have implemented PDX on Flat **IVF indexes** and **exact search** settings.
@@ -99,22 +103,22 @@ In PDX, building an IVF index can greatly improve exact search speed (thanks to 
 | arXiv · d=768 · 2.25M                                           | 454.5           | 41.4     | **11.0x**   |
 | SIFT · d=128 · 1M                                               | 34.4            | 6.5      | **5.3x**    |
 
-| Avg. query time<br>[<ins>Graviton 4</ins> \| r8g.2x] | FAISS<br>SVE | PDXearch | Improvement |
-|-----------------------------------------------------------|--------------|----------|-------------|
-| DBPedia · d=1536 · 1M                                   | 277.2 ms     | 21.7 ms  | **12.8x**   |
-| GIST · d=960 · 1M                                       | 170.9        | 19.4     | **8.8x**    |
-| arXiv · d=768 · 2.25M                                   | 306.0        | 27.2     | **11.3x**   |
-| SIFT · d=128 · 1M                                       | 21.3         | 4.7      | **4.5x**    |
+| Avg. query time<br>[<ins>Graviton 4</ins> \| r8g.2x] | FAISS SVE | PDXearch | Improvement |
+|-----------------------------------------------------------|-----------|----------|-------------|
+| DBPedia · d=1536 · 1M                                   | 277.2 ms  | 21.7 ms  | **12.8x**   |
+| GIST · d=960 · 1M                                       | 170.9     | 19.4     | **8.8x**    |
+| arXiv · d=768 · 2.25M                                   | 306.0     | 27.2     | **11.3x**   |
+| SIFT · d=128 · 1M                                       | 21.3      | 4.7      | **4.5x**    |
 
 ### Exact search without an index
 Use **PDX+BOND**, our own pruning algorithm. Here, vectors are not transformed and we do not use any additional index. Gains vary depending on the dimensions distribution. See [./examples/pdxearch_exact_bond.py](./examples/pdxearch_exact_bond.py)
 
-| Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS <br>AVX512 | PDXearch | Improvement |
-|-----------------------------------------------------------|------------------|----------|-------------|
-| DBPedia · d=1536 · 1M                                   | 374 ms           | 216 ms   | **1.7x**    |
-| arXiv · d=768 · 2.25M                                   | 422              | 212      | **2.0x**    |
-| MSong · d = 420 · 1M                                    | 117              | 15       | **7.8x**    |
-| SIFT · d=128 · 1M                                       | 31               | 10       | **3.1x**    |
+| Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS AVX512 | PDXearch | Improvement |
+|-----------------------------------------------------------|--------------|----------|-------------|
+| DBPedia · d=1536 · 1M                                   | 374 ms       | 216 ms   | **1.7x**    |
+| arXiv · d=768 · 2.25M                                   | 422          | 212      | **2.0x**    |
+| MSong · d = 420 · 1M                                    | 117          | 15       | **7.8x**    |
+| SIFT · d=128 · 1M                                       | 31           | 10       | **3.1x**    |
 
 | Avg. query time (ms) <br> [<ins>Graviton 4</ins> \| r8g.2x] | FAISS SVE | PDXearch | Improvement |
 |-------------------------------------------------------------|-----------|----------|-------------|
@@ -123,10 +127,12 @@ Use **PDX+BOND**, our own pruning algorithm. Here, vectors are not transformed a
 | MSong · d = 420 · 1M                                      | 70        | 15       | **4.7x**    |
 | SIFT · d=128 · 1M                                         | 22        | 11       | **2.0x**    |
 
+Please, refer to [our publication](https://ir.cwi.nl/pub/35044/35044.pdf) for the complete benchmarks of PDXearch done in 4 microarchitectures: Intel SPR, Zen 4, Zen 3 and Graviton 4. Here, you will also find a comparison against ADSampling in the N-ary/horizontal layout (`.fvecs` layout). Furthermore, you will find details on how we adapted pruning algorithms to work in PDX.
 
 ## Roadmap
 - **Compression**: The vertical layout opens opportunities for compression as indexing algorithms group together vectors that share some numerical similarity within their dimensions. A next step on PDX is to apply our scalar quantization algorithm [LEP](https://homepages.cwi.nl/~boncz/msc/2024-ElenaKrippner.pdf) that uses database compression techniques ([ALP](https://github.com/cwida/alp)) to compress vectors with higher compression ratios and less information loss.
 - **More data types**: For compressed vectors, we need to implement vertical distance kernels on vectors of variable bit size.
+- **PDX in HNSW indexes**: For this, we need a layout similar to the ones proposed in [Starling](https://dl.acm.org/doi/pdf/10.1145/3639269) or [AiSAQ](https://arxiv.org/pdf/2404.06004), in which neighborhoods of the graph are stored and fetched in blocks.
 - Improve code readibility and usability.
 - Add a testing framework
 - Add BSA or DADE algorithms to the Python Bindings

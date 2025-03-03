@@ -36,9 +36,9 @@ sudo systemctl start docker
 docker-compose -f ./benchmarks/milvus/docker-compose.yml up -d
 
 ${python_command} ./benchmarks/bench_systems/exact_milvus.py
-# ${python_command} ./benchmarks/bench_systems/ivf_milvus_build.py
-# ${python_command} ./benchmarks/bench_systems/ivf_milvus.py
+${python_command} ./benchmarks/bench_systems/ivf_milvus_build.py
+${python_command} ./benchmarks/bench_systems/ivf_milvus.py
 
 docker-compose -f ./benchmarks/milvus/docker-compose.yml stop
 
-# docker-compose -f ./benchmarks/milvus/docker-compose.yml down
+docker-compose -f ./benchmarks/milvus/docker-compose.yml down

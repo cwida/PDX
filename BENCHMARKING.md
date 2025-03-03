@@ -1,42 +1,48 @@
+# Benchmarking
 
-To measure the benefits of the PDX layout you have a few options:
-### Using our embeddings
-We provide 22 embeddings datasets (~14GB) for you to use (GloVe variants, arXiv, OpenAI, DEEP, GIST, SIFT, MNIST, etc). The `./data/setup_data.py` script will do everything for you (download/unzip data and transform the data to the PDX layout). Edit this script to decide which algorithms you want to use (ADSampling, BOND or BSA). On the `./data/pdx_settings.py` you can decide which datasets specifically to transform.
+We benchmarked several algorithms in different data layouts using C++. For this, we build and store one index for each benchmarked algorithm. E.g., we create one file with the IVF index and the vectors in the PDX layout for ADSampling, and another with the same IVF index and the vectors in the N-ary layout for ADSampling.
 
-To run the script:
-```shell
-pip install -r ./data/requirements.txt
-python ./data/setup_data.py
+Despite this not being space efficient, it let us re-run benchmarks easily, just by reading the proper file. 
+
+Therefore, to set up the data we:
+1. Download the raw `.hdf5` files containing the `train` and `test` vectors.
+2. Build a *core* IVF index for each dataset using FAISS.
+3. From the *core* index, we read the vectors and apply the respective transformations for (i) ADSampling and (ii) BSA. For (iii) BOND we just bypass the raw vectors.
+4. We store the preprocessed vectors in a file using one of the following layouts: (i) Dual-block, or (ii) PDX. The Dual-block layout is the N-ary layout partitioned in two blocks at Δd (refer to the [ADSampling](https://github.com/gaoj0017/ADSampling/tree/main/src) or [our]([our publication](https://ir.cwi.nl/pub/35044/35044.pdf)) paper).
+
+Note that we did not use our Python bindings for our own benchmarking.
+
+## Master Script
+
+To download all the datasets and generate all the indexes needed to run our benchmarking suite, you can use the script [`/benchmarks/python_scripts/setup_scripts/setup_data.py`](/benchmarks/python_scripts/setup_scripts/setup_data.py). For this you need Python 3.11 or higher and install the dependencies in `./benchmarks/python_scripts/requirements.txt`. **You will need approximately 300GB of disk for ALL the indexes**.
+
+Run the script from the root folder with the script flags `DOWNLOAD` and `GENERATE_IVF` set to `True` and the `algorithms` array uncommented. You do not need to generate the `ground_truth` for k=10 as it is already present. You can further uncomment/comment the datasets you wish to create indexes for on the `DATASETS` array [here](/benchmarks/python_scripts/setup_scripts/setup_settings.py). 
+```sh
+pip install -r ./benchmarks/python_scripts/requirements.txt
+python ./benchmarks/python_scripts/setup_scripts/setup_data.py
 ```
-The transformed data will be created under the `datasets` directory.
-Note that `setup_data.py` may take some time as an IVF index (FAISS IVFFlat) is created for each dataset. Furthermore, ADSampling and (especially) BSA algorithms need to perform  expensive preprocessing on the input data.
+The indexes will be created under the `./benchmarks/datasets/` directory.
 
-### Downloading Data Manually
-The `setup_data.py` script will download a .zip with our embeddings from Google Drive (~14GB). If you want to download the vector datasets manually you can find them in this URL: https://drive.google.com/uc?id=1l_5RK28JRL19wpT22B-DY9We3TVXnnQQ
-
-Unzip the file under a directory `./datasets/downloaded`. Then run `python ./data/setup_data.py` to transform and preprocess the data.
-
-### Your own embeddings
-*Pending to write*...
+### Downloading the raw vectors `.hdf5` data manually
+For the raw vector data we use the `.hdf5` format following the convention used in the [ANN-Benchmarks](https://github.com/erikbern/ann-benchmarks/) project. One `.hdf5` file with two datasets: `train` and `test`. We have a few ways in which you can manually download the data we used:
+- Download an unzip ALL the 22 `.hdf5` datasets (~25GB zipped and ~40gb unzipped) manually from [here](https://drive.google.com/file/d/1I8pbwGDCSe3KqfIegAllwoP5q6F4ohj2/view?usp=sharing). These include the GloVe variants, arXiv/768, DBPedia/1536, DEEP/96, GIST/960, SIFT/128, MNIST, etc. You must unzip them inside `./benchmarks/datasets/downloaded`
+- Download datasets individually from [here](https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing). Uncomment/comment the datasets you wish to create indexes for on the `DATASETS` array [here](/benchmarks/python_scripts/setup_scripts/setup_settings.py).
 
 
-## Running Tests
-Once you have downloaded and preprocessed the data, you can start benchmarking.
+### Random collection of `float32` vectors
+For the experiment presented in Seciton 6.2 of our paper, we generate random collection of vectors. You can generate them by running the Master Script with the flag `GENERATE_SYNTHETIC = True`. Set the other flags to `False`.  
+
+
+## Running Benchmarks
+Once you have downloaded and created the indexes data, you can start benchmarking. 
+
+### Requirements
+1. Clang++17 or higher.
+2. CMake 3.26 or higher.
+3. Set CXX variable. E.g., `export CXX="/usr/bin/clang++-18"`
 
 ### Building
-Requirements:
-1. Clang++ (17 or higher)
-2. CMake (3.20 or higher)
-3. Set CXX variable e.g. `export CXX="/usr/bin/clang++-18"`
-
-Building:
-```sh
-cmake . -DCMAKE_BUILD_TYPE=Release
-make
-```
-
-### Compiling to a certain architecture
-You will mostly be fine with `-march=native`. However, for Intel SPR one has to manually set the vector width to 512 with `-mprefer-vector-width=512` as LLVM has not yet activated AVX512 by default in this architecture. The latter due to AVX512 downclocking the CPU on earlier Intel archs (Ice Lake and earlier). This is not the case anymore.
+We built our scripts with the proper `march` flags. You will mostly be fine with `-march=native`. However, for Intel SPR one has to manually set the vector width to 512 with `-mprefer-vector-width=512` as LLVM has not yet activated AVX512 by default in this architecture. The latter due to AVX512 downclocking the CPU on earlier Intel archs (Ice Lake and earlier). This is not the case anymore. These are the configurations we used for each microarchitecture:
 ```sh
 # GRAVITON4
 cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -mcpu=neoverse-v2"
@@ -48,42 +54,67 @@ cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -march=sapphir
 cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -march=znver4 -mtune=znver4"
 # ZEN3
 cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -march=znver3 -mtune=znver3"
-# Apple Mac
-cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -march=native"
+
+make
 ```
 
-### Bench All
-In the `benchmark_all.sh` you can set additional flags for your CPU architecture. Inside you will find some for the most common ones (Zen4, Zen3, Intel, Sapphire Rapids, Graviton4, Graviton3, M1). Here you can also set a custom path for CXX and Python.
+Benchmarking scripts can be found inside the `/benchmarks` directory. We have separated them by algorithm and experiment. On the [/benchmarks/CMakeLists.txt](/benchmarks/CMakeLists.txt) file you can find which `.cpp` files map to which benchmark. You can build and run these individually. However, we provide shell scripts to make things easier.
+- `/benchmarks/benchmark_ivf.sh <python_command>`: `make` and runs benchmarks of all algorithms which are inside an IVF index. The only parameter of the script is your `python` command to be able to run FAISS. Make sure to build for the corresponding architecture beforehand. E.g.,
 ```sh
-chmod -R 777 ./benchmarks/benchmark_all.sh
-./benchmarks/benchmark_all.sh
+cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -mcpu=neoverse-v2"
+./benchmarks/benchmark_all.sh python3.11
 ```
 
-### Search an existing IVF Index
+- `/benchmarks/benchmark_exact.sh <python_command>`: `make` and runs benchmarks of all exact-search algorithms. The only parameter of the script is your `python` command to be able to run FAISS.
 
-- Linear Scan: `./benchmarks/BenchmarkHorIVFLinearScan <dataset_name> <buckets_nprobe>`
-- ADSampling: `./benchmarks/BenchmarkHorIVFADSampling <dataset_name> <buckets_nprobe>`
-- BSA: `./benchmarks/BenchmarkHorIVFBSA <dataset_name> <buckets_nprobe>`
-- PDX ADSampling: `./benchmarks/BenchmarkPDXADSampling <dataset_name> <buckets_nprobe>`
-- PDX BSA: `./benchmarks/BenchmarkPDXBSA <dataset_name> <buckets_nprobe>`
-- PDX BOND: `./benchmarks/BenchmarkPDXIVFBOND <dataset_name> <buckets_nprobe>`
+- `/benchmarks/benchmark_kernels.sh <python_command>`: `make` and runs benchmarks for the PDX vs SIMD kernels (Section 6.2 of our paper). Expects no parameters.
 
-The available `dataset_name`'s and `buckets_nprobe` are configurable in the `/include/benchmark_utils.cpp` file.
+## Complete Benchmarks List
 
-*Recall that the IVF index is created by the `setup_data.py` script*
+### IVF Index
 
-### Linear Scan (Exact Search)
-PDX BOND can do exact search faster than other systems if the data is under the PDX layout.
+- Scalar Linear Scan (no pruning): `./benchmarks/BenchmarkNaryIVFLinearScan`
+- ADSampling (SIMD): `./benchmarks/BenchmarkNaryIVFADSamplingSIMD`
+- ADSampling (Scalar): `./benchmarks/BenchmarkNaryIVFADSampling`
+- BSA (SIMD): `./benchmarks/BenchmarkNaryIVFBSASIMD`
+- PDX ADSampling: `./benchmarks/BenchmarkPDXADSampling`
+- PDX BSA: `./benchmarks/BenchmarkPDXBSA`
+- PDX BOND: `./benchmarks/BenchmarkPDXIVFBOND`
+
+All of these executables have two optional parameters:
+- `<dataset_name>` to specify the name of the dataset to use. If not given, it will try to use all the datasets set in [benchmark_utils.hpp](/include/utils/benchmark_utils.hpp).
+- `<buckets_nprobe>` to specify the `nprobe` parameter on the IVF index which controls the recall. If not given, it will use a series of parameters from 2 to 512 set in the [benchmark_utils.hpp](/include/utils/benchmark_utils.hpp).
+
+*Recall that the IVF indexes are created by the `setup_data.py` script*
+
+###  Exact Search
 - PDX BOND: ```./benchmarks/BenchmarkPDXBOND```
-- Usearch: ```python3 ./benchmarks/bench_systems/exact_usearch.py```
-- SKLearn: ```python3 ./benchmarks/bench_systems/exact_sklearn.py```
-- Milvus: ```python3 ./benchmarks/bench_systems/exact_milvus.py```
-- FAISS: ```python3 ./benchmarks/bench_systems/exact_faiss.py```
-    - Note that FAISS precompute the input data squares and norms to be fast. Even so, PDX BOND is faster.
+- PDX LINEAR SCAN: ```./benchmarks/BenchmarkPDXLinearScan```
+- Usearch: ```python ./benchmarks/python_scripts/exact_usearch.py```
+- SKLearn: ```python ./benchmarks/python_scripts/exact_sklearn.py```
+- Milvus: ```python ./benchmarks/python_scripts/exact_milvus.py```
+- FAISS: ```python ./benchmarks/python_scripts/exact_faiss.py```
 
-PDX BOND data is generated by the `setup_data.py` script. Usearch, SKLearn, Milvus and FAISS expects the original `.hdf5` files under the `/downloaded` directory.
+All of these executables have one optional parameter:
+- `<dataset_name>` to specify the name of the dataset to use. If not given, it will try to use all the datasets set in [benchmark_utils.hpp](/include/utils/benchmark_utils.hpp) or [benchmark_utils.py](/benchmarks/python_scripts/benchmark_utils.py) in the Python scripts.
 
-Usearch, SKLearn, Milvus and FAISS require the respective python packages:
-```sh
-pip install -r ./benchmarks/bench_systems/requirements.txt
-```
+**Notes**: Usearch, SKLearn, Milvus and FAISS expects the original `.hdf5` files under the `/downloaded` directory.  Usearch, SKLearn, Milvus and FAISS require their respective python packages (`pip install -r ./benchmarks/python_scripts/requirements.txt`).
+
+### Kernels Experiment
+These kernels DO NOT do a KNN search query. The only work measured is the distance calculation. They also do `WARMUP` runs to warm up the cache.
+- PDX+L1: ```./benchmarks/KernelPDXL1```
+- PDX+L2: ```./benchmarks/KernelPDXL2```
+- PDX+IP: ```./benchmarks/KernelPDXIP```
+- SIMD+L1: ```./benchmarks/KernelNaryL1```
+- SIMD+L2: ```./benchmarks/KernelNaryL2```
+- SIMD+IP: ```./benchmarks/KernelNaryIP```
+
+All these executables have two obligatory parameters:
+- `<n_vector>` and `<dimension>`. These determine the random collection to be used for the test. The values are limited to: `n_vectors=(64 128 512 1024 4096 8192 16384 65536 131072 262144 1048576)`,
+  `dimensions=(8 16 32 64 128 192 256 384 512 768 1024 1536 2048 4096 8192)`.
+
+### Milvus IVF
+For Milvus IVF we have to use the standalone version of Milvus instead of PyMilvus. We have a shell script that install and runs everything (it also installs Docker and Docker-compose): `/benchmarks/benchmark_milvus.sh`. Note that for this you need additional storage.
+
+### Other experiments
+For the other experiments presented in the paper (`GATHER`, `DSM`, `BLOCK_STUDY`, `PHASES`, etc.), check the `sigmod` branch.

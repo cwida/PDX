@@ -20,14 +20,6 @@ if __name__ == '__main__':
         data = np.ascontiguousarray(data)
 
         searcher = BruteForceMilvus("euclidean", len(data[0]), dataset)
-        # DELETE LATER:
-        searcher.just_created = True
-        searcher.fit(data)
-        searcher.release()
-        continue
-        # UNTIL HERE
-
-        searcher_gt = BruteForceSKLearn("euclidean")
 
         for _ in range(N_MEASURE_RUNS):
             for q in queries:
