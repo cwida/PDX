@@ -1,0 +1,154 @@
+import time
+import os
+import csv
+import math
+
+SOURCE_DIR = os.getcwd()
+ARCHITECTURE = os.environ.get('PDX_ARCH', 'DEFAULT')
+RESULTS_DIRECTORY = os.path.join(SOURCE_DIR, "benchmarks", "results", ARCHITECTURE)
+KNN = 10
+N_MEASURE_RUNS = 1
+
+DATASETS = [
+    # 'random-xs-20-angular',
+    # 'random-s-100-euclidean',
+    # 'nytimes-256-angular',
+    # 'mnist-784-euclidean',
+    # 'glove-25-angular',
+    # 'glove-100-angular',
+    # 'trevi-4096',
+    # 'stl-9216',
+
+    # 'har-561',
+    # 'nytimes-16-angular',
+    'fashion-mnist-784-euclidean',
+    # 'glove-50-angular',
+    # 'glove-200-angular',
+    # 'sift-128-euclidean',
+    # 'msong-420',
+    # 'contriever-768',
+    # 'gist-960-euclidean',
+    # 'deep-image-96-angular',
+    # 'instructorxl-arxiv-768',
+    # 'openai-1536-angular'
+]
+
+DIMENSIONALITIES = {
+    'random-xs-20-angular': 20,
+    'random-s-100-euclidean': 100,
+    'har-561': 561,
+    'nytimes-16-angular': 16,
+    'nytimes-256-angular': 256,
+    'mnist-784-euclidean': 784,
+    'fashion-mnist-784-euclidean': 784,
+    'glove-25-angular': 25,
+    'glove-50-angular': 50,
+    'glove-100-angular': 100,
+    'glove-200-angular': 200,
+    'sift-128-euclidean': 128,
+    'trevi-4096': 4096,
+    'msong-420': 420,
+    'contriever-768': 768,
+    'stl-9216': 9216,
+    'gist-960-euclidean': 960,
+    'deep-image-96-angular': 96,
+    'instructorxl-arxiv-768': 768,
+    'openai-1536-angular': 1536
+}
+
+IVF_NPROBES = [
+    512, 256, 224, 192, 160, 144, 128,
+    112, 96, 80, 64, 56, 48, 40,
+    32, 28, 26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2
+]
+
+EF_SEARCHES = [
+    512, 384, 256, 224, 192, 160, 144, 128,
+    112, 96, 80, 64, 56, 48, 40,
+    32, 28, 26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2
+]
+
+
+class TicToc:
+    def __init__(self, ms=True, verbose=False):
+        self._tic = time.time()
+        self.ms = ms
+        self.verbose = verbose
+
+    def reset(self):
+        self.tic()
+
+    def tic(self) -> None:
+        self._tic = time.time()
+
+    def toc(self, tic=True):
+        tictoc = time.time() - self._tic
+        if self.ms: tictoc *= 1000
+        if tic: self._tic = time.time()
+        return tictoc
+
+
+# We remove extreme outliers on both sides (Q3 + 1.5*IQR & Q1 - 1.5*IQR)
+def save_results(runtimes: list, results_path, metadata):
+    write_header = True
+    if os.path.exists(results_path):
+        write_header = False
+
+    all_min_runtime = min(runtimes)
+    all_max_runtime = max(runtimes)
+    all_sum_runtime = sum(runtimes)
+
+    min_runtime = math.inf
+    max_runtime = -math.inf
+    sum_runtime = 0
+
+    Q1 = int(len(runtimes) / 4)
+    Q2 = int(len(runtimes) / 2)
+    Q3 = Q1 + Q2
+    runtimes.sort()
+    iqr = runtimes[Q3] - runtimes[Q1]
+    accounted_queries = 0
+    for runtime in runtimes:
+        if runtime > runtimes[Q3] + 1.5 * iqr:
+            continue
+        if runtime < runtimes[Q1] - 1.5 * iqr:
+            continue
+        min_runtime = min(min_runtime, runtime)
+        max_runtime = max(max_runtime, runtime)
+        sum_runtime += runtime
+        accounted_queries += 1
+
+    all_avg_runtime = all_sum_runtime / len(runtimes)
+    avg_runtime = sum_runtime / accounted_queries
+    print(metadata.get('dataset'), " --------------")
+    print('avg:', avg_runtime)
+    print('max:', max_runtime)
+    print('min:', min_runtime)
+    print('recall:', metadata.get('recall'))
+
+    f = open(results_path, 'a')
+    writer = csv.writer(f)
+    if write_header:
+        writer.writerow([
+            "dataset", "algorithm", "avg", "max", "min", "recall",
+            "knn", "n_queries", "num_measure_runs",
+            "avg_all", "max_all", "min_all",
+            "ef_search", "M", "ef_construction", "ivf_nprobe"
+        ])
+    writer.writerow([
+        metadata.get('dataset'), metadata.get('algorithm'), avg_runtime, max_runtime, min_runtime,
+        metadata.get('recall'),
+        KNN, metadata.get('n_queries'), N_MEASURE_RUNS,
+        all_avg_runtime, all_max_runtime, all_min_runtime,
+        metadata.get('ef_search', 0), metadata.get('M', 0), metadata.get('ef_construction', 0),
+        metadata.get('ivf_nprobe', 0)
+    ])
+    f.close()
+
+
+def disable_multithreading():
+    os.environ['MKL_NUM_THREADS'] = "1"
+    os.environ['NUMEXPR_NUM_THREADS'] = "1"
+    os.environ['OMP_NUM_THREADS'] = "1"
+    os.environ['VECLIB_MAXIMUM_THREADS'] = "1"
+    os.environ['OPENBLAS_NUM_THREADS'] = "1"

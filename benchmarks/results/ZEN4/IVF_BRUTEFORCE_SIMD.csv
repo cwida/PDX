@@ -1,0 +1,4 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,num_warmup_runs,avg_all,max_all,min_all,ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing
+deep-image-96-angular,brute-force,0.215275,0.231961,0.206551,0,24,0,10,10000,0,1,0,0.2156,0.2834,0.2066,0,0,0,0,-nan,-nan,-nan,-nan
+deep-image-96-angular,brute-force,0.342173,0.432103,0.268332,0.87134,24,0,10,10000,0,1,0,0.3449,0.6166,0.2683,0,0,0,0,-nan,-nan,-nan,-nan
+deep-image-96-angular,brute-force,1.1773,1.61301,0.844105,0.982099,144,0,10,10000,0,1,0,1.184,2.996,0.8441,0,0,0,0,-nan,-nan,-nan,-nan

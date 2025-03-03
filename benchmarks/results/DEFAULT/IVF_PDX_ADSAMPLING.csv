@@ -1,0 +1,14 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all,ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing
+fashion-mnist-784-euclidean,adsampling,0.738572,0.968334,0.299667,0.00062,32,0,10,10000,0.2,1,0.7386,2.246,0.2606,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,1.39052,2.99863,0.336625,0.00062,128,0,10,10000,0.2,1,1.409,34.18,0.3366,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.74726,1.11662,0.307459,0.00062,32,0,10,10000,0.2,1,0.747,1.405,0.2559,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.738762,1.18967,0.2895,0.00062,32,0,10,10000,0.2,1,0.7388,1.35,0.2628,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.747909,1.05937,0.308583,0.00062,32,0,10,10000,0.2,1,0.7478,1.059,0.269,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.750227,1.19562,0.30625,0.00062,32,0,10,10000,0.2,1,0.7513,3.447,0.2718,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.63425,0.63425,0.63425,0,32,0,10,1,0.2,1,0.6342,0.6342,0.6342,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.769958,0.769958,0.769958,0,32,0,10,1,0.2,1,0.77,0.77,0.77,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.633791,0.633791,0.633791,0,32,0,10,1,0.2,1,0.6338,0.6338,0.6338,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.152208,0.152208,0.152208,1,32,0,10,1,0.2,1,0.1522,0.1522,0.1522,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.127833,0.127833,0.127833,1,32,0,10,1,0.2,1,0.1278,0.1278,0.1278,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.127416,0.127416,0.127416,1,32,0,10,1,0.2,1,0.1274,0.1274,0.1274,0,0,0,0,nan,nan,nan,nan
+fashion-mnist-784-euclidean,adsampling,0.23258,0.424,0.099209,0.99978,32,0,10,10000,0.2,1,0.2434,0.7984,0.09921,0,0,0,0,nan,nan,nan,nan

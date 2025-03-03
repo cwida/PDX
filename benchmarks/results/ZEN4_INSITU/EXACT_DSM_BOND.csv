@@ -1,0 +1,13 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,num_warmup_runs,avg_all,max_all,min_all,ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing
+nytimes-16-angular,dsm-bond,0.506428,0.623703,0.383172,0.983701,0,0,10,1000,0.2,1,0,0.5028,0.6237,0.2658,0,0,0,0,-nan,-nan,-nan,-nan
+glove-50-angular,dsm-bond,7.98728,10.4964,4.25349,1,0,0,10,1000,0.2,1,0,7.943,10.5,2.135,0,0,0,0,-nan,-nan,-nan,-nan
+deep-image-96-angular,dsm-bond,92.3033,154.418,19.8746,1,0,0,10,1000,0.2,1,0,92.23,168.4,17.11,0,0,0,0,-nan,-nan,-nan,-nan
+sift-128-euclidean,dsm-bond,14.5585,25.7752,3.29708,0.9995,0,0,10,1000,0.2,1,0,14.56,25.78,3.297,0,0,0,0,-nan,-nan,-nan,-nan
+glove-200-angular,dsm-bond,34.7999,40.8269,27.9644,1,0,0,10,1000,0.2,1,0,33.54,41.6,4.425,0,0,0,0,-nan,-nan,-nan,-nan
+msong-420,dsm-bond,19.0016,50.6982,3.05912,0.9999,0,0,10,1000,0.2,1,0,20.11,66.99,3.059,0,0,0,0,-nan,-nan,-nan,-nan
+har-561,dsm-bond,0.745679,0.768484,0.717134,1,0,0,10,100,0.2,1,0,0.7467,0.8196,0.7024,0,0,0,0,-nan,-nan,-nan,-nan
+contriever-768,dsm-bond,118.218,153.646,80.3339,0.9999,0,0,10,1000,0.2,1,0,118,153.6,58.83,0,0,0,0,-nan,-nan,-nan,-nan
+instructorxl-arxiv-768,dsm-bond,221.767,306.778,120.755,1,0,0,10,1000,0.2,1,0,221.1,306.8,41.13,0,0,0,0,-nan,-nan,-nan,-nan
+fashion-mnist-784-euclidean,dsm-bond,6.17902,9.02115,3.31091,1,0,0,10,1000,0.2,1,0,6.179,9.021,3.311,0,0,0,0,-nan,-nan,-nan,-nan
+gist-960-euclidean,dsm-bond,154.973,217.306,91.9003,0.9993,0,0,10,1000,0.2,1,0,151.9,229.7,13.98,0,0,0,0,-nan,-nan,-nan,-nan
+openai-1536-angular,dsm-bond,227.587,316.813,132.473,1,0,0,10,1000,0.2,1,0,223.6,316.8,45.36,0,0,0,0,-nan,-nan,-nan,-nan

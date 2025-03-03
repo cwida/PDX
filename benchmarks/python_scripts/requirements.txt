@@ -1,0 +1,4 @@
+numpy~=2.2.2
+h5py~=3.12.1
+usearch~=2.16.9
+pymilvus~=2.4.4

@@ -1,0 +1,2 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all,ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing
+fashion-mnist-784-euclidean,bsa-pdx,0.337996,0.617333,0.121083,0.99966,32,10,10,10000,0.2,1,0.3391,0.7194,0.1211,0,0,0,0,nan,nan,nan,nan

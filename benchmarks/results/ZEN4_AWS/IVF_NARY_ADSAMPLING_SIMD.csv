@@ -1,0 +1,2 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,num_warmup_runs,avg_all,max_all,min_all,ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing
+openai-1536-angular,adsampling,15.2757,32.0314,3.44982,0.988701,512,2.1,10,1000,0,1,0,15.5,36.45,3.45,0,0,0,0,-nan,-nan,-nan,-nan
