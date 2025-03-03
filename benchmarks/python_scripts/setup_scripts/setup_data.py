@@ -15,9 +15,9 @@ GENERATE_IVF = False  # Creates IVF indexes with FAISS
 GENERATE_SYNTHETIC = False  # Generates synthetic collections of vectors for the kernels experiment
 KNN = [10]
 ALGORITHMS = [  # Choose the pruning algorithms for which indexes are going to be created
-    'adsampling',
-    'bsa',
-    'bond'
+    # 'adsampling',
+    # 'bsa',
+    # 'bond'
 ]
 if __name__ == "__main__":
     if DOWNLOAD:
