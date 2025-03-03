@@ -15,7 +15,7 @@ You may of course change each example to read your own data.
 
 This collection of examples use our algorithms exposed in our Python bindings. 
 
-- `pdx_brute.py`: PDX kernels (without pruning). The full-scan on vertical kernels shine when D is high, as the tight-loops of the kernel avoid additional LOAD+STORE operations and is free of dependencies. Refer to [Figure 3 in our publication](https://ir.cwi.nl/pub/35044/35044.pdf).
+- `pdx_brute.py`: PDX kernels (without pruning). The full-scan on vertical kernels shine when D is high, as the tight-loops of the kernel avoid additional LOAD/STORE operations and is free of dependencies. Refer to [Figure 3 in our publication](https://ir.cwi.nl/pub/35044/35044.pdf).
 - `pdxearch_simple.py`: PDXearch (pruned search) + [ADSampling](https://github.com/gaoj0017/ADSampling/) with an IVF index (built with FAISS). Plug & Play example that uses a random collection of vectors.
 - `pdxearch_exact.py`: PDXearch (pruned search) + [ADSampling](https://github.com/gaoj0017/ADSampling/) on the entire collection (no index). This produces virtually exact results. In our experiments, the recall loss due to ADSampling hyphotesis testing was never higher than 0.001.
 - `pdxearch_exact_bond.py`: PDXearch (pruned search) + BOND on the entire collection (no index). This produces exact results. 
