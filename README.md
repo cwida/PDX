@@ -12,8 +12,8 @@
 - ✂️ Efficient **pruning** of dimensions with partial distance calculations. 
 - ⚡ Up to [**7x faster**](#ivf-indexes) IVF queries (compared to FAISS+AVX512) when pairing PDX with the pruning algorithm [ADSampling](https://github.com/gaoj0017/ADSampling/).
 - ⚡ Up to [**13x faster**](#exact-search--ivf) exhaustive search thanks to pruning.
-- ⚡ Raw distance kernels (no pruning) in PDX are up to [**1.6x faster**](#no-pruning-and-no-index) than the `float32` kernels available in [SimSIMD](https://github.com/ashvardanian/SimSIMD) (USearch) and [FAISS](https://github.com/facebookresearch/faiss/). 
-  - *Why?* ➡️ Distance kernels in PDX are free of dependencies and have fewer LOAD/STORE operations. 
+- ⚡ Raw distance kernels (no pruning) in PDX are up to [**1.6x faster**](#no-pruning-and-no-index) than the `float32` kernels available in SimSIMD (USearch) and FAISS. 
+  - *Why?* Distance kernels in PDX are free of dependencies and have fewer LOAD/STORE operations. 
 - Distance kernels can auto-vectorize efficiently without explicit SIMD for `float32`.
 - Distance kernels on small vectors (`d < 16`) are up to **8x faster** than SIMD kernels in [SimSIMD](https://github.com/ashvardanian/SimSIMD).
 - More efficient compressed representations of vectors (WIP).
@@ -39,9 +39,9 @@ Pruning algorithms are **especially effective** when:
 - Exact results are needed
 - `k` is relatively low (`k=10,20`)
 
-Click [here](#use-cases) to see some quick benchmarks. The complete **benchmarks** are available in [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). We performed experiments in 4 microarchitectures: Intel SPR, Zen 4, Zen 3, and Graviton 4. Furthermore, you will find details on how we adapted these novel pruning algorithms to work in PDX.
+Click [here](#use-cases) to see some **quick benchmarks** of our Python bindings vs FAISS. The complete benchmarks are available in [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). Furthermore, you will find details on how we adapted these novel pruning algorithms to work in PDX.
 
-We also refer to the recent research on pruning algorithms with partial distance calculations: [ADSampling](https://github.com/gaoj0017/ADSampling/), [DDC](https://github.com/mingyu-hkustgz/Res-Infer) (previously named BSA), and [DADE](https://github.com/Ur-Eine/DADE). All of these rely on rotating the vector collection to prune effectively. In [our research](https://ir.cwi.nl/pub/35044/35044.pdf), we also introduce **PDX-BOND**, a simpler pruning algorithm that does not need to rotate the vectors. 
+We also refer to the recent research on pruning algorithms with partial distance calculations: [ADSampling](https://github.com/gaoj0017/ADSampling/), [DDC](https://github.com/mingyu-hkustgz/Res-Infer) (previously named BSA), and [DADE](https://github.com/Ur-Eine/DADE). All of these rely on rotating the vector collection to prune effectively. Alongside [PDX](https://ir.cwi.nl/pub/35044/35044.pdf), we also introduce **PDX-BOND**, a simpler pruning algorithm that does not need to rotate the vectors. 
 
 
 ## Quickstart
