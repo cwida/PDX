@@ -41,15 +41,9 @@ class NaryADSamplingSearcher: public VectorSearcher {
     // When D, epsilon_0 and delta_d can be pre-determined, it is highly suggested to define them as constexpr and provide dataset-specific functions.
     float CalculateADSamplingDistance(const float& threshold, const float *data_with_offset, const void *query, float result = 0, int visited_dimensions = 0) {
         // If the algorithm starts a non-zero dimensionality (visited_dimensions.e., the case of IVF++), we conduct the hypothesis testing immediately.
-#ifdef BENCHMARK_PHASES
-        bounds_evaluation_clock.Tic();
-#endif
         if(visited_dimensions && result >= threshold * GetRatio(visited_dimensions)) {
             return -result * ((int) num_dimensions) / visited_dimensions;
         }
-#ifdef BENCHMARK_PHASES
-        bounds_evaluation_clock.Toc();
-#endif
         auto * q = (float *) query;
         auto * d = (float *) data_with_offset;
 
@@ -57,30 +51,15 @@ class NaryADSamplingSearcher: public VectorSearcher {
             // It continues to sample additional delta_d dimensions.
             int check = std::min(delta_d, ((int) num_dimensions) - visited_dimensions);
             visited_dimensions += check;
-#ifdef BENCHMARK_PHASES
-            distance_calculation.Tic();
-#endif
             result += CalculateDistanceL2(d, q, check);
-#ifdef BENCHMARK_PHASES
-            distance_calculation.Toc();
-#endif
             d += check;
             q += check;
             // Hypothesis tesing
-#ifdef BENCHMARK_PHASES
-            bounds_evaluation_clock.Tic();
-#endif
             if(result >= threshold * GetRatio(visited_dimensions)) {
                 // If the null hypothesis is reject, we return the approximate distance.
                 // We return -threshold' to indicate that it's a negative object.
-#ifdef BENCHMARK_PHASES
-                bounds_evaluation_clock.Toc();
-#endif
                 return -result * ((int) num_dimensions) / visited_dimensions;
             }
-#ifdef BENCHMARK_PHASES
-            bounds_evaluation_clock.Toc();
-#endif
         }
         // We return the exact distance when we have sampled all the dimensions.
         return result;
@@ -155,20 +134,8 @@ public:
         best_k = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>{};
         std::vector<float> query;
         query.resize(num_dimensions);
-#ifdef BENCHMARK_PHASES
-        query_preprocessing_clock.Tic();
-#endif
         Multiply(raw_query, query.data());
-#ifdef BENCHMARK_PHASES
-        query_preprocessing_clock.Toc();
-#endif
-#ifdef BENCHMARK_PHASES
-        find_nearest_buckets_clock.Tic();
-#endif
         GetVectorgroupsAccessOrderIVF(query.data(), nary_ivf_data, ivf_nprobe, vectorgroup_indices);
-#ifdef BENCHMARK_PHASES
-        find_nearest_buckets_clock.Toc();
-#endif
         size_t buckets_to_visit = ivf_nprobe;
         size_t points_to_visit = 0;
         for (size_t bucket_idx = 0; bucket_idx < buckets_to_visit; ++bucket_idx){
@@ -179,9 +146,6 @@ public:
         size_t cur_point = 0;
 
         // FROM 0 to DELTA_D
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Tic();
-#endif
         float distance_limit = std::numeric_limits<float>::max();
         for (size_t bucket_idx = 0; bucket_idx < buckets_to_visit; ++bucket_idx){
             PDX::Vectorgroup& partition = nary_ivf_data.vectorgroups[vectorgroup_indices[bucket_idx]];
@@ -192,9 +156,6 @@ public:
                 cur_point++;
             }
         }
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Toc();
-#endif
 
         cur_point = 0;
         // FROM DELTA_D to num_dimensions

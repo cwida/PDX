@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
 
     std::cout << "RUNS: " << NUM_MEASURE_RUNS << "\n";
 
-    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "PURESCAN_GATHER_PDX_L2.csv";
+    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "PURESCAN_PDX_L2.csv";
 
     std::string filename = std::to_string(N_VECTORS) + "x" + std::to_string(DIMENSION) + "-pdx";
     std::string dataset = std::to_string(N_VECTORS) + "x" + std::to_string(DIMENSION);

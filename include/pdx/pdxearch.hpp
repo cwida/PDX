@@ -77,11 +77,6 @@ protected:
     bool DSM = false;
 
     PDXearchDimensionsOrder dimension_order = SEQUENTIAL;
-#ifdef BENCHMARK_ADAPTIVENESS
-    static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[21] = {
-        32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 64, 64, 64, 64, 64, 64
-    };
-#else
     // Evaluating the pruning threshold is so fast that we can allow smaller fetching sizes
     // to avoid more data access. Super useful in architectures with low bandwidth at L3/DRAM like Intel SPR
     static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[24] = {
@@ -89,7 +84,6 @@ protected:
             64, 64, 64, 64, 128, 128, 128, 128, 256,
             256, 512, 1024, 2048, 4096
     };
-#endif
 
     size_t cur_subgrouping_size_idx {0};
     size_t total_embeddings {0};
@@ -317,9 +311,6 @@ protected:
      ******************************************************************/
     template<bool USE_DIMENSIONS_REORDER, DistanceFunction L_ALPHA=ALPHA>
     void CalculateVerticalDistancesScalar(const float *__restrict query, const float *__restrict data, size_t n_vectors, size_t start_dimension, size_t end_dimension){
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Tic();
-#endif
         for (size_t dimension_idx = start_dimension; dimension_idx < end_dimension; ++dimension_idx) {
             uint32_t true_dimension_idx = dimension_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -336,17 +327,11 @@ protected:
                 }
             }
         }
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Toc();
-#endif
     }
 
     // For pruning we do not use tight loops of PDX_VECTOR_SIZE
     template<bool USE_DIMENSIONS_REORDER, DistanceFunction L_ALPHA=ALPHA>
     void CalculateVerticalDistancesForPruning(const float *__restrict query, const float *__restrict data, size_t n_vectors, size_t total_vectors, size_t start_dimension, size_t end_dimension){
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Tic();
-#endif
         size_t dimensions_jump_factor = total_vectors;
         if (DSM) {
             dimensions_jump_factor = total_embeddings;
@@ -367,17 +352,11 @@ protected:
                 }
             }
         }
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Toc();
-#endif
     }
 
     template<bool USE_DIMENSIONS_REORDER, DistanceFunction L_ALPHA=ALPHA>
     void CalculateVerticalDistancesVectorized(
         const float *__restrict query, const float *__restrict data, size_t start_dimension, size_t end_dimension){
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Tic();
-#endif
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
             size_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -394,9 +373,6 @@ protected:
                 }
             }
         }
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Toc();
-#endif
     }
 
 #if defined(__AVX512F__)
@@ -496,9 +472,6 @@ protected:
 
     template<bool USE_DIMENSIONS_REORDER, DistanceFunction L_ALPHA=ALPHA>
     void CalculateVerticalDistancesOnPositionsArray(const float *__restrict query, const float *__restrict data, size_t n_vectors, size_t total_vectors, size_t start_dimension, size_t end_dimension){
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Tic();
-#endif
 #if defined(__AVX512F__) && defined(__AVX512FP16__)
         // SIMD is less efficient when looping on the array of not-yet pruned vectors
         // A way to improve the performance by ~20% is using a GATHER intrinsic. However this only works on Intel microarchs.
@@ -532,9 +505,6 @@ protected:
                 }
             }
         }
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Toc();
-#endif
     }
 
     virtual void EvaluatePruningPredicateOnPositionsArray(size_t n_vectors){
@@ -593,15 +563,9 @@ protected:
         current_dimension_idx = 0;
         cur_subgrouping_size_idx = 0;
         size_t tuples_needed_to_exit = std::ceil(1.0 * tuples_threshold * n_vectors);
-#ifdef BENCHMARK_PHASES
-        bounds_evaluation_clock.Tic();
-#endif
         ResetPruningDistances(n_vectors);
         uint32_t n_tuples_to_prune = 0;
         if (!is_positional_pruning) GetPruningThreshold(k, heap);
-#ifdef BENCHMARK_PHASES
-        bounds_evaluation_clock.Toc();
-#endif
 
         while (1.0 * n_tuples_to_prune < tuples_needed_to_exit && current_dimension_idx < pdx_data.num_dimensions) {
             size_t last_dimension_to_fetch = std::min(current_dimension_idx + DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx],
@@ -615,28 +579,16 @@ protected:
             }
             current_dimension_idx = last_dimension_to_fetch;
             cur_subgrouping_size_idx += 1;
-#ifdef BENCHMARK_PHASES
-            bounds_evaluation_clock.Tic();
-#endif
             if (is_positional_pruning) GetPruningThreshold(k, heap);
             n_tuples_to_prune = 0;
             EvaluatePruningPredicateScalar(n_tuples_to_prune, n_vectors);
-#ifdef BENCHMARK_PHASES
-            bounds_evaluation_clock.Toc();
-#endif
         }
     }
 
     // We scan only the not-yet pruned vectors
     template <DistanceFunction L_ALPHA=ALPHA>
     void Prune(const float *__restrict query, const float *__restrict data, const size_t n_vectors, uint32_t k, std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator> &heap) {
-#ifdef BENCHMARK_PHASES
-        bounds_evaluation_clock.Tic();
-#endif
         GetPruningThreshold(k, heap);
-#ifdef BENCHMARK_PHASES
-        bounds_evaluation_clock.Toc();
-#endif
         InitPositionsArray(n_vectors);
         size_t cur_n_vectors_not_pruned = 0;
         while ( // We try to prune until the end
@@ -656,14 +608,8 @@ protected:
             }
 
             current_dimension_idx = last_dimension_to_test_idx;
-#ifdef BENCHMARK_PHASES
-            bounds_evaluation_clock.Tic();
-#endif
             if (is_positional_pruning) GetPruningThreshold(k, heap);
             EvaluatePruningPredicateOnPositionsArray(cur_n_vectors_not_pruned);
-#ifdef BENCHMARK_PHASES
-            bounds_evaluation_clock.Toc();
-#endif
             if (current_dimension_idx == pdx_data.num_dimensions) break;
         }
     }
@@ -741,16 +687,10 @@ public:
         end_to_end_clock.Tic();
 #endif
         alignas(64) float query[pdx_data.num_dimensions];
-#ifdef BENCHMARK_PHASES
-        query_preprocessing_clock.Tic();
-#endif
         PreprocessQuery(raw_query, query);
         best_k = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
         GetDimensionsAccessOrder(query, pdx_data.means);
-#ifdef BENCHMARK_PHASES
-        query_preprocessing_clock.Toc();
-#endif
         // TODO: This should probably not be evaluated here
         if (pdx_data.is_ivf) {
             if (ivf_nprobe == 0){
@@ -758,14 +698,8 @@ public:
             } else {
                 vectorgroups_to_visit = ivf_nprobe;
             }
-#ifdef BENCHMARK_PHASES
-            find_nearest_buckets_clock.Tic();
-#endif
             GetVectorgroupsAccessOrderIVFPDX(query, vectorgroups_to_visit, vectorgroups_indices);
             //GetVectorgroupsAccessOrderIVF(query, pdx_data, ivf_nprobe, vectorgroups_indices);
-#ifdef BENCHMARK_PHASES
-            find_nearest_buckets_clock.Toc();
-#endif
         } else {
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();

@@ -1,5 +1,0 @@
-dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,num_warmup_runs,avg_all,max_all,min_all,ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing
-msong-420,adsampling,2.5143,5.97433,0.607934,0.9991,128,2.1,10,1000,0,1,0,2.588,8.907,0.6079,0,0,0,0,-nan,-nan,-nan,-nan
-deep-image-96-angular,adsampling,0.630108,0.945596,0.315152,0.87134,24,2.1,10,10000,0,1,0,0.6393,1.149,0.2901,0,0,0,0,-nan,-nan,-nan,-nan
-deep-image-96-angular,adsampling,0.674227,1.00852,0.340692,0.87134,24,2.1,10,10000,0,1,0,0.6821,1.903,0.2901,0,0,0,0,-nan,-nan,-nan,-nan
-contriever-768,adsampling,2.43752,4.40531,0.595314,0.950137,32,2.1,10,10000,0,1,0,2.488,6.019,0.5953,0,0,0,0,-nan,-nan,-nan,-nan

@@ -44,17 +44,11 @@ class NaryBSASearcher: public VectorSearcher {
     __attribute__((always_inline))
     inline float CalculateBSADistance(const float& threshold, const float *data_with_offset, const void *query, const float * pre_query, float result = 0, int visited_dimensions = 0) {
         // If the algorithm starts a non-zero dimensionality (visited_dimensions.e., the case of IVF++), we conduct the hypothesis testing immediately.
-#ifdef BENCHMARK_PHASES
-        bounds_evaluation_clock.Tic();
-#endif
         if(visited_dimensions) {
             if (UniformInference(result, threshold, visited_dimensions, pre_query)){
                 return -result;
             }
         }
-#ifdef BENCHMARK_PHASES
-        bounds_evaluation_clock.Toc();
-#endif
         auto * q = (float *) query;
         auto * d = (float *) data_with_offset;
 
@@ -62,29 +56,14 @@ class NaryBSASearcher: public VectorSearcher {
             // It continues to sample additional delta_d dimensions.
             int check = std::min(delta_d, ((int) num_dimensions) - visited_dimensions);
             visited_dimensions += check;
-#ifdef BENCHMARK_PHASES
-            distance_calculation.Tic();
-#endif
             float tmp_res = CalculateDistanceIP(d, q, check);
-#ifdef BENCHMARK_PHASES
-            distance_calculation.Toc();
-#endif
             d += check;
             q += check;
             result -= 2 * tmp_res;
             // Quantiles inference tesing
-#ifdef BENCHMARK_PHASES
-            bounds_evaluation_clock.Tic();
-#endif
             if (UniformInference(result, threshold, visited_dimensions, pre_query)){
-#ifdef BENCHMARK_PHASES
-                bounds_evaluation_clock.Toc();
-#endif
                 return -result;
             }
-#ifdef BENCHMARK_PHASES
-            bounds_evaluation_clock.Toc();
-#endif
         }
         // We return the exact distance when we have sampled all the dimensions.
         return result;
@@ -128,21 +107,9 @@ public:
         float query_square;
         query.resize(num_dimensions);
         pre_query.resize(num_dimensions + 1);
-#ifdef BENCHMARK_PHASES
-        query_preprocessing_clock.Tic();
-#endif
         MultiplyProject(raw_query, query.data());
         GetQuerySquare(query.data(), pre_query.data(), query_square);
-#ifdef BENCHMARK_PHASES
-        query_preprocessing_clock.Toc();
-#endif
-#ifdef BENCHMARK_PHASES
-        find_nearest_buckets_clock.Tic();
-#endif
         GetVectorgroupsAccessOrderIVF(query.data(), nary_ivf_data, ivf_nprobe, vectorgroup_indices);
-#ifdef BENCHMARK_PHASES
-        find_nearest_buckets_clock.Toc();
-#endif
         size_t buckets_to_visit = ivf_nprobe;
         size_t points_to_visit = 0;
         for (size_t bucket_idx = 0; bucket_idx < buckets_to_visit; ++bucket_idx){
@@ -153,9 +120,6 @@ public:
         size_t cur_point = 0;
 
         // FROM 0 to DELTA_D
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Tic();
-#endif
         float distance_limit = std::numeric_limits<float>::max();
         for (size_t bucket_idx = 0; bucket_idx < buckets_to_visit; ++bucket_idx){
             PDX::Vectorgroup& bucket = nary_ivf_data.vectorgroups[vectorgroup_indices[bucket_idx]];
@@ -168,9 +132,6 @@ public:
                 cur_point++;
             }
         }
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Toc();
-#endif
 
         cur_point = 0;
         // FROM DELTA_D to num_dimensions

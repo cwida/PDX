@@ -31,10 +31,6 @@ struct BenchmarkMetadata {
 
 struct PhasesRuntime {
     size_t end_to_end {0};
-    size_t find_nearest_bucket {0};
-    size_t query_preprocessing {0};
-    size_t bounds_evaluation {0};
-    size_t distance_calculation {0};
 };
 
 class BenchmarkUtils {
@@ -196,13 +192,8 @@ public:
             min_runtime = std::min(min_runtime, runtimes[j].end_to_end);
             max_runtime = std::max(max_runtime, runtimes[j].end_to_end);
             sum_runtimes += runtimes[j].end_to_end;
-            sum_phase_nearest_bucket += runtimes[j].find_nearest_bucket;
-            sum_phase_bounds_evaluation += runtimes[j].bounds_evaluation;
-            sum_phase_distance_calculation += runtimes[j].distance_calculation;
-            sum_phase_query_preprocessing += runtimes[j].query_preprocessing;
             accounted_queries += 1;
         }
-        sum_phases = sum_phase_nearest_bucket + sum_phase_bounds_evaluation + sum_phase_distance_calculation + sum_phase_query_preprocessing;
         double all_min_runtime_ms = 1.0 * all_min_runtime / 1000000;
         double all_max_runtime_ms = 1.0 * all_max_runtime / 1000000;
         double all_avg_runtime_ms = 1.0 * all_sum_runtimes / (1000000 * (metadata.num_measure_runs * metadata.num_queries));
@@ -210,16 +201,6 @@ public:
         double max_runtime_ms = 1.0 * max_runtime / 1000000;
         double avg_runtime_ms = 1.0 * sum_runtimes / (1000000 * accounted_queries);
         double avg_recall = metadata.recalls / metadata.num_queries;
-
-        double ms_nearest_bucket = 1.0 * sum_phase_nearest_bucket / (1000000 * accounted_queries);
-        double ms_bounds_evaluation = 1.0 * sum_phase_bounds_evaluation / (1000000 * accounted_queries);
-        double ms_distance_calculation = 1.0 * sum_phase_distance_calculation / (1000000 * accounted_queries);
-        double ms_query_preprocessing = 1.0 * sum_phase_query_preprocessing / (1000000 * accounted_queries);
-
-        double perc_nearest_bucket = (sum_phase_nearest_bucket * 1.0) / sum_phases * 100.0;
-        double perc_bounds_evaluation = (sum_phase_bounds_evaluation * 1.0) / sum_phases * 100.0;
-        double perc_distance_calculation = (sum_phase_distance_calculation * 1.0) / sum_phases * 100.0;
-        double perc_query_preprocessing = (sum_phase_query_preprocessing * 1.0) / sum_phases * 100.0;
 
         std::cout << metadata.dataset << " --------------\n";
         std::cout << "n_queries: " << metadata.num_queries << "\n";
@@ -230,28 +211,18 @@ public:
         std::cout << "max: " << std::setprecision(6) << max_runtime_ms << "\n";
         std::cout << "min: " << std::setprecision(6) << min_runtime_ms << "\n";
         std::cout << "rec: " << std::setprecision(6) << avg_recall << "\n";
-#ifdef BENCHMARK_PHASES
-        std::cout << "%_nearest_bucket: " << std::setprecision(2) << perc_nearest_bucket << "% (" << std::setprecision(4) << ms_nearest_bucket << ")" << "\n";
-        std::cout << "%_bounds_evaluation: " << std::setprecision(2) << perc_bounds_evaluation << "% (" << std::setprecision(4) << ms_bounds_evaluation << ")" << "\n";
-        std::cout << "%_query_preprocessing: " << std::setprecision(2) << perc_query_preprocessing << "% (" << std::setprecision(4) << ms_query_preprocessing << ")" << "\n";
-        std::cout << "%_distance_calculation: " << std::setprecision(2) << perc_distance_calculation << "% (" << std::setprecision(4) << ms_distance_calculation << ")" << "\n";
-#endif
-        std::cout << "selectivity: " << metadata.selectivity_threshold << "\n";
+
         if (write_header){
             file << "dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,"
                     "knn,n_queries,selectivity,"
-                    "num_measure_runs,avg_all,max_all,min_all,"
-                    "ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,"
-                    "%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing"<< "\n";
+                    "num_measure_runs,avg_all,max_all,min_all" << "\n";
         }
         file << metadata.dataset << "," << metadata.algorithm << "," << std::setprecision(6) << avg_runtime_ms << "," <<
              std::setprecision(6) << max_runtime_ms << "," << std::setprecision(6) << min_runtime_ms << "," <<
              avg_recall << "," << metadata.ivf_nprobe << "," << metadata.epsilon << "," << +metadata.knn << "," <<
              metadata.num_queries << "," << std::setprecision(4) << metadata.selectivity_threshold << "," <<
              metadata.num_measure_runs << "," <<
-             all_avg_runtime_ms << "," << all_max_runtime_ms << "," << all_min_runtime_ms << "," <<
-             std::setprecision(6) << ms_nearest_bucket << "," << std::setprecision(6) << ms_bounds_evaluation << "," << std::setprecision(6) << ms_distance_calculation << ","  << std::setprecision(6) << ms_query_preprocessing << "," <<
-             perc_nearest_bucket << "," << perc_bounds_evaluation << "," << perc_distance_calculation << "," << perc_query_preprocessing <<
+             all_avg_runtime_ms << "," << all_max_runtime_ms << "," << all_min_runtime_ms <<
              "\n";
         file.close();
     }

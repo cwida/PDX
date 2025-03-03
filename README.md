@@ -1,6 +1,6 @@
 # PDX: A Vertical Data Layout for Vector Similarity Search
 
-[PDX](https://ir.cwi.nl/pub/35044/35044.pdf) is a **vertical** data layout for vectors that store the dimensions of different vectors together. In a nutshell, PDX is a PAX for vector similarity search.
+[PDX](https://ir.cwi.nl/pub/35044/35044.pdf) is a **vertical** data layout for vectors that store the dimensions of different vectors together. In a nutshell, PDX is PAX for vector similarity search.
 
 <p align="center">
         <img src="./benchmarks/results/pdx-layout.png" alt="PDX Layout" style="{max-height: 150px}">

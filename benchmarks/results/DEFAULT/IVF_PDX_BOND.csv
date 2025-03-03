@@ -1,6 +1,0 @@
-dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all,ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing
-fashion-mnist-784-euclidean,pdx-bond,1.5885,2.83629,0.460333,1,128,0,10,10000,0.2,1,1.616,16.6,0.4603,0,0,0,0,nan,nan,nan,nan
-fashion-mnist-784-euclidean,pdx-bond,0.674842,1.16962,0.207583,0.99984,32,0,10,10000,0.2,1,0.6756,1.496,0.2076,0,0,0,0,nan,nan,nan,nan
-fashion-mnist-784-euclidean,pdx-bond,0.512875,0.512875,0.512875,1,32,0,10,1,0.2,1,0.5129,0.5129,0.5129,0,0,0,0,nan,nan,nan,nan
-fashion-mnist-784-euclidean,pdx-bond,0.589667,0.589667,0.589667,1,32,0,10,1,0.2,1,0.5897,0.5897,0.5897,0,0,0,0,nan,nan,nan,nan
-fashion-mnist-784-euclidean,pdx-bond,0.770958,0.770958,0.770958,1,32,0,10,1,0.2,1,0.771,0.771,0.771,0,0,0,0,nan,nan,nan,nan

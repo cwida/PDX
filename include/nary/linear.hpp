@@ -66,18 +66,9 @@ public:
         ResetClocks();
         end_to_end_clock.Tic();
 #endif
-#ifdef BENCHMARK_PHASES
-        find_nearest_buckets_clock.Tic();
-#endif
         GetVectorgroupsAccessOrderIVF(query, ivf_data, ivf_nprobe, vectorgroup_indices);
-#ifdef BENCHMARK_PHASES
-        find_nearest_buckets_clock.Toc();
-#endif
         size_t buckets_to_visit = ivf_nprobe;
         best_k = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>{};
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Tic();
-#endif
         for (size_t bucket_idx = 0; bucket_idx < buckets_to_visit; ++bucket_idx) {
             PDX::Vectorgroup &bucket = ivf_data.vectorgroups[vectorgroup_indices[bucket_idx]];
             for (size_t vector_idx = 0; vector_idx < bucket.num_embeddings; ++vector_idx) {
@@ -93,9 +84,6 @@ public:
                 }
             }
         }
-#ifdef BENCHMARK_PHASES
-        distance_calculation.Toc();
-#endif
         std::vector<KNNCandidate> result;
         result.resize(knn);
         for (size_t i = 0; i < knn && !best_k.empty(); ++i) {

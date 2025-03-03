@@ -69,10 +69,7 @@ int main(int argc, char *argv[]) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
                     searcher.SearchIVF(query + l * num_dimensions, KNN, nary_ivf_data, ivf_nprobe);
                     runtimes[j + l * NUM_MEASURE_RUNS] = {
-                            searcher.end_to_end_clock.accum_time,
-                            searcher.find_nearest_buckets_clock.accum_time,
-                            searcher.query_preprocessing_clock.accum_time,
-                            searcher.bounds_evaluation_clock.accum_time,
+                            searcher.end_to_end_clock.accum_time
                     };
                 }
             }

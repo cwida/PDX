@@ -1,3 +1,0 @@
-dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,num_warmup_runs,avg_all,max_all,min_all,ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing
-nytimes-16-angular,vertical-scan,0.644869,0.675372,0.621202,0.983301,0,0,10,1000,0.2,1,0,0.6465,0.7292,0.6212,0,0,0,0,-nan,-nan,-nan,-nan
-glove-50-angular,vertical-scan,10.3062,10.5769,10.0715,1,0,0,10,1000,0.2,1,0,10.31,11.33,10.07,0,0,0,0,-nan,-nan,-nan,-nan

@@ -1,2 +1,0 @@
-dataset,algorithm,avg,max,min,recall,knn,n_queries,num_measure_runs,avg_all,max_all,min_all,ef_search,M,ef_construction,ivf_nprobe
-har-561,faiss,0.43264823623850374,0.4401206970214844,0.42700767517089844,1.0,10,100,1,0.44718027114868164,1.6808509826660156,0.4248619079589844,0,0,0,0

@@ -14,14 +14,14 @@
 
 /******************************************************************
  * Standalone scanners for float32 L2, IP and L1
- * NOT used for pruned PDXearch but on linear scans
+ * NOT used for pruned PDXearch but on the linear scans experiment
  * PDXScanner: Vertical distance kernels that auto-vectorize efficiently for float32
  *      Accepts the block size of PDX as a template parameter
  * SIMDScanner: Horizontal distance calculations with SIMD kernels
  *      Taken from USearch and FAISS
  * ScalarScanner: Scalar kernels without SIMD
  * ImpreciseScanner: Scalar loops forcing auto-vectorization with pragmas
- * TODO: Support SVE
+ * TODO: Support SVE. Initially we did not implement it as for other workloads NEON > SVE.
  ******************************************************************/
 template<PDX::DistanceFunction ALPHA=PDX::L2, size_t BLOCK_SIZE=64>
 class PDXScanner {

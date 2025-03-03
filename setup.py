@@ -8,6 +8,10 @@ from setuptools import setup
 
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 
+#
+# This setup.py was based on USearch setup.py (https://github.com/unum-cloud/usearch/blob/main/setup.py)
+#
+
 cxx = os.environ.get("CXX")
 if cxx == "" or cxx is None:
     raise Exception('Set CXX variable in your environment')
@@ -62,6 +66,7 @@ include_dirs = [
     "python",
 ]
 
+# TODO: We also require FAISS, but installing from PyPI is not ideal
 install_requires = [
     "setuptools>=42",
     "wheel",

@@ -35,21 +35,15 @@ struct VectorComparator {
 class VectorSearcher {
 public:
     std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator> best_k;
-    TicToc bounds_evaluation_clock = TicToc();
-    TicToc query_preprocessing_clock = TicToc();
     TicToc end_to_end_clock = TicToc();
-    TicToc find_nearest_buckets_clock = TicToc();
-    TicToc distance_calculation = TicToc();
 
     void ResetClocks(){
-        bounds_evaluation_clock.Reset();
-        query_preprocessing_clock.Reset();
         end_to_end_clock.Reset();
-        find_nearest_buckets_clock.Reset();
-        distance_calculation.Reset();
     }
 
 protected:
+    // These functions are not used on the Python bindings with the PDX indexes
+    // However, I need to be careful to not use them as PDX_USE_EXPLICIT_SIMD is not defined within the bindings
     static float CalculateDistanceL2(const float *__restrict vector1, const float *__restrict vector2, size_t num_dimensions) {
 #if defined(PDX_USE_EXPLICIT_SIMD) && defined(__ARM_NEON)
         float32x4_t sum_vec = vdupq_n_f32(0);
@@ -140,6 +134,8 @@ protected:
 #endif
     }
 
+    // These functions are not used on the Python bindings with the PDX indexes
+    // However, I need to be careful to not use them as PDX_USE_EXPLICIT_SIMD is not defined within the bindings
     static float CalculateDistanceIP(const float *__restrict vector1, const float *__restrict vector2, size_t num_dimensions){
 #if defined(PDX_USE_EXPLICIT_SIMD) && defined(__ARM_NEON)
         float32x4_t sum_vec = vdupq_n_f32(0);

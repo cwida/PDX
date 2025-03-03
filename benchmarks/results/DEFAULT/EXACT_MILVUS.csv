@@ -1,2 +1,0 @@
-dataset,algorithm,avg,max,min,recall,knn,n_queries,num_measure_runs,avg_all,max_all,min_all,ef_search,M,ef_construction,ivf_nprobe
-har-561,milvus,0.3514471261397652,0.5519390106201172,0.2067089080810547,1.0,10,100,1,0.4104924201965332,3.328084945678711,0.2067089080810547,0,0,0,0

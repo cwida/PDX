@@ -21,11 +21,8 @@ make BenchmarkNaryIVFLinearScan
 for dataset in "${datasets[@]}" 
 do
 
-#  echo "IVF MILVUS | $dataset"
-#  ${python_command} ./benchmarks/bench_systems/ivf_milvus.py ${dataset}
-
   echo "IVF FAISS | $dataset"
-  ${python_command} ./benchmarks/bench_systems/ivf_faiss.py ${dataset}
+  ${python_command} ./benchmarks/python_scripts/ivf_faiss.py ${dataset}
 
   echo "Nary IVF LinearScan Scalar | $dataset"
   ./benchmarks/BenchmarkNaryIVFLinearScan ${dataset}
@@ -45,5 +42,8 @@ do
 
   echo "PDX IVF BOND [Dimension Zones] | $dataset"
   ./benchmarks/BenchmarkPDXIVFBOND ${dataset} 0 5 # Dimension zones
+
+#  echo "PDX IVF BOND [Distance to means] | $dataset"
+#  ./benchmarks/BenchmarkPDXIVFBOND ${dataset} 0 1 # Distance to means
 
 done

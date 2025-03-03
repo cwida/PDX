@@ -1,3 +1,0 @@
-dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,num_warmup_runs,avg_all,max_all,min_all,ms_nearest_bucket,ms_bounds_evaluation,ms_distance_calculation,ms_query_preprocessing,%_nearest_bucket,%_bounds_evaluation,%_distance_calculation,%_query_preprocessing
-nytimes-16-angular,pdx-bond-dtm,0.501035,0.590772,0.381091,0.983701,0,0,10,1000,0.2,1,0,0.4978,0.5908,0.2754,0,0,0,0,-nan,-nan,-nan,-nan
-glove-50-angular,pdx-bond-dtm,7.78195,10.3001,4.28883,1,0,0,10,1000,0.2,1,0,7.731,10.3,2.089,0,0,0,0,-nan,-nan,-nan,-nan
