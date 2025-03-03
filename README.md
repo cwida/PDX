@@ -99,50 +99,50 @@ PDX paired with ADSampling on IVF indexes works great in most scenarios with les
 ### Exact search + IVF
 In PDX, building an IVF index can significantly improve exact search speed (thanks to the reliable pruning). The following benchmarks are from [/examples/pdxearch_ivf_exhaustive.py](./examples/pdxearch_ivf_exhaustive.py).
 
-| Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS AVX512 | PDXearch | Improvement |
-|-------------------------------------------------------------------|--------------|----------|-------------|
-| DBPedia · d=1536 · 1M                                           | 411.7 ms     | 34.9 ms  | **11.8x**   |
-| GIST · d=960 · 1M                                               | 252.9        | 27.6     | **9.1x**    |
-| arXiv · d=768 · 2.25M                                           | 454.5        | 41.4     | **11.0x**   |
-| SIFT · d=128 · 1M                                               | 34.4         | 6.5      | **5.3x**    |
+| Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS <br> AVX512 | PDXearch | Improvement |
+|-------------------------------------------------------------------|---------------|----------|-------------|
+| DBPedia · d=1536 · 1M                                           | 411.7 ms      | 34.9 ms  | **11.8x**   |
+| GIST · d=960 · 1M                                               | 252.9         | 27.6     | **9.1x**    |
+| arXiv · d=768 · 2.25M                                           | 454.5         | 41.4     | **11.0x**   |
+| SIFT · d=128 · 1M                                               | 34.4          | 6.5      | **5.3x**    |
 
-| Avg. query time<br>[<ins>Graviton 4</ins> \| r8g.2x] | FAISS SVE | PDXearch | Improvement |
-|-----------------------------------------------------------|-----------|----------|-------------|
-| DBPedia · d=1536 · 1M                                   | 277.2 ms  | 21.7 ms  | **12.8x**   |
-| GIST · d=960 · 1M                                       | 170.9     | 19.4     | **8.8x**    |
-| arXiv · d=768 · 2.25M                                   | 306.0     | 27.2     | **11.3x**   |
-| SIFT · d=128 · 1M                                       | 21.3      | 4.7      | **4.5x**    |
+| Avg. query time<br>[<ins>Graviton 4</ins> \| r8g.2x] | FAISS <br> SVE | PDXearch | Improvement |
+|-----------------------------------------------------------|------------|----------|-------------|
+| DBPedia · d=1536 · 1M                                   | 277.2 ms   | 21.7 ms  | **12.8x**   |
+| GIST · d=960 · 1M                                       | 170.9      | 19.4     | **8.8x**    |
+| arXiv · d=768 · 2.25M                                   | 306.0      | 27.2     | **11.3x**   |
+| SIFT · d=128 · 1M                                       | 21.3       | 4.7      | **4.5x**    |
 
 ### Exact search without an index
 Use **PDX+BOND**, our pruning algorithm. Here, vectors are not transformed, and we do not use any additional index. Gains vary depending on the dimensions distribution. The following benchmarks are from [/examples/pdxearch_exact_bond.py](./examples/pdxearch_exact_bond.py).
 
-| Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS AVX512 | PDXearch | Improvement |
-|------------------------------------------------------|--------------|----------|-------------|
-| DBPedia · d=1536 · 1M                                | 374 ms       | 216 ms   | **1.7x**    |
-| arXiv · d=768 · 2.25M                                | 422          | 212      | **2.0x**    |
-| MSong · d = 420 · 1M                                 | 117          | 15       | **7.8x**    |
-| SIFT · d=128 · 1M                                    | 31           | 10       | **3.1x**    |
+| Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS <br> AVX512 | PDXearch | Improvement |
+|------------------------------------------------------|---------------|----------|-------------|
+| DBPedia · d=1536 · 1M                                | 374 ms        | 216 ms   | **1.7x**    |
+| arXiv · d=768 · 2.25M                                | 422           | 212      | **2.0x**    |
+| MSong · d = 420 · 1M                                 | 117           | 15       | **7.8x**    |
+| SIFT · d=128 · 1M                                    | 31            | 10       | **3.1x**    |
 
-| Avg. query time <br> [<ins>Graviton 4</ins> \| r8g.2x] | FAISS SVE | PDXearch | Improvement |
-|--------------------------------------------------------|-----------|----------|-------------|
-| DBPedia · d=1536 · 1M                                  | 278 ms    | 139 ms   | **2.0x**    |
-| arXiv · d=768 · 2.25M                                  | 305       | 155      | **2.0x**    |
-| MSong · d = 420 · 1M                                   | 70        | 15       | **4.7x**    |
-| SIFT · d=128 · 1M                                      | 22        | 11       | **2.0x**    |
+| Avg. query time <br> [<ins>Graviton 4</ins> \| r8g.2x] | FAISS <br> SVE | PDXearch | Improvement |
+|--------------------------------------------------------|------------|----------|-------------|
+| DBPedia · d=1536 · 1M                                  | 278 ms     | 139 ms   | **2.0x**    |
+| arXiv · d=768 · 2.25M                                  | 305        | 155      | **2.0x**    |
+| MSong · d = 420 · 1M                                   | 70         | 15       | **4.7x**    |
+| SIFT · d=128 · 1M                                      | 22         | 11       | **2.0x**    |
 
 
 ### No pruning and no index
 PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). The following benchmarks are from [/examples/pdx_brute.py](./examples/pdx_brute.py).
 
-| Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | USearch | FAISS AVX512 | PDXearch | Improvement     |
-|------------------------------------------------------|---------|--------------|----------|-----------------|
-| GIST · d=960 · n=1M                                  | 260 ms  | 247 ms       | 208 ms   | **1.3x · 1.2x** |
-| STL · d=9216 · n=90K                                 | 223     | 220          | 176      | **1.3x · 1.3x** |
+| Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | USearch | FAISS <br> AVX512 | PDXearch | Improvement     |
+|------------------------------------------------------|---------|---------------|----------|-----------------|
+| GIST · d=960 · n=1M                                  | 260 ms  | 247 ms        | 208 ms   | **1.3x · 1.2x** |
+| STL · d=9216 · n=90K                                 | 223     | 220           | 176      | **1.3x · 1.3x** |
 
-| Avg. query time<br>[<ins>Graviton 4</ins> \| r8g.2x] | USearch | FAISS SVE | PDXearch | Improvement     |
+| Avg. query time<br>[<ins>Graviton 4</ins> \| r8g.2x] | USearch | FAISS <br> SVE | PDXearch | Improvement     |
 |------------------|---------|------------|----------|-----------------|
-| GIST · d=960 · n=1M   | 203 ms  | 172 ms                             | 124 ms   | **1.6x · 1.4x** |
-| STL · d=9216 · n=90K   | 175     | 160     | 109      | **1.6x · 1.5x** |
+| GIST · d=960 · n=1M   | 203 ms  | 172 ms     | 124 ms   | **1.6x · 1.4x** |
+| STL · d=9216 · n=90K   | 175     | 160        | 109      | **1.6x · 1.5x** |
 
 
 
