@@ -33,13 +33,13 @@ However, pruning methods that do partial distance calculations have a hard time 
 
 **Only thanks to the PDX layout**, do pruning methods outperform SIMD-optimized kernels in all CPU microarchitectures (Zens, Intels, Gravitons). This is because, in PDX, distance calculations are efficient even in small vector segments and vectors with a low dimensionality. Also, the evaluation of the pruning predicate is not interleaved with distance calculations.
 
+Click [here](#use-cases) to see some **quick benchmarks** of PDX vs FAISS. The complete benchmarks are available in [our publication](https://ir.cwi.nl/pub/35044/35044.pdf).
+
 Pruning algorithms are **especially effective** when:
 - Vectors are of high dimensionality (`d > 512`)
 - High recalls are needed (`> 0.90`)
 - Exact results are needed
 - `k` is relatively low (`k=10,20`)
-
-Click [here](#use-cases) to see some **quick benchmarks** of our Python bindings vs FAISS. The complete benchmarks are available in [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). Furthermore, you will find details on how we adapted these novel pruning algorithms to work in PDX.
 
 The latest **pruning algorithms** based on partial distance calculations are [ADSampling](https://github.com/gaoj0017/ADSampling/), [DDC](https://github.com/mingyu-hkustgz/Res-Infer) (previously named BSA), and [DADE](https://github.com/Ur-Eine/DADE). All of these rely on rotating the vector collection to prune effectively. PDX+ADSampling works great in most scenarios.
 
