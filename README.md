@@ -12,7 +12,7 @@
 - ✂️ Efficient **pruning** of dimensions with partial distance calculations. 
 - ⚡ Up to [**7x faster**](#ivf-indexes) **IVF queries** than FAISS+AVX512.
 - ⚡ Up to [**13x faster**](#exact-search--ivf) **exhaustive search** thanks to pruning.
-- ⚡ **Distance kernels** in PDX are up to [**1.6x faster**](#no-pruning-and-no-index) than the `float32` kernels available in SimSIMD (USearch) and FAISS. 
+- ⚡ **Distance kernels** in PDX are up to [**1.6x faster**](#no-pruning-and-no-index) than the `float32` kernels in USearch and FAISS. 
   - *Why?* Distance kernels in PDX are free of dependencies and have fewer LOAD/STORE operations. 
 - Distance kernels can **auto-vectorize efficiently** without explicit SIMD for `float32`.
 - Distance kernels on **small vectors** (`d < 16`) are up to **8x faster** than SIMD kernels in [SimSIMD](https://github.com/ashvardanian/SimSIMD).
