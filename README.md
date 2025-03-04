@@ -149,7 +149,7 @@ PDX distance kernels are also faster than the state-of-the-art SIMD kernels in a
 | STL · d=9216 · n=90K   | 175     | 160        | 109      | **1.6x · 1.5x** |
 
 
-> [! NOTE]   
+> [!NOTE]   
 > Refer to [our publication](https://ir.cwi.nl/pub/35044/35044.pdf) for the complete benchmarks of PDXearch done in 4 microarchitectures: Intel SPR, Zen 4, Zen 3, and Graviton 4. Here, you will also find a comparison against ADSampling in the horizontal layout (`.fvecs` layout). Furthermore, you will find details on how we adapted pruning algorithms to work in PDX.
 
 ## Roadmap
