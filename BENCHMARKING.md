@@ -8,13 +8,14 @@ Therefore, to set up the data, we:
 1. Download the raw files containing the vectors. We use the `.hdf5` format following the convention used in the [ANN-Benchmarks](https://github.com/erikbern/ann-benchmarks/) project. One `.hdf5` file with two datasets: `train` and `test`.
 2. Build a *core* IVF index for each dataset using FAISS.
 3. From the *core* index, we read the vectors and apply the respective transformations for (i) ADSampling and (ii) DDC (previously named BSA). For (iii) BOND, we just bypass the raw vectors.
-4. We store the preprocessed vectors in a file using one of the following layouts: (i) Dual-block or (ii) PDX. The Dual-block layout is the N-ary layout partitioned in two blocks at Δd (refer to the [ADSampling paper](https://dl.acm.org/doi/pdf/10.1145/3589282) or [our publication](https://ir.cwi.nl/pub/35044/35044.pdf)). For PDX-LINEAR-SCAN (no pruning on PDX), we group vectors in the PDX layout in blocks of 64. 
-
-Note that we did not use our Python bindings for our own benchmarking.
+4. We store the preprocessed vectors in a file using one of the following layouts: (i) Dual-block or (ii) PDX. The Dual-block layout is the N-ary layout partitioned in two blocks at Δd (refer to the [ADSampling paper](https://dl.acm.org/doi/pdf/10.1145/3589282) or [our publication](https://ir.cwi.nl/pub/35044/35044.pdf)). For PDX-LINEAR-SCAN (no pruning on PDX), we group vectors in the PDX layout in blocks of 64.
 
 ## Master Script
 
-To download all the datasets and generate all the indexes needed to run our benchmarking suite, you can use the script [/benchmarks/python_scripts/setup_data.py](/benchmarks/python_scripts/setup_data.py). For this, you need Python 3.11 or higher and install the dependencies in `/benchmarks/python_scripts/requirements.txt`. **You will need approximately 300GB of disk for ALL the indexes**.
+To download all the datasets and generate all the indexes needed to run our benchmarking suite, you can use the script [/benchmarks/python_scripts/setup_data.py](/benchmarks/python_scripts/setup_data.py). For this, you need Python 3.11 or higher and install the dependencies in `/benchmarks/python_scripts/requirements.txt`. 
+
+> [!CAUTION]  
+> You will need roughly 300GB of disk for ALL the indexes of the datasets used in our paper.
 
 Run the script from the root folder with the script flags `DOWNLOAD` and `GENERATE_IVF` set to `True` and the values in the `ALGORITHMS` array uncommented. You do not need to generate the `ground_truth` for k=10 as it is already present. You can further uncomment/comment the datasets you wish to create indexes for on the `DATASETS` array [here](/benchmarks/python_scripts/setup_settings.py). 
 ```sh
@@ -37,7 +38,8 @@ For the experiment presented in Section 6.2 of our paper, we generate random col
 ## Configuring the IVF indexes
 Configure the IVF indexes in [/benchmarks/python_scripts/setup_core_index.py](/benchmarks/python_scripts/setup_core_index.py). The benchmarks presented in our publication use `n_buckets = 2 * sqrt(n)` for the number of inverted lists (buckets) and `n_training_points = 50 * n_buckets`. This will create solid indexes fairly quickly. 
 
-Note that we have also run experiments with higher `n_buckets` values (`4 * sqrt(n)`, `8 * sqrt(n)`) and training the index with all the points. The effectiveness of the method does not change substantially. 
+> [!NOTE]   
+> We have also run experiments with higher `n_buckets` values (`4 * sqrt(n)`, `8 * sqrt(n)`) and training the index with all the points. The effectiveness of the method does not change substantially. 
 
 ## Running Benchmarks
 Once you have downloaded and created the indexes, you can start benchmarking. 
@@ -68,7 +70,7 @@ All the benchmarking scripts in C++ can be found in the `/benchmarks` directory.
 - `/benchmarks/benchmark_ivf.sh <python_command>`: `make` and runs benchmarks of all algorithms which run IVF index searches. The only parameter of the script is your `python` command to be able to run FAISS. Make sure to build for the corresponding architecture beforehand. E.g.,
 ```sh
 cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -mcpu=neoverse-v2"
-./benchmarks/benchmark_all.sh python3.11
+./benchmarks/benchmark_ivf.sh python3.11
 ```
 
 - `/benchmarks/benchmark_exact.sh <python_command>`: `make` and runs benchmarks of all exact-search algorithms. The only parameter of the script is your `python` command to be able to run FAISS, USearch, Scikit-learn and PyMilvus.
@@ -95,7 +97,8 @@ All of these programs have two optional parameters:
 PDX BOND has an additional third parameter:
 - `<dimension_ordering_criteria>`: An integer value. On Intel SPR, we use distance-to-means (`1`). For the other microarchitectures, we use dimension-zones (`5`). Refer to Figure 5 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf).
 
-*Recall that the IVF indexes must be created beforehand by the `setup_data.py` script*.
+> [!IMPORTANT]   
+> Recall that the IVF indexes must be created beforehand by the `setup_data.py` script.
 
 ###  Exact Search
 - PDX BOND: ```/benchmarks/BenchmarkPDXBOND```
@@ -126,7 +129,8 @@ All these executables have two obligatory parameters:
 - `<n_vector>` and `<dimension>`. These determine the random collection to be used for the test. The values are limited to: `n_vectors=(64 128 512 1024 4096 8192 16384 65536 131072 262144 1048576)`,
   `dimensions=(8 16 32 64 128 192 256 384 512 768 1024 1536 2048 4096 8192)`. 
 
-*Recall that these collections are created by the `setup_data.py` script*.
+> [!IMPORTANT]   
+> Recall that these collections are created by the `setup_data.py` script.
 
 ### Milvus IVF
 For Milvus IVF, we have to use the standalone version instead of in-memory PyMilvus, as the latter does not support IVF indexes. We have a shell script that install and runs everything (it also installs Docker and Docker-compose): `/benchmarks/benchmark_milvus.sh`. Note that you need additional storage for this.

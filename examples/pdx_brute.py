@@ -30,10 +30,10 @@ if __name__ == "__main__":
         clock.tic()
         index.search(q, knn)
         times.append(clock.toc())
-    results = index.search(queries[0], knn)
-    for result in results:
-        print(result.index, result.distance)
     print('PDX (no pruning) avg. time:', sum(times) / float(len(times)))
+    # results = index.search(queries[0], knn)
+    # for result in results:
+    #     print(result.index, result.distance)
 
     print('Querying with FAISS')
     times = []
@@ -47,5 +47,5 @@ if __name__ == "__main__":
         faiss_index.search(q, k=knn)
         times.append(clock.toc())
     print('FAISS avg. time:', sum(times) / float(len(times)))
-    print(faiss_index.search(np.array([queries[0]]), k=knn))
+    # print(faiss_index.search(np.array([queries[0]]), k=knn))
 

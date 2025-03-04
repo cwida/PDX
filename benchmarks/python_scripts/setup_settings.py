@@ -51,19 +51,19 @@ DATASETS = [
     # 'glove-100-angular',
     # 'trevi-4096',
     # 'stl-9216',
-    'har-561',
+    # 'har-561',
 
-    # 'nytimes-16-angular',
-    # 'fashion-mnist-784-euclidean',
-    # 'glove-50-angular',
-    # 'glove-200-angular',
-    # 'sift-128-euclidean',
-    # 'msong-420',
-    # 'contriever-768',
-    # 'gist-960-euclidean',
-    # 'deep-image-96-angular',
-    # 'instructorxl-arxiv-768',
-    # 'openai-1536-angular'
+    'nytimes-16-angular',
+    'fashion-mnist-784-euclidean',
+    'glove-50-angular',
+    'glove-200-angular',
+    'sift-128-euclidean',
+    'msong-420',
+    'contriever-768',
+    'gist-960-euclidean',
+    'deep-image-96-angular',
+    'instructorxl-arxiv-768',
+    'openai-1536-angular'
 ]
 
 DIMENSIONALITIES = {

@@ -23,8 +23,8 @@ if __name__ == "__main__":
     print('Training')
     index.train(train)
     print('PDXifying and Storing')
-    index_path = f'./examples/indexes/my_idx.pdx'
-    matrix_path = f'./examples/indexes/my_idx.matrix'
+    index_path = f'./examples/my_idx.pdx'
+    matrix_path = f'./examples/my_idx.matrix'
     index.add_persist(train, index_path, matrix_path)
 
     print('Restoring')

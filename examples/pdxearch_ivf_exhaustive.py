@@ -40,9 +40,9 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX avg. time:', sum(times) / float(len(times)))
     # To check results of first query
-    results = index.search(queries[0], knn)
-    for result in results:
-        print(result.index, result.distance)
+    # results = index.search(queries[0], knn)
+    # for result in results:
+    #     print(result.index, result.distance)
 
     print(f'{len(queries)} queries with FAISS')
     times = []
@@ -58,6 +58,6 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('FAISS avg. time:', sum(times) / float(len(times)))
     # To check results of first query
-    print(faiss_index.search(np.array([queries[0]]), k=knn))
+    # print(faiss_index.search(np.array([queries[0]]), k=knn))
 
 

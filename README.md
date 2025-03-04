@@ -33,7 +33,7 @@ However, pruning methods that do partial distance calculations have a hard time 
 
 **Only thanks to the PDX layout**, do pruning methods outperform SIMD-optimized kernels in all CPU microarchitectures (Zens, Intels, Gravitons). This is because, in PDX, distance calculations are efficient even in small vector segments and vectors with a low dimensionality. Also, the evaluation of the pruning predicate is not interleaved with distance calculations.
 
-Click [here](#use-cases) to see some **quick benchmarks** of PDX vs FAISS. The complete benchmarks are available in [our publication](https://ir.cwi.nl/pub/35044/35044.pdf).
+Click [here](#use-cases) to see some **benchmarks** of PDX vs FAISS. The complete benchmarks are available in [our publication](https://ir.cwi.nl/pub/35044/35044.pdf).
 
 Pruning algorithms are **especially effective** when:
 - Vectors are of high dimensionality (`d > 512`)
@@ -76,15 +76,13 @@ python ./examples/pdxearch_simple.py
 ```
 For more details on the available examples and how to use your own data, refer to [/examples/README.md](./examples/README.md). 
 
-### Notes
-- We heavily rely on [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) to create the underlying IVF indexes. 
-- PDX is an ongoing research project. In its current state, it is not production-quality code.
+> [!NOTE]
+> - We heavily rely on [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) to create the underlying IVF indexes. 
 
 ## Use Cases
+We present some single-threaded **benchmarks** from our [examples](/examples) against FAISS for some use cases in which PDX shines. We use `r7iz.2xlarge` (Intel SPR) and `r8g.2xlarge` (Graviton 4) AWS instances.  
 ### IVF indexes
 PDX paired with the pruning algorithm [ADSampling](https://github.com/gaoj0017/ADSampling/) on IVF indexes works great in most scenarios with less than 0.001 recall loss. The higher the dimensionality, the higher the gains from pruning. The following benchmarks are from [/examples/pdxearch_ivf.py](./examples/pdxearch_ivf.py). 
-
-**NOTE THAT on these benchmarks: (i) Both FAISS and PDXearch are scanning exactly the same vectors. (ii) The recall loss of ADSampling is always less than 0.001.**
 
 | Avg. query time <br> [<ins>Intel SPR</ins> \| r7iz.2x] | FAISS AVX512 <br> R@10: 0.99 · 0.95 · 0.90 | PDXearch           | Improvement            |
 |--------------------------------------------------------|-----------------------------------------|--------------------|------------------------|
@@ -97,6 +95,10 @@ PDX paired with the pruning algorithm [ADSampling](https://github.com/gaoj0017/A
 | DBPedia · d=1536 · 1M                                     | 47.1 · 18.4 · 6.7 ms              | 7.1 · 4.1 · 2.5 ms | **6.6x · 4.5x · 2.7x** |
 | arXiv · d=768 · 2.25M                                     | 25.3 · 7.0 · 3.2                  | 5.9 · 2.7 · 1.7    | **4.3x · 2.6x · 1.9x** |
 | SIFT · d=128 · 1M                                         | 1.1 · 0.5 · 0.3                   | 0.7 · 0.4 · 0.2    | **1.6x · 1.3x · 1.3x** |
+
+> [!NOTE]   
+> On these benchmarks: (i) Both FAISS and PDXearch are scanning exactly the same vectors. (ii) The recall loss of ADSampling is always less than 0.001.
+
 
 ### Exact search + IVF
 In PDX, building an IVF index can significantly improve exact search speed (thanks to the reliable pruning), even if the clustering is not super optimized. The following benchmarks are from [/examples/pdxearch_ivf_exhaustive.py](./examples/pdxearch_ivf_exhaustive.py).
@@ -134,7 +136,7 @@ Use **PDX+BOND**, our pruning algorithm. Here, vectors are not transformed, and 
 
 
 ### No pruning and no index
-PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). For a detailed explanation, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). The following benchmarks are from [/examples/pdx_brute.py](./examples/pdx_brute.py).
+PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). For a detailed explanation on how these distance kernels work, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). The following benchmarks are from [/examples/pdx_brute.py](./examples/pdx_brute.py).
 
 | Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | USearch | FAISS <br> AVX512 | PDXearch | Improvement     |
 |------------------------------------------------------|---------|---------------|----------|-----------------|
@@ -147,8 +149,8 @@ PDX distance kernels are also faster than the state-of-the-art SIMD kernels in a
 | STL · d=9216 · n=90K   | 175     | 160        | 109      | **1.6x · 1.5x** |
 
 
-
-Refer to [our publication](https://ir.cwi.nl/pub/35044/35044.pdf) for the complete benchmarks of PDXearch done in 4 microarchitectures: Intel SPR, Zen 4, Zen 3, and Graviton 4. Here, you will also find a comparison against ADSampling in the horizontal layout (`.fvecs` layout). Furthermore, you will find details on how we adapted pruning algorithms to work in PDX.
+> [! NOTE]   
+> Refer to [our publication](https://ir.cwi.nl/pub/35044/35044.pdf) for the complete benchmarks of PDXearch done in 4 microarchitectures: Intel SPR, Zen 4, Zen 3, and Graviton 4. Here, you will also find a comparison against ADSampling in the horizontal layout (`.fvecs` layout). Furthermore, you will find details on how we adapted pruning algorithms to work in PDX.
 
 ## Roadmap
 - **Compression**: The vertical layout opens opportunities for compression as indexing algorithms group together vectors that share some numerical similarity within their dimensions. The next step on PDX is to apply our scalar quantization algorithm [LEP](https://homepages.cwi.nl/~boncz/msc/2024-ElenaKrippner.pdf), which uses database compression techniques ([ALP](https://github.com/cwida/alp)) to compress vectors with higher compression ratios and less information loss.
@@ -157,6 +159,10 @@ Refer to [our publication](https://ir.cwi.nl/pub/35044/35044.pdf) for the comple
 - Improve code readability and usability.
 - Add a testing framework
 - Add DDC or DADE algorithms to the Python Bindings
+
+> [!IMPORTANT]   
+> PDX is an ongoing research project. In its current state, it is not production-quality code.
+
 
 ## Benchmarking
 To run our benchmark suite in C++, refer to [BENCHMARKING.md](./BENCHMARKING.md).
