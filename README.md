@@ -41,7 +41,7 @@ Pruning algorithms are **especially effective** when:
 
 Click [here](#use-cases) to see some **quick benchmarks** of our Python bindings vs FAISS. The complete benchmarks are available in [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). Furthermore, you will find details on how we adapted these novel pruning algorithms to work in PDX.
 
-We also refer to the recent research on pruning algorithms with partial distance calculations: [ADSampling](https://github.com/gaoj0017/ADSampling/), [DDC](https://github.com/mingyu-hkustgz/Res-Infer) (previously named BSA), and [DADE](https://github.com/Ur-Eine/DADE). All of these rely on rotating the vector collection to prune effectively. Alongside [PDX](https://ir.cwi.nl/pub/35044/35044.pdf), we also introduce **PDX-BOND**, a simpler pruning algorithm that does not need to rotate the vectors. 
+We also refer to the recent research on pruning algorithms with partial distance calculations: [ADSampling](https://github.com/gaoj0017/ADSampling/), [DDC](https://github.com/mingyu-hkustgz/Res-Infer) (previously named BSA), and [DADE](https://github.com/Ur-Eine/DADE). All of these rely on rotating the vector collection to prune effectively. Alongside [PDX](https://ir.cwi.nl/pub/35044/35044.pdf), we also introduce **PDX-BOND**, a simpler pruning algorithm that does not need to rotate the vectors (based on [BOND](https://dl.acm.org/doi/pdf/10.1145/564691.564729)). 
 
 
 ## Quickstart
