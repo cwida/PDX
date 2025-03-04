@@ -73,7 +73,7 @@ cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -mcpu=neoverse
 ./benchmarks/benchmark_ivf.sh python3.11
 ```
 
-- `/benchmarks/benchmark_exact.sh <python_command>`: `make` and runs benchmarks of all exact-search algorithms. The only parameter of the script is your `python` command to be able to run FAISS, USearch, Scikit-learn and PyMilvus.
+- `/benchmarks/benchmark_exact.sh <python_command>`: `make` and runs benchmarks of all exact-search algorithms. The only parameter of the script is your `python` command to be able to run FAISS, USearch, Scikit-learn, and PyMilvus.
 
 - `/benchmarks/benchmark_kernels.sh`: `make` and runs benchmarks for the PDX vs SIMD kernels (Section 6.2 of [our paper](https://ir.cwi.nl/pub/35044/35044.pdf)).
 
@@ -114,7 +114,7 @@ All of these programs have one optional parameter:
 PDX BOND has an additional second parameter:
 - `<dimension_ordering_criteria>`: An integer value. On exact-search, we always use distance-to-means (`1`). Refer to Figure 5 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf).
 
-**Notes**: Usearch, SKLearn, Milvus and FAISS scripts expect the original `.hdf5` files under the `/downloaded` directory.  Furthermore, they require their respective python packages (`pip install -r ./benchmarks/python_scripts/requirements.txt`).
+**Notes**: Usearch, SKLearn, Milvus, and FAISS scripts expect the original `.hdf5` files under the `/downloaded` directory.  Furthermore, they require their respective Python packages (`pip install -r ./benchmarks/python_scripts/requirements.txt`).
 
 ### Kernels Experiment
 These kernels DO NOT do a KNN search query. The only work measured is the distance calculation. They also do `WARMUP` runs to warm up the cache.
@@ -133,7 +133,7 @@ All these executables have two obligatory parameters:
 > Recall that these collections are created by the `setup_data.py` script.
 
 ### Milvus IVF
-For Milvus IVF, we have to use the standalone version instead of in-memory PyMilvus, as the latter does not support IVF indexes. We have a shell script that install and runs everything (it also installs Docker and Docker-compose): `/benchmarks/benchmark_milvus.sh`. Note that you need additional storage for this.
+For Milvus IVF, we have to use the standalone version instead of in-memory PyMilvus, as the latter does not support IVF indexes. We have a shell script that installs and runs everything (it also installs Docker and Docker-compose): `/benchmarks/benchmark_milvus.sh`. Note that you need additional storage for this.
 
 ### Other experiments
 For the other experiments presented in the paper (`GATHER`, `DSM`, `BLOCK_STUDY`, `PHASES`, etc.), check the `sigmod` branch.

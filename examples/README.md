@@ -7,7 +7,7 @@ Our Python bindings expect Numpy matrices as input. However, the provided exampl
 - Download datasets individually from [here](https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing). 
 - Run the script [`/benchmarks/python_scripts/setup_data.py`](/benchmarks/python_scripts/setup_data.py) from the root folder with the script flag `DOWNLOAD = True`. This will download and unzip ALL the `.hdf5` datasets (~25GB zipped and ~40GB unzipped). Make sure you set all the other flags to `False` and comment the elements inside the `ALGORITHMS` array.
 
-You can, of course, change each example to read your own data.
+You can, of course, change each example to read your data.
 
 
 

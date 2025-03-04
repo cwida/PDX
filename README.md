@@ -136,7 +136,7 @@ Use **PDX+BOND**, our pruning algorithm. Here, vectors are not transformed, and 
 
 
 ### No pruning and no index
-PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). For a detailed explanation on how these distance kernels work, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). The following benchmarks are from [/examples/pdx_brute.py](./examples/pdx_brute.py).
+PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). For a detailed explanation of how these distance kernels work, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). The following benchmarks are from [/examples/pdx_brute.py](./examples/pdx_brute.py).
 
 | Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | USearch | FAISS <br> AVX512 | PDXearch | Improvement     |
 |------------------------------------------------------|---------|---------------|----------|-----------------|
@@ -157,11 +157,12 @@ PDX distance kernels are also faster than the state-of-the-art SIMD kernels in a
 - **More data types**: For compressed vectors, we need to implement vertical distance kernels on vectors of variable bit size.
 - **PDX in HNSW**: For this, we need a layout similar to the ones proposed in [Starling](https://dl.acm.org/doi/pdf/10.1145/3639269) or [AiSAQ](https://arxiv.org/pdf/2404.06004), in which neighborhoods of the graph are stored and fetched in blocks.
 - Improve code readability and usability.
-- Add a testing framework
-- Add DDC or DADE algorithms to the Python Bindings
+- Add a testing framework.
+- Add DDC or DADE algorithms to the Python Bindings.
+- Implement multi-threading capabilities.
 
 > [!IMPORTANT]   
-> PDX is an ongoing research project. In its current state, it is not production-quality code.
+> PDX is an ongoing research project. In its current state, it is not production-ready code.
 
 
 ## Benchmarking
