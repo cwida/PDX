@@ -170,5 +170,3 @@ To run our benchmark suite in C++, refer to [BENCHMARKING.md](./BENCHMARKING.md)
 
 ## SIGMOD
 The code used for the experiments presented at SIGMOD'25 can be found in the `sigmod` branch.
-
-
