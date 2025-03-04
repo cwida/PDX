@@ -10,16 +10,16 @@
 ### What are the benefits of storing vectors vertically?
 
 - ✂️ Efficient **pruning** of dimensions with partial distance calculations. 
-- ⚡ Up to [**7x faster**](#ivf-indexes) IVF queries (compared to FAISS+AVX512) when pairing PDX with the pruning algorithm [ADSampling](https://github.com/gaoj0017/ADSampling/).
-- ⚡ Up to [**13x faster**](#exact-search--ivf) exhaustive search thanks to pruning.
-- ⚡ Raw distance kernels (no pruning) in PDX are up to [**1.6x faster**](#no-pruning-and-no-index) than the `float32` kernels available in SimSIMD (USearch) and FAISS. 
+- ⚡ Up to [**7x faster**](#ivf-indexes) **IVF queries** than FAISS+AVX512.
+- ⚡ Up to [**13x faster**](#exact-search--ivf) **exhaustive search** thanks to pruning.
+- ⚡ **Distance kernels** in PDX are up to [**1.6x faster**](#no-pruning-and-no-index) than the `float32` kernels available in SimSIMD (USearch) and FAISS. 
   - *Why?* Distance kernels in PDX are free of dependencies and have fewer LOAD/STORE operations. 
-- Distance kernels can auto-vectorize efficiently without explicit SIMD for `float32`.
-- Distance kernels on small vectors (`d < 16`) are up to **8x faster** than SIMD kernels in [SimSIMD](https://github.com/ashvardanian/SimSIMD).
+- Distance kernels can **auto-vectorize efficiently** without explicit SIMD for `float32`.
+- Distance kernels on **small vectors** (`d < 16`) are up to **8x faster** than SIMD kernels in [SimSIMD](https://github.com/ashvardanian/SimSIMD).
 - More efficient compressed representations of vectors (WIP).
 
 
-# Contents
+## Contents
 - [Pruning in a Nutshell](#pruning-in-a-nutshell)
 - [Quickstart](#quickstart)
 - [Use cases (comparison with FAISS)](#use-cases)
@@ -31,7 +31,7 @@
 
 However, pruning methods that do partial distance calculations have a hard time being on par with SIMD-optimized kernels like the ones in [FAISS](https://github.com/facebookresearch/faiss/) and [SimSIMD](https://github.com/ashvardanian/SimSIMD). 
 
-**Only thanks to the PDX layout**, do pruning methods outperform SIMD-optimized kernels in all CPU microarchitectures (Zens, Intels, Gravitons). This is because, in PDX, distance calculations are efficient even in small vector segments or datasets with a low dimensionality. Also, the evaluation of the pruning predicate is not interleaved with distance calculations.
+**Only thanks to the PDX layout**, do pruning methods outperform SIMD-optimized kernels in all CPU microarchitectures (Zens, Intels, Gravitons). This is because, in PDX, distance calculations are efficient even in small vector segments and vectors with a low dimensionality. Also, the evaluation of the pruning predicate is not interleaved with distance calculations.
 
 Pruning algorithms are **especially effective** when:
 - Vectors are of high dimensionality (`d > 512`)
@@ -41,7 +41,9 @@ Pruning algorithms are **especially effective** when:
 
 Click [here](#use-cases) to see some **quick benchmarks** of our Python bindings vs FAISS. The complete benchmarks are available in [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). Furthermore, you will find details on how we adapted these novel pruning algorithms to work in PDX.
 
-We also refer to the recent research on pruning algorithms with partial distance calculations: [ADSampling](https://github.com/gaoj0017/ADSampling/), [DDC](https://github.com/mingyu-hkustgz/Res-Infer) (previously named BSA), and [DADE](https://github.com/Ur-Eine/DADE). All of these rely on rotating the vector collection to prune effectively. Alongside [PDX](https://ir.cwi.nl/pub/35044/35044.pdf), we also introduce **PDX-BOND**, a simpler pruning algorithm that does not need to rotate the vectors (based on [BOND](https://dl.acm.org/doi/pdf/10.1145/564691.564729)). 
+The latest **pruning algorithms** based on partial distance calculations are [ADSampling](https://github.com/gaoj0017/ADSampling/), [DDC](https://github.com/mingyu-hkustgz/Res-Infer) (previously named BSA), and [DADE](https://github.com/Ur-Eine/DADE). All of these rely on rotating the vector collection to prune effectively. PDX+ADSampling works great in most scenarios.
+
+Alongside PDX, we also introduce **PDX-BOND**, a simpler and exact pruning algorithm that does not need to rotate the vectors (based on [BOND](https://dl.acm.org/doi/pdf/10.1145/564691.564729)). 
 
 
 ## Quickstart
@@ -80,7 +82,7 @@ For more details on the available examples and how to use your own data, refer t
 
 ## Use Cases
 ### IVF indexes
-PDX paired with ADSampling on IVF indexes works great in most scenarios with less than 0.001 recall loss. The higher the dimensionality, the higher the gains from pruning. The following benchmarks are from [/examples/pdxearch_ivf.py](./examples/pdxearch_ivf.py). 
+PDX paired with the pruning algorithm [ADSampling](https://github.com/gaoj0017/ADSampling/) on IVF indexes works great in most scenarios with less than 0.001 recall loss. The higher the dimensionality, the higher the gains from pruning. The following benchmarks are from [/examples/pdxearch_ivf.py](./examples/pdxearch_ivf.py). 
 
 **NOTE THAT on these benchmarks: (i) Both FAISS and PDXearch are scanning exactly the same vectors. (ii) The recall loss of ADSampling is always less than 0.001.**
 
@@ -97,7 +99,7 @@ PDX paired with ADSampling on IVF indexes works great in most scenarios with les
 | SIFT · d=128 · 1M                                         | 1.1 · 0.5 · 0.3                   | 0.7 · 0.4 · 0.2    | **1.6x · 1.3x · 1.3x** |
 
 ### Exact search + IVF
-In PDX, building an IVF index can significantly improve exact search speed (thanks to the reliable pruning). The following benchmarks are from [/examples/pdxearch_ivf_exhaustive.py](./examples/pdxearch_ivf_exhaustive.py).
+In PDX, building an IVF index can significantly improve exact search speed (thanks to the reliable pruning), even if the clustering is not super optimized. The following benchmarks are from [/examples/pdxearch_ivf_exhaustive.py](./examples/pdxearch_ivf_exhaustive.py).
 
 | Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS <br> AVX512 | PDXearch | Improvement |
 |-------------------------------------------------------------------|---------------|----------|-------------|
