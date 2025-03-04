@@ -1,6 +1,5 @@
 #include <iostream>
 #include <string>
-#include "utils/benchmark_utils.hpp"
 #include "distance_computers.hpp"
 
 
@@ -21,11 +20,11 @@ int main(int argc, char *argv[]) {
     }
     std::cout << "==> NEON SIMD\n";
 
-    size_t NUM_WARMUP_RUNS = 300;
-    size_t NUM_MEASURE_RUNS = 3000;
+    size_t NUM_WARMUP_RUNS = 30;
+    size_t NUM_MEASURE_RUNS = 300;
     if (N_VECTORS <= 4096){
-        NUM_WARMUP_RUNS = 3000;
-        NUM_MEASURE_RUNS = 30000;
+        NUM_WARMUP_RUNS = 300;
+        NUM_MEASURE_RUNS = 3000;
     }
 
     std::cout << "RUNS: " << NUM_MEASURE_RUNS << "\n";

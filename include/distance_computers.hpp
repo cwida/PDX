@@ -2,7 +2,7 @@
 #include <arm_sve.h>
 #endif
 
-#ifdef __ARM_NEON
+#if defined(__ARM_NEON) && !USE_SVE
 #include "arm_neon.h"
 #endif
 

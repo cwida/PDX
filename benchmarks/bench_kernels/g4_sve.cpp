@@ -1,11 +1,10 @@
-#include <iostream>
-#include <string>
-#include "utils/benchmark_utils.hpp"
-#include "distance_computers.hpp"
-
 #ifndef USE_SVE
 #define USE_SVE = true
 #endif
+
+#include <iostream>
+#include <string>
+#include "distance_computers.hpp"
 
 
 void __attribute__((noinline)) work(const float *__restrict query, const float *__restrict data, size_t DIMENSION, float *__restrict distances, size_t vector_idx){
@@ -24,11 +23,11 @@ int main(int argc, char *argv[]) {
     }
     std::cout << "==> SVE SIMD\n";
 
-    size_t NUM_WARMUP_RUNS = 300;
-    size_t NUM_MEASURE_RUNS = 3000;
+    size_t NUM_WARMUP_RUNS = 30;
+    size_t NUM_MEASURE_RUNS = 300;
     if (N_VECTORS <= 4096){
-        NUM_WARMUP_RUNS = 3000;
-        NUM_MEASURE_RUNS = 30000;
+        NUM_WARMUP_RUNS = 300;
+        NUM_MEASURE_RUNS = 3000;
     }
 
     std::cout << "RUNS: " << NUM_MEASURE_RUNS << "\n";
