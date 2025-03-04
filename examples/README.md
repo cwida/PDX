@@ -24,4 +24,5 @@ This collection of examples uses the algorithms exposed in our Python bindings.
 - `pdxearch_ivf_exhaustive_bond.py`: Exact search using PDXearch (pruned search) + BOND with an IVF index (built with FAISS). We can do an exact search by exploring all the buckets. This produces exact results.
 - `pdxearch_persist.py`: Example to store the PDX index and the metadata of ADSampling in a file to use later
 
-Note that as part of our research, we also ran benchmarks of PDXearch against the pruning algorithms [ADSampling](https://github.com/gaoj0017/ADSampling/) and [BSA](https://github.com/mingyu-hkustgz/Res-Infer) (renamed to [DDC](https://arxiv.org/pdf/2404.16322)) on the N-ary/horizontal layout. These are not available to use directly in our Python bindings. Refer to [BENCHMARKING.md](/BENCHMARKING.md).
+> [!NOTE]  
+> As part of our research, we also ran benchmarks of PDXearch against the pruning algorithms [ADSampling](https://github.com/gaoj0017/ADSampling/) and [BSA](https://github.com/mingyu-hkustgz/Res-Infer) (renamed to [DDC](https://arxiv.org/pdf/2404.16322)) on the N-ary/horizontal layout. These are not available to use directly in our Python bindings. Refer to [BENCHMARKING.md](/BENCHMARKING.md).

@@ -77,7 +77,7 @@ python ./examples/pdxearch_simple.py
 For more details on the available examples and how to use your own data, refer to [/examples/README.md](./examples/README.md). 
 
 > [!NOTE]
-> - We heavily rely on [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) to create the underlying IVF indexes. 
+> We heavily rely on [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) to create the underlying IVF indexes. 
 
 ## Use Cases
 We present some single-threaded **benchmarks** from our [examples](/examples) against FAISS for some use cases in which PDX shines. We use `r7iz.2xlarge` (Intel SPR) and `r8g.2xlarge` (Graviton 4) AWS instances.  
