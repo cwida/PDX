@@ -39,9 +39,6 @@ public:
     inline static std::string NARY_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/nary/";
     inline static std::string PDX_ADSAMPLING_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/adsampling_pdx/";
     inline static std::string NARY_ADSAMPLING_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/adsampling_nary/";
-    inline static std::string DSM_ADSAMPLING_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/adsampling_dsm/";
-    inline static std::string DSM_BSA_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/bsa_dsm/";
-    inline static std::string DSM_BOND_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/bond_dsm/";
     inline static std::string PDX_BSA_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/bsa_pdx/";
     inline static std::string NARY_BSA_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/bsa_nary/";
     inline static std::string GROUND_TRUTH_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/ground_truth/";

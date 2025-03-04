@@ -8,8 +8,8 @@ fi
 set -e
 
 python_command="$1"
-datasets=("nytimes-16-angular" "glove-50-angular" "deep-image-96-angular" "sift-128-euclidean" "glove-200-angular" "msong-420" "contriever-768" "instructorxl-arxiv-768" "gist-960-euclidean" "openai-1536-angular")
-
+# datasets=("nytimes-16-angular" "glove-50-angular" "deep-image-96-angular" "sift-128-euclidean" "glove-200-angular" "msong-420" "contriever-768" "instructorxl-arxiv-768" "gist-960-euclidean" "openai-1536-angular")
+datasets=("har-561")
 make BenchmarkNaryIVFADSampling
 make BenchmarkNaryIVFADSamplingSIMD
 make BenchmarkPDXADSampling

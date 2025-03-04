@@ -19,10 +19,6 @@ def generate_adsampling_ivf(dataset_name: str, _types=('pdx', 'dual')):
     base_idx._to_pdx(data, _type='pdx', centroids_preprocessor=preprocessor, use_original_centroids=True)
     base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-ivf'))
 
-    # DSM
-    # base_idx._to_pdx(data, _type='dsm', centroids_preprocessor=preprocessor, use_original_centroids=True)
-    # base_idx._persist(os.path.join(DSM_ADSAMPLING_DATA, dataset_name + '-ivf'))
-
     # DUAL-BLOCK
     base_idx._to_pdx(data, _type='dual', delta_d=get_delta_d(len(data[0])), centroids_preprocessor=preprocessor, use_original_centroids=True)
     base_idx._persist(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-ivf-dual-block'))

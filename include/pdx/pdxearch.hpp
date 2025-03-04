@@ -62,10 +62,6 @@ public:
         ivf_nprobe = nprobe;
     }
 
-    void SetDSM(bool dsm){
-        DSM = dsm;
-    }
-
     IndexPDXIVFFlat &pdx_data;
     uint32_t current_dimension_idx {0};
 
@@ -74,7 +70,6 @@ protected:
     size_t ivf_nprobe = 0;
     int is_positional_pruning = false;
     size_t current_vectorgroup = 0;
-    bool DSM = false;
 
     PDXearchDimensionsOrder dimension_order = SEQUENTIAL;
     // Evaluating the pruning threshold is so fast that we can allow smaller fetching sizes
@@ -333,9 +328,6 @@ protected:
     template<bool USE_DIMENSIONS_REORDER, DistanceFunction L_ALPHA=ALPHA>
     void CalculateVerticalDistancesForPruning(const float *__restrict query, const float *__restrict data, size_t n_vectors, size_t total_vectors, size_t start_dimension, size_t end_dimension){
         size_t dimensions_jump_factor = total_vectors;
-        if (DSM) {
-            dimensions_jump_factor = total_embeddings;
-        }
         for (size_t dimension_idx = start_dimension; dimension_idx < end_dimension; ++dimension_idx) {
             uint32_t true_dimension_idx = dimension_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -392,9 +384,6 @@ protected:
         __m256 data_vec_m256, d_vec_m256, cur_dist_vec_m256;
         // Then we move data to be sequential
         size_t dimensions_jump_factor = total_vectors;
-        if (DSM) {
-            dimensions_jump_factor = total_embeddings;
-        }
         for (size_t dimension_idx = start_dimension; dimension_idx < end_dimension; ++dimension_idx) {
             uint32_t true_dimension_idx = dimension_idx;
             if constexpr (USE_DIMENSIONS_REORDER) {
@@ -483,9 +472,6 @@ protected:
         }
 #endif
         size_t dimensions_jump_factor = total_vectors;
-        if (DSM) {
-            dimensions_jump_factor = total_embeddings;
-        }
         for (size_t dimension_idx = start_dimension; dimension_idx < end_dimension; ++dimension_idx) {
             uint32_t true_dimension_idx = dimension_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -680,7 +666,7 @@ public:
      * Search methods
      ******************************************************************/
 
-    // PDXearch
+    // PDXearch: PDX + Pruning
     std::vector<KNNCandidate> Search(float *__restrict raw_query, uint32_t k) {
 #ifdef BENCHMARK_TIME
         ResetClocks();
@@ -751,97 +737,6 @@ public:
 #ifdef BENCHMARK_TIME
         end_to_end_clock.Toc();
 #endif
-        return BuildResultSet(k);
-    }
-
-    // Linear Scans that do not prune vectors on an IVF index
-    std::vector<KNNCandidate> LinearScanIVF(float *__restrict raw_query, uint32_t k) {
-#ifdef BENCHMARK_TIME
-        ResetClocks();
-        end_to_end_clock.Tic();
-#endif
-        float query[pdx_data.num_dimensions];
-        PreprocessQuery(raw_query, query);
-        best_k = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>{};
-        size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
-
-        GetVectorgroupsAccessOrderIVFPDX(query, ivf_nprobe, vectorgroups_indices);
-        vectorgroups_to_visit = ivf_nprobe;
-        for (size_t vectorgroup_idx = 0; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
-            current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
-            Vectorgroup& vectorgroup = pdx_data.vectorgroups[current_vectorgroup]; 
-
-            const size_t SKIPPING_SIZE = PDX_VECTOR_SIZE * pdx_data.num_dimensions;
-            size_t vectors_to_process = vectorgroup.num_embeddings;
-            size_t full_chunks = std::floor(1.0 * vectors_to_process / PDX_VECTOR_SIZE); 
-            size_t remainder_chunk_size = vectors_to_process % PDX_VECTOR_SIZE;
-            float * tmp_data = vectorgroup.data;
-            uint32_t * tmp_indices = vectorgroup.indices;
-
-            for (size_t chunk_idx = 0; chunk_idx < full_chunks; ++chunk_idx){
-                ResetDistancesVectorized();
-                CalculateVerticalDistancesVectorized<false, ALPHA>(query, tmp_data, 0, pdx_data.num_dimensions);
-                MergeIntoHeap<false>(tmp_indices, PDX_VECTOR_SIZE, k, best_k);
-                tmp_data += SKIPPING_SIZE;
-                tmp_indices += PDX_VECTOR_SIZE;
-            }
-            if (remainder_chunk_size){
-                ResetDistancesScalar(remainder_chunk_size);
-                CalculateVerticalDistancesScalar<false, ALPHA>(query, tmp_data, remainder_chunk_size,  0, pdx_data.num_dimensions);
-                MergeIntoHeap<false>(tmp_indices, remainder_chunk_size, k, best_k);
-            }
-        }
-#ifdef BENCHMARK_TIME
-        end_to_end_clock.Toc();
-#endif
-        return BuildResultSet(k);
-    }
-
-    // Linear Scan on a fully decomposed layout
-    std::vector<KNNCandidate> LinearScanDSM(float *__restrict raw_query, uint32_t k) {
-        auto * dsm_distances = new float[total_embeddings];
-        auto * dsm_indices = new uint32_t[total_embeddings];
-        memset((void*) dsm_distances, 0, total_embeddings * sizeof(float));
-        size_t tmp_vidx = 0;
-        for (size_t i = 0; i < pdx_data.num_vectorgroups; ++i) {
-            Vectorgroup current_vg = pdx_data.vectorgroups[i];
-            for (size_t j = 0; j < current_vg.num_embeddings; ++j) {
-                dsm_indices[tmp_vidx] = current_vg.indices[j];
-                tmp_vidx++;
-            }
-        }
-#ifdef BENCHMARK_TIME
-        ResetClocks();
-        end_to_end_clock.Tic();
-#endif
-        float query[pdx_data.num_dimensions];
-        PreprocessQuery(raw_query, query);
-        best_k = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>{};
-        float * data = pdx_data.vectorgroups[0].data;
-        for (size_t dim_idx = 0; dim_idx < pdx_data.num_dimensions; dim_idx++) {
-            size_t dimension_idx = dim_idx;
-            size_t offset_to_dimension_start = dimension_idx * total_embeddings;
-            for (size_t vector_idx = 0; vector_idx < total_embeddings; ++vector_idx) {
-                float to_multiply = query[dimension_idx] - data[offset_to_dimension_start + vector_idx];
-                dsm_distances[vector_idx] += to_multiply * to_multiply;
-            }
-        }
-        for (size_t vector_idx = 0; vector_idx < total_embeddings; ++vector_idx) {
-            if (best_k.size() < k || dsm_distances[vector_idx] < best_k.top().distance) {
-                KNNCandidate embedding{};
-                embedding.distance = dsm_distances[vector_idx];
-                embedding.index = dsm_indices[vector_idx];
-                if (best_k.size() >= k) {
-                    best_k.pop();
-                }
-                best_k.push(embedding);
-            }
-        }
-#ifdef BENCHMARK_TIME
-        end_to_end_clock.Toc();
-#endif
-        delete[] dsm_distances;
-        delete[] dsm_indices;
         return BuildResultSet(k);
     }
 

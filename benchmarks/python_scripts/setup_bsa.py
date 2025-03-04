@@ -18,9 +18,6 @@ def generate_bsa_ivf(dataset_name: str, _types=('pdx', 'dual')):
     # PDX
     base_idx._to_pdx(data, _type='pdx')
     base_idx._persist(os.path.join(PDX_BSA_DATA, dataset_name + '-ivf'))
-    # DSM
-    # base_idx._to_pdx(data, _type='dsm')
-    # base_idx._persist(os.path.join(DSM_BSA_DATA, dataset_name + '-ivf'))
     # DUAL-BLOCK
     base_idx._to_pdx(data, _type='dual', delta_d=get_delta_d(len(data[0])))
     base_idx._persist(os.path.join(NARY_BSA_DATA, dataset_name + '-ivf-dual-block'))
