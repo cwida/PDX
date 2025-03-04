@@ -8,7 +8,7 @@ Therefore, to set up the data, we:
 1. Download the raw files containing the vectors. We use the `.hdf5` format following the convention used in the [ANN-Benchmarks](https://github.com/erikbern/ann-benchmarks/) project. One `.hdf5` file with two datasets: `train` and `test`.
 2. Build a *core* IVF index for each dataset using FAISS.
 3. From the *core* index, we read the vectors and apply the respective transformations for (i) ADSampling and (ii) DDC (previously named BSA). For (iii) BOND, we just bypass the raw vectors.
-4. We store the preprocessed vectors in a file using one of the following layouts: (i) Dual-block or (ii) PDX. The Dual-block layout is the N-ary layout partitioned in two blocks at Δd (refer to the [ADSampling paper](https://dl.acm.org/doi/pdf/10.1145/3589282) or [our publication](https://ir.cwi.nl/pub/35044/35044.pdf)). For PDX-LINEAR-SCAN (no pruning on PDX), we use groups vectors in the PDX layout in blocks of 64. 
+4. We store the preprocessed vectors in a file using one of the following layouts: (i) Dual-block or (ii) PDX. The Dual-block layout is the N-ary layout partitioned in two blocks at Δd (refer to the [ADSampling paper](https://dl.acm.org/doi/pdf/10.1145/3589282) or [our publication](https://ir.cwi.nl/pub/35044/35044.pdf)). For PDX-LINEAR-SCAN (no pruning on PDX), we group vectors in the PDX layout in blocks of 64. 
 
 Note that we did not use our Python bindings for our own benchmarking.
 

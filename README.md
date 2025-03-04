@@ -134,7 +134,7 @@ Use **PDX+BOND**, our pruning algorithm. Here, vectors are not transformed, and 
 
 
 ### No pruning and no index
-PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). The following benchmarks are from [/examples/pdx_brute.py](./examples/pdx_brute.py).
+PDX distance kernels are also faster than the state-of-the-art SIMD kernels in all major architectures, only relying on auto-vectorization (for `float32`). For a detailed explanation, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). The following benchmarks are from [/examples/pdx_brute.py](./examples/pdx_brute.py).
 
 | Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | USearch | FAISS <br> AVX512 | PDXearch | Improvement     |
 |------------------------------------------------------|---------|---------------|----------|-----------------|

@@ -32,10 +32,6 @@ if __name__ == "__main__":
 
     if GENERATE_SYNTHETIC:
         generate_synthetic_data()
-        generate_synthetic_data(32, (768,), (1024,))
-        generate_synthetic_data(128, (768,), (1024,))
-        generate_synthetic_data(256, (768,), (1024,))
-        generate_synthetic_data(512, (768,), (1024,))
 
     for dataset in DATASETS:
         print('\n================ PROCESSING:', dataset, '================')
