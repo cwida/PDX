@@ -37,27 +37,27 @@ def generate_synthetic_data(BLOCK_SIZES=(), dimensions=(), vectors=(), dtype=np.
                 file.write(data.tobytes("C"))
 
             # Write PDX
-            for BLOCK_SIZE in BLOCK_SIZES:
-                print(BLOCK_SIZE, D, V, (D * V * type_size) / (1024 * 1024 * 1024))
-                if V % BLOCK_SIZE != 0:
-                    continue
-                total_disk_needed += (D * V * type_size) / (1024 * 1024 * 1024)
-                if BLOCK_SIZE != adaptive_block_size:
-                    filename_pdx = f'{BLOCK_SIZE}x{V}x{D}-pdx-{dtype.__name__}'
-                else:
-                    filename_pdx = f'{V}x{D}-pdx-{dtype.__name__}'
-                filelocation_pdx = os.path.join(PURESCAN_DATA, filename_pdx)
-                print(filelocation_pdx)
-                with open(filelocation_pdx, 'wb') as file:
-                    file.write(data[0, :].tobytes("C"))  # Query vector
-                    if V < BLOCK_SIZE:
-                        file.write(data.tobytes("F"))
-                    else:
-                        pdx_chunks = V // BLOCK_SIZE
-                        cur_offset = 1
-                        for i in range(pdx_chunks):
-                            file.write(data[cur_offset: cur_offset + BLOCK_SIZE, :].tobytes("F"))
-                            cur_offset += BLOCK_SIZE
+            # for BLOCK_SIZE in BLOCK_SIZES:
+            #     print(BLOCK_SIZE, D, V, (D * V * type_size) / (1024 * 1024 * 1024))
+            #     if V % BLOCK_SIZE != 0:
+            #         continue
+            #     total_disk_needed += (D * V * type_size) / (1024 * 1024 * 1024)
+            #     if BLOCK_SIZE != adaptive_block_size:
+            #         filename_pdx = f'{BLOCK_SIZE}x{V}x{D}-pdx-{dtype.__name__}'
+            #     else:
+            #         filename_pdx = f'{V}x{D}-pdx-{dtype.__name__}'
+            #     filelocation_pdx = os.path.join(PURESCAN_DATA, filename_pdx)
+            #     print(filelocation_pdx)
+            #     with open(filelocation_pdx, 'wb') as file:
+            #         file.write(data[0, :].tobytes("C"))  # Query vector
+            #         if V < BLOCK_SIZE:
+            #             file.write(data.tobytes("F"))
+            #         else:
+            #             pdx_chunks = V // BLOCK_SIZE
+            #             cur_offset = 1
+            #             for i in range(pdx_chunks):
+            #                 file.write(data[cur_offset: cur_offset + BLOCK_SIZE, :].tobytes("F"))
+            #                 cur_offset += BLOCK_SIZE
     print(total_disk_needed)
 
 

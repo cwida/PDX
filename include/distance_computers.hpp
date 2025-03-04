@@ -1,3 +1,7 @@
+#ifdef __ARM_FEATURE_SVE
+#include <arm_sve.h>
+#endif
+
 #ifdef __ARM_NEON
 #include "arm_neon.h"
 #endif
@@ -99,7 +103,26 @@ public:
 #endif
 
     static float CalculateDistance(const float *__restrict vector1, const float *__restrict vector2, size_t num_dimensions) {
-#if defined(__ARM_NEON)
+// TODO: Remove USE_SVE
+#if defined(USE_SVE) && defined(__ARM_FEATURE_SVE)
+        if constexpr(ALPHA == PDX::L2){
+            svfloat32_t d2_vec = svdupq_n_f32(0.f, 0.f, 0.f, 0.f);
+            size_t i = 0;
+            do {
+                svbool_t pg_vec = svwhilelt_b32((unsigned int)i, (unsigned int)num_dimensions);
+                svfloat32_t a_vec = svld1_f32(pg_vec, vector1 + i);
+                svfloat32_t b_vec = svld1_f32(pg_vec, vector2 + i);
+                svfloat32_t a_minus_b_vec = svsub_f32_x(pg_vec, a_vec, b_vec);
+                d2_vec = svmla_f32_x(pg_vec, d2_vec, a_minus_b_vec, a_minus_b_vec);
+                i += svcntw();
+            } while (i < num_dimensions);
+
+            float distance = svaddv_f32(svptrue_b32(), d2_vec);
+            return distance;
+        }
+        // Pending IP and L1
+        return 0;
+#elif defined(__ARM_NEON)
         if constexpr(ALPHA == PDX::L2){
             float32x4_t sum_vec = vdupq_n_f32(0);
             size_t i = 0;

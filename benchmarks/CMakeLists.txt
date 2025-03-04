@@ -15,6 +15,10 @@ add_executable(BenchmarkPDXBOND ./bench_bond/pdx_bond.cpp)
 add_executable(BenchmarkPDXLinearScan ./bench_linear/pdx_linear_scan.cpp)
 add_executable(BenchmarkNaryIVFLinearScan bench_linear/nary_ivf_linear_scan.cpp)
 
+# SVE vs nEON
+add_executable(G4SVE ./bench_kernels/g4_sve.cpp)
+add_executable(G4NEON ./bench_kernels/g4_neon.cpp)
+
 # Kernels experiment
 add_executable(KernelPDXL1 ./bench_kernels/pdx_l1.cpp)
 add_executable(KernelPDXL2 ./bench_kernels/pdx_l2.cpp)

@@ -69,7 +69,6 @@ int main(int argc, char *argv[]) {
             dataset,
             ALGORITHM,
             NUM_MEASURE_RUNS,
-            NUM_WARMUP_RUNS,
             1,
             0,
             0

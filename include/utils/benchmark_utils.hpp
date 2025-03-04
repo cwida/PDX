@@ -15,6 +15,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <filesystem>
+#include "vector_searcher.hpp"
 
 
 struct BenchmarkMetadata {
