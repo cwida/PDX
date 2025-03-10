@@ -86,13 +86,13 @@ PDX paired with the pruning algorithm [ADSampling](https://github.com/gaoj0017/A
 
 | Avg. query time <br> [<ins>Intel SPR</ins> \| r7iz.2x] | FAISS AVX512 <br> R@10: 0.99 · 0.95 · 0.90 | PDXearch           | Improvement            |
 |--------------------------------------------------------|-----------------------------------------|--------------------|------------------------|
-| DBPedia · d=1536 · 1M                                | 53.6 · 18.0 · 7.7 ms                    | 7.4 · 3.7 · 2.4 ms | **7.2x · 4.9x · 3.2x** |
+| OpenAI · d=1536 · 1M                                | 53.6 · 18.0 · 7.7 ms                    | 7.4 · 3.7 · 2.4 ms | **7.2x · 4.9x · 3.2x** |
 | arXiv · d=768 · 2.25M                                | 25.9 · 7.7 · 3.5                        | 6.2 · 2.8 · 1.7    | **4.2x · 2.8x · 2.1x** |
 | SIFT · d=128 · 1M                                    | 1.7 · 0.6 · 0.4                         | 1.0 · 0.4 · 0.3    | **1.7x · 1.5x · 1.3x** |
 
 | Avg. query time <br> [<ins>Graviton 4</ins> \| r8g.2x] | FAISS SVE <br> R@10: 0.99 · 0.95 · 0.90 | PDXearch           | Improvement            |
 |-------------------------------------------------------------|-----------------------------------|--------------------|------------------------|
-| DBPedia · d=1536 · 1M                                     | 47.1 · 18.4 · 6.7 ms              | 7.1 · 4.1 · 2.5 ms | **6.6x · 4.5x · 2.7x** |
+| OpenAI · d=1536 · 1M                                     | 47.1 · 18.4 · 6.7 ms              | 7.1 · 4.1 · 2.5 ms | **6.6x · 4.5x · 2.7x** |
 | arXiv · d=768 · 2.25M                                     | 25.3 · 7.0 · 3.2                  | 5.9 · 2.7 · 1.7    | **4.3x · 2.6x · 1.9x** |
 | SIFT · d=128 · 1M                                         | 1.1 · 0.5 · 0.3                   | 0.7 · 0.4 · 0.2    | **1.6x · 1.3x · 1.3x** |
 
@@ -100,36 +100,38 @@ PDX paired with the pruning algorithm [ADSampling](https://github.com/gaoj0017/A
 > On these benchmarks: (i) Both FAISS and PDXearch are scanning exactly the same vectors. (ii) The recall loss of ADSampling is always less than 0.001.
 
 
-### Exact search + IVF
-In PDX, building an IVF index can significantly improve exact search speed (thanks to the reliable pruning), even if the clustering is not super optimized. The following benchmarks are from [/examples/pdxearch_ivf_exhaustive.py](./examples/pdxearch_ivf_exhaustive.py).
+### Exhaustive search + IVF
+Exhaustive search means to scan all the vectors of the collection. In PDX, building an IVF index can significantly improve the speed of exhaustive search (thanks to the reliable pruning of ADSampling), even if the clustering is not super optimized. The following benchmarks are from [/examples/pdxearch_ivf_exhaustive.py](./examples/pdxearch_ivf_exhaustive.py).
 
 | Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS <br> AVX512 | PDXearch | Improvement |
 |-------------------------------------------------------------------|---------------|----------|-------------|
-| DBPedia · d=1536 · 1M                                           | 411.7 ms      | 34.9 ms  | **11.8x**   |
+| OpenAI · d=1536 · 1M                                           | 411.7 ms      | 34.9 ms  | **11.8x**   |
 | GIST · d=960 · 1M                                               | 252.9         | 27.6     | **9.1x**    |
 | arXiv · d=768 · 2.25M                                           | 454.5         | 41.4     | **11.0x**   |
 | SIFT · d=128 · 1M                                               | 34.4          | 6.5      | **5.3x**    |
 
 | Avg. query time<br>[<ins>Graviton 4</ins> \| r8g.2x] | FAISS <br> SVE | PDXearch | Improvement |
 |-----------------------------------------------------------|------------|----------|-------------|
-| DBPedia · d=1536 · 1M                                   | 277.2 ms   | 21.7 ms  | **12.8x**   |
+| OpenAI · d=1536 · 1M                                   | 277.2 ms   | 21.7 ms  | **12.8x**   |
 | GIST · d=960 · 1M                                       | 170.9      | 19.4     | **8.8x**    |
 | arXiv · d=768 · 2.25M                                   | 306.0      | 27.2     | **11.3x**   |
 | SIFT · d=128 · 1M                                       | 21.3       | 4.7      | **4.5x**    |
+
+The key observation here is that thanks to the underlying iVF index, the exhaustive search can start with the most promising clusters. This will, in return, give us a pretty tight threshold to prune for the next ones.
 
 ### Exact search without an index
 Use **PDX+BOND**, our pruning algorithm. Here, vectors are not transformed, and we do not use any additional index. Gains vary depending on the dimensions distribution. The following benchmarks are from [/examples/pdxearch_exact_bond.py](./examples/pdxearch_exact_bond.py).
 
 | Avg. query time<br>[<ins>Intel SPR</ins> \| r7iz.2x] | FAISS <br> AVX512 | PDXearch | Improvement |
 |------------------------------------------------------|---------------|----------|-------------|
-| DBPedia · d=1536 · 1M                                | 374 ms        | 216 ms   | **1.7x**    |
+| OpenAI · d=1536 · 1M                                | 374 ms        | 216 ms   | **1.7x**    |
 | arXiv · d=768 · 2.25M                                | 422           | 212      | **2.0x**    |
 | MSong · d = 420 · 1M                                 | 117           | 15       | **7.8x**    |
 | SIFT · d=128 · 1M                                    | 31            | 10       | **3.1x**    |
 
 | Avg. query time <br> [<ins>Graviton 4</ins> \| r8g.2x] | FAISS <br> SVE | PDXearch | Improvement |
 |--------------------------------------------------------|------------|----------|-------------|
-| DBPedia · d=1536 · 1M                                  | 278 ms     | 139 ms   | **2.0x**    |
+| OpenAI · d=1536 · 1M                                  | 278 ms     | 139 ms   | **2.0x**    |
 | arXiv · d=768 · 2.25M                                  | 305        | 155      | **2.0x**    |
 | MSong · d = 420 · 1M                                   | 70         | 15       | **4.7x**    |
 | SIFT · d=128 · 1M                                      | 22         | 11       | **2.0x**    |
@@ -153,13 +155,14 @@ PDX distance kernels are also faster than the state-of-the-art SIMD kernels in a
 > Refer to [our publication](https://ir.cwi.nl/pub/35044/35044.pdf) for the complete benchmarks of PDXearch done in 4 microarchitectures: Intel SPR, Zen 4, Zen 3, and Graviton 4. Here, you will also find a comparison against ADSampling in the horizontal layout (`.fvecs` layout). Furthermore, you will find details on how we adapted pruning algorithms to work in PDX.
 
 ## Roadmap
-- **Compression**: The vertical layout opens opportunities for compression as indexing algorithms group together vectors that share some numerical similarity within their dimensions. The next step on PDX is to apply our scalar quantization algorithm [LEP](https://homepages.cwi.nl/~boncz/msc/2024-ElenaKrippner.pdf), which uses database compression techniques ([ALP](https://github.com/cwida/alp)) to compress vectors with higher compression ratios and less information loss.
-- **More data types**: For compressed vectors, we need to implement vertical distance kernels on vectors of variable bit size.
+- **Compression**: The vertical layout opens opportunities for compression as indexing algorithms group together vectors that share some numerical similarity within their dimensions. The next step on PDX is to apply our scalar quantization algorithm [LEP](https://homepages.cwi.nl/~boncz/msc/2024-ElenaKrippner.pdf), which uses database compression techniques ([ALP](https://github.com/cwida/alp)) to compress vectors with higher compression ratios and less information loss (WIP)
+- **More data types**: For compressed vectors, we need to implement vertical distance kernels on vectors of variable bit size (WIP)
 - **PDX in HNSW**: For this, we need a layout similar to the ones proposed in [Starling](https://dl.acm.org/doi/pdf/10.1145/3639269) or [AiSAQ](https://arxiv.org/pdf/2404.06004), in which neighborhoods of the graph are stored and fetched in blocks.
 - Improve code readability and usability.
 - Add a testing framework.
 - Add DDC or DADE algorithms to the Python Bindings.
 - Implement multi-threading capabilities.
+- Address other issues, such as how to handle predicated queries on PDX (WIP).
 
 > [!IMPORTANT]   
 > PDX is an ongoing research project. In its current state, it is not production-ready code.

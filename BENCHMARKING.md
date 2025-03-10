@@ -26,7 +26,7 @@ The indexes will be created under the `/benchmarks/datasets/` directory.
 
 ### Downloading the raw vectors `.hdf5` data manually
 We also have options if you prefer to manually download the data:
-- Download and unzip ALL the 22 `.hdf5` datasets (~25GB zipped and ~40GB unzipped) manually from [here](https://drive.google.com/file/d/1I8pbwGDCSe3KqfIegAllwoP5q6F4ohj2/view?usp=sharing). These include the GloVe variants, arXiv/768, DBPedia/1536, DEEP/96, GIST/960, SIFT/128, MNIST, etc. You must put the unzipped `.hdf5` files inside `/benchmarks/datasets/downloaded`.
+- Download and unzip ALL the 22 `.hdf5` datasets (~25GB zipped and ~40GB unzipped) manually from [here](https://drive.google.com/file/d/1I8pbwGDCSe3KqfIegAllwoP5q6F4ohj2/view?usp=sharing). These include the GloVe variants, arXiv/768, OpenAI/1536, DEEP/96, GIST/960, SIFT/128, MNIST, etc. You must put the unzipped `.hdf5` files inside `/benchmarks/datasets/downloaded`.
 - Download datasets individually from [here](https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing). 
 
 Then, run the Master Script with the flag `DOWNLOAD = False`. You can also Uncomment/comment the datasets you wish to create indexes for on the `DATASETS` array [here](/benchmarks/python_scripts/setup_settings.py).
