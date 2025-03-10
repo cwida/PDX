@@ -1,6 +1,15 @@
+#ifndef USE_SVE
+#define USE_SVE = true
+#endif
+
 #include <iostream>
 #include <string>
 #include "distance_computers.hpp"
+
+
+void __attribute__((noinline)) work(const float *__restrict query, const float *__restrict data, size_t DIMENSION, float *__restrict distances, size_t vector_idx){
+	distances[vector_idx] = SIMDScanner<PDX::L2>::CalculateDistance(query, data, DIMENSION);
+}
 
 int main(int argc, char *argv[]) {
     std::string ALGORITHM = "simd";
@@ -12,18 +21,18 @@ int main(int argc, char *argv[]) {
     if (argc > 2){
         DIMENSION = atoi(argv[2]);
     }
-    std::cout << "==> PURE SCAN SIMD\n";
+    std::cout << "==> SVE SIMD\n";
 
     size_t NUM_WARMUP_RUNS = 30;
     size_t NUM_MEASURE_RUNS = 300;
-    if (N_VECTORS <= 8192){
+    if (N_VECTORS <= 4096){
         NUM_WARMUP_RUNS = 300;
         NUM_MEASURE_RUNS = 3000;
     }
 
     std::cout << "RUNS: " << NUM_MEASURE_RUNS << "\n";
 
-    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "PURESCAN_SIMD_IP.csv";
+    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "SVE_L2.csv";
 
     std::string filename = std::to_string(N_VECTORS) + "x"+ std::to_string(DIMENSION);
     std::string dataset = std::to_string(N_VECTORS) + "x" + std::to_string(DIMENSION);
@@ -37,11 +46,11 @@ int main(int argc, char *argv[]) {
     runtimes.resize(NUM_MEASURE_RUNS);
 
     float * data;
-    float distances[N_VECTORS];
+    alignas(64) float distances[N_VECTORS];
     for (size_t j = 0; j < NUM_WARMUP_RUNS; ++j) {
         data = raw_data;
         for (size_t vector_idx = 0; vector_idx < N_VECTORS; ++vector_idx){
-            distances[vector_idx] = SIMDScanner<PDX::IP>::CalculateDistance(query, data, DIMENSION);
+            work(query, data, DIMENSION, distances, vector_idx);
             data += DIMENSION;
         }
     }
@@ -51,10 +60,10 @@ int main(int argc, char *argv[]) {
         data = raw_data;
         TicToc clock = TicToc();
         for (size_t vector_idx = 0; vector_idx < N_VECTORS; ++vector_idx){
-            distances[vector_idx] = SIMDScanner<PDX::IP>::CalculateDistance(query, data, DIMENSION);
+            work(query, data, DIMENSION, distances, vector_idx);
             data += DIMENSION;
         }
-        clock.Toc();
+    	clock.Toc();
         size_t benchmark_time = clock.accum_time;
         runtimes[j] = {benchmark_time};
     }
