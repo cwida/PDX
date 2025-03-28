@@ -14,7 +14,7 @@ def generate_flat(dataset_name: str):
     print('Saving')
     # PDX FLAT BLOCKIFIED
     base_idx._to_pdx(data, size_partition=PDXConstants.PDX_VECTOR_SIZE, _type='pdx')
-    base_idx._persist(os.path.join(PDX_DATA, dataset_name + '-u8-flat-blocks'))
+    base_idx._persist(os.path.join(PDX_DATA, dataset_name + '-flat-blocks'))
 
 
 def generate_u8(dataset_name: str):
