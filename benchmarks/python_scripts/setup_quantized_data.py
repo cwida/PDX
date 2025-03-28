@@ -10,7 +10,6 @@ def generate_flat(dataset_name: str):
     base_idx = BaseIndexPDXFlat(DIMENSIONALITIES[dataset_name], 'l2sq')
     print('Reading train data')
     data = read_hdf5_train_data(dataset_name)
-    data = data.astype(dtype=np.uint8)
     print('Saving')
     # PDX FLAT BLOCKIFIED
     base_idx._to_pdx(data, size_partition=PDXConstants.PDX_VECTOR_SIZE, _type='pdx')
