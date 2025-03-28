@@ -105,6 +105,7 @@ protected:
      ******************************************************************/
     template<bool USE_DIMENSIONS_REORDER, DistanceFunction L_ALPHA=ALPHA>
     void CalculateVerticalDistancesScalar(const uint8_t *__restrict query, const uint8_t *__restrict data, size_t n_vectors, size_t start_dimension, size_t end_dimension){
+#ifdef false
         for (size_t dimension_idx = start_dimension; dimension_idx < end_dimension; ++dimension_idx) {
             uint32_t true_dimension_idx = dimension_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -118,13 +119,49 @@ protected:
                 }
             }
         }
+#elif defined(__ARM_NEON) && true
+//        uint32x4_t res[16];
+//        // Load initial values
+//        for (size_t i = 0; i < 16; ++i) {
+//            res[i] = vdupq_n_u32(0);
+//        }
+        // Compute L2
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
+            uint32_t dimension_idx = dim_idx;
+            uint8x8_t vals = vld1_u8(&query[dimension_idx]);
+            uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+            uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
+            size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
+            size_t i = 0;
+            for (; i < n_vectors - 4; i+=4) {
+                // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+                uint32x4_t res = vld1q_u32(&distances[i]);
+                uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]);
+                uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
+                vst1q_u32(&distances[i], vdotq_u32(res, diff_u8, diff_u8));
+            }
+            for (; i < n_vectors; ++i) {
+                // I am sure I will have 4 dims
+                int to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + i];
+                int to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + i + 1];
+                int to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + i + 2];
+                int to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + i + 3];
+                distances[i] += (to_multiply_a * to_multiply_a) +
+                        (to_multiply_b * to_multiply_b) +
+                        (to_multiply_c * to_multiply_c) +
+                        (to_multiply_d * to_multiply_d);
+            }
+
+        }
+#endif
     }
 
     template<bool USE_DIMENSIONS_REORDER, DistanceFunction L_ALPHA=ALPHA>
     void CalculateVerticalDistancesVectorized(
         const uint8_t *__restrict query, const uint8_t *__restrict data, size_t start_dimension, size_t end_dimension){
 #if false
-        //Auto-vectorized: 3.24 (uint8) vs 4.13 (float32)
+//Auto-vectorized M1: 3.24 (uint8) vs 4.13 (float32)
+//Auto-vectorized G4: 4.18 (uint8) vs 7.81 (float32)
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
             size_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER) {
@@ -138,68 +175,23 @@ protected:
                 }
             }
         }
-// SIMD Upcast: 5.66819 (uint8) vs 4.17 (float32)
-#elif defined(__ARM_NEON) && false
-        uint32x4_t res[16];
-        // Load initial values
-        for (size_t i = 0; i < 16; ++i) {
-            res[i] = vld1q_u32(&distances[i * 4]);
-        }
-        // Compute squared differences
-        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
-            uint32_t dimension_idx = dim_idx;
-            uint8x16_t vec1_u8 = vdupq_n_u8(query[dimension_idx]);
-            size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
-            for (int i = 0; i < 16; i+=4) {
-                // Read 16 bytes of data (16 values)
-                uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]);
-                uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
-
-                // Upcast to uint16_t
-                uint16x8_t diff_low = vmovl_u8(vget_low_u8(diff_u8));
-                uint16x8_t diff_high = vmovl_u8(vget_high_u8(diff_u8));
-
-                // Square the differences
-                uint16x8_t diff_low_sq = vmulq_u16(diff_low, diff_low);
-                uint16x8_t diff_high_sq = vmulq_u16(diff_high, diff_high);
-
-                // Upcast the 16 bits to 32 bits
-                uint32x4_t m_low_low = vmovl_u16(vget_low_u16(diff_low_sq));
-                uint32x4_t m_low_high = vmovl_u16(vget_high_u16(diff_low_sq));
-
-                uint32x4_t m_high_low = vmovl_u16(vget_low_u16(diff_high_sq));
-                uint32x4_t m_high_high = vmovl_u16(vget_high_u16(diff_high_sq));
-
-                // Since I am reading 16 values at a time, I can fill 4 registers in one go
-                // Each register
-                res[i] = vaddq_u32(res[i], m_low_low);
-                res[i+1] = vaddq_u32(res[i+1], m_low_high);
-                res[i+2] = vaddq_u32(res[i+2], m_high_low);
-                res[i+3] = vaddq_u32(res[i+3], m_high_high);
-                //std::cout << i << "\n";
-            }
-        }
-        // Store results back
-        for (int i = 0; i < 16; ++i) {
-            vst1q_u32(&distances[i * 4], res[i]);
-        }
-// SIMD Dot Product: 5.66819 (uint8) vs 4.17 (float32)
+// SIMD Dot Product (M1): XXXX (uint8) vs 4.17 (float32)
+// SIMD Dot Product (G4): 1.94 (uint8) vs 8.10 (float32) !!! 4.17x faster; perfect scaling!
 #elif defined(__ARM_NEON) && true
         uint32x4_t res[16];
         // Load initial values
         for (size_t i = 0; i < 16; ++i) {
             res[i] = vdupq_n_u32(0);
         }
-        // Compute squared differences
-        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
+        // Compute L2
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
-            uint8x16_t vec1_u8 = vdupq_n_u8(query[dimension_idx]);
-            vec1_u8 = vsetq_lane_u8(query[dimension_idx] + 1, vec1_u8, 1);
-            vec1_u8 = vsetq_lane_u8(query[dimension_idx] + 2, vec1_u8, 2);
-            vec1_u8 = vsetq_lane_u8(query[dimension_idx] + 3, vec1_u8, 3);
+            uint8x8_t vals = vld1_u8(&query[dimension_idx]);
+            uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+            uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
             size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
             for (int i = 0; i < 16; ++i) {
-                // Read 16 bytes of data (16 values)
+                // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
                 uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 16]);
                 uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
                 res[i] = vdotq_u32(res[i], diff_u8, diff_u8);

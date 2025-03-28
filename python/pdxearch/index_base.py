@@ -98,7 +98,7 @@ class BaseIndexPDXIVF:
                     elif _type == 'pdx-4':
                         tmp_block = self.partitions[i].blocks[p]
                         for k in range(0, self.ndim, 4):
-                            data.extend(tmp_block[:, k:k+4].tobytes("F"))
+                            data.extend(tmp_block[:, k:k+4].tobytes("C"))
                     elif _type == 'n-ary':
                         data.extend(self.partitions[i].blocks[p].tobytes("C"))
                     elif _type == 'dual':
@@ -201,7 +201,7 @@ class BaseIndexPDXFlat:
                     elif _type == 'pdx-4':
                         tmp_block = self.partitions[i].blocks[p]
                         for k in range(0, self.ndim, 4):
-                            data.extend(tmp_block[:, k:k+4].tobytes("F"))
+                            data.extend(tmp_block[:, k:k+4].tobytes("C"))
                     elif _type == 'n-ary':
                         data.extend(self.partitions[i].blocks[p].tobytes("C"))
                     elif _type == 'dual':
