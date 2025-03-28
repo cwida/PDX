@@ -47,5 +47,20 @@ float* MmapFile32(const std::string& filename) {
     return file_pointer;
 }
 
+uint8_t* MmapFile8(size_t& n_values, const std::string& filename) {
+    size_t file_size;
+    struct stat file_stats;
+
+    int fd = ::open(filename.c_str(), O_RDONLY);
+    fstat(fd, &file_stats);
+    file_size = file_stats.st_size;
+    auto * file_pointer = new uint8_t[file_size / sizeof(uint8_t)];
+    std::ifstream input(filename.c_str(), std::ios::binary);
+    input.read((char*) file_pointer, file_size);
+    n_values = file_size / sizeof(float);
+    input.close();
+    return file_pointer;
+}
+
 
 #endif //EMBEDDINGSEARCH_UTILS_HPP
