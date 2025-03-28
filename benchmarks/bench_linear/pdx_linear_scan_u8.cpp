@@ -37,7 +37,7 @@ int main(int argc, char *argv[]) {
         }
         PDX::IndexPDXIVFFlatU8 pdx_data = PDX::IndexPDXIVFFlatU8();
 
-        pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-u8-flat-blocks");
+        pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-u8x4-flat-blocks");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
         NUM_QUERIES = 100; // ((uint32_t *)query)[0];
         std::cout << NUM_QUERIES << "\n";
