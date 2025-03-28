@@ -15,9 +15,6 @@ def generate_flat(dataset_name: str):
     base_idx._to_pdx(data, size_partition=PDXConstants.PDX_VECTOR_SIZE, _type='pdx')
     base_idx._persist(os.path.join(PDX_DATA, dataset_name + '-flat-blocks'))
 
-    # N-ARY: We also generate here the N-ary format
-    base_idx._to_pdx(data, _type='n-ary', use_original_centroids=True)
-    base_idx._persist(os.path.join(NARY_DATA, dataset_name + '-ivf'))
 
 
 def generate_u8(dataset_name: str):
@@ -29,6 +26,10 @@ def generate_u8(dataset_name: str):
     # PDX FLAT BLOCKIFIED
     base_idx._to_pdx(data, size_partition=PDXConstants.PDX_VECTOR_SIZE, _type='pdx')
     base_idx._persist(os.path.join(PDX_DATA, dataset_name + '-u8-flat-blocks'))
+
+    # N-ARY: We also generate here the N-ary format (only one partition)
+    base_idx._to_pdx(data, _type='n-ary', size_partition=len(data), randomize=False)
+    base_idx._persist(os.path.join(NARY_DATA, dataset_name + '-u8'))
 
 
 def generate_chunk_flat(dataset_name: str):
