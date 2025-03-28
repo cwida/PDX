@@ -164,7 +164,8 @@ class BaseIndexPDXFlat:
         num_partitions = math.ceil(num_embeddings / size_partition)
 
         indices = np.arange(0, num_embeddings, dtype=np.uint32)
-        np.random.shuffle(indices)
+        if kwargs.get('randomize', True):
+            np.random.shuffle(indices)
 
         shuffle_index = 0
         for partition_index in range(num_partitions):
