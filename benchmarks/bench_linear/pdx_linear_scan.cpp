@@ -39,7 +39,8 @@ int main(int argc, char *argv[]) {
 
         pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-flat-blocks");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
-        NUM_QUERIES = ((uint32_t *)query)[0];
+        NUM_QUERIES = 100;// ((uint32_t *)query)[0];
+        std::cout << NUM_QUERIES << "\n";
         float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN));
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings

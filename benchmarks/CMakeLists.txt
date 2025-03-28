@@ -13,6 +13,7 @@ add_executable(BenchmarkPDXBOND ./bench_bond/pdx_bond.cpp)
 
 # Linear
 add_executable(BenchmarkPDXLinearScan ./bench_linear/pdx_linear_scan.cpp)
+add_executable(BenchmarkU8PDXLinearScan ./bench_linear/pdx_linear_scan_u8.cpp)
 add_executable(BenchmarkNaryIVFLinearScan bench_linear/nary_ivf_linear_scan.cpp)
 
 # SVE vs nEON

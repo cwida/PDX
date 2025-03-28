@@ -1,0 +1,3 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
+fashion-mnist-784-euclidean,vertical-scan,4.13708,4.17479,4.11487,1,0,0,10,100,0.2,1,4.144,4.382,4.115
+fashion-mnist-784-euclidean,vertical-scan,4.17897,4.38654,4.11696,1,0,0,10,100,0.2,1,4.228,7.242,4.117
