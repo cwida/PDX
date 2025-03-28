@@ -119,13 +119,12 @@ protected:
                 }
             }
         }
+// SIMD Dot Product (G4): 2.81 (uint8) vs 7.86 (float32) !!! 2.8x faster; not ideal but still nice
+// Perhaps now that we have less data we can afford to blockify vectors and prune
 #elif defined(__ARM_NEON) && true
-//        uint32x4_t res[16];
-//        // Load initial values
-//        for (size_t i = 0; i < 16; ++i) {
-//            res[i] = vdupq_n_u32(0);
-//        }
         // Compute L2
+        // TODO: Handle tail in dimension length, for now im not going to worry on that
+        // as all the datasets are divisible by 4
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
             uint8x8_t vals = vld1_u8(&query[dimension_idx]);
@@ -133,25 +132,25 @@ protected:
             uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
             size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
             size_t i = 0;
-            for (; i < n_vectors - 4; i+=4) {
+            for (; i <= n_vectors - 4; i+=4) {
                 // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
                 uint32x4_t res = vld1q_u32(&distances[i]);
                 uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]);
                 uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
                 vst1q_u32(&distances[i], vdotq_u32(res, diff_u8, diff_u8));
             }
+            // n_vectors % 4 (rest)
             for (; i < n_vectors; ++i) {
                 // I am sure I will have 4 dims
-                int to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + i];
-                int to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + i + 1];
-                int to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + i + 2];
-                int to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + i + 3];
+                int to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (i * 4)];
+                int to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (i * 4) + 1];
+                int to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (i * 4) + 2];
+                int to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (i * 4) + 3];
                 distances[i] += (to_multiply_a * to_multiply_a) +
                         (to_multiply_b * to_multiply_b) +
                         (to_multiply_c * to_multiply_c) +
                         (to_multiply_d * to_multiply_d);
             }
-
         }
 #endif
     }
