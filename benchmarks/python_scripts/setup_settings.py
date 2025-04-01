@@ -88,3 +88,10 @@ DIMENSIONALITIES = {
     'instructorxl-arxiv-768': 768,
     'openai-1536-angular': 1536
 }
+
+DATA_EXPONENTS = {
+    'msong-420': 1,
+    'sift-128-euclidean': 0,
+    'instructorxl-arxiv-768': 3,
+    'openai-1536-angular': 3
+}

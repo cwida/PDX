@@ -100,10 +100,25 @@ public:
             {"openai-1536-angular", 16},
     };
 
+    inline static std::unordered_map<std::string, uint8_t> PDX_EXPONENTS = {
+            {"sift-128-euclidean", 0},
+            {"msong-420", 1},
+            {"contriever-768", 3},
+            {"gist-960-euclidean", 3},
+            {"deep-image-96-angular", 2},
+            {"instructorxl-arxiv-768", 3},
+            {"openai-1536-angular", 3},
+    };
+
     inline static size_t IVF_PROBES[] = {
-        4000, 1024, 512, 256,224,192,160,144,128,
+        4000, 2048, 1024, 512, 256,224,192,160,144,128,
         112,96,80,64,56, 48, 40,
         32,28, 26,24, 22,20, 18,16, 14,12, 10,8,6,4,2, 1
+    };
+
+    inline static int POW_10[10] = {
+            1, 10, 100, 1000, 10000,
+            100000, 1000000, 10000000, 100000000, 1000000000
     };
 
     inline static size_t IVF_PROBES_PHASES[] = {
