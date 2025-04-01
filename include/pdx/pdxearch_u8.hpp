@@ -294,9 +294,9 @@ protected:
                 }
             }
             // n_vectors % 4 (rest)
-#ifdef BENCHMARK_TIME
-            end_to_end_clock.Tic();
-#endif
+//#ifdef BENCHMARK_TIME
+//            end_to_end_clock.Tic();
+//#endif
             uint8x8_t idx = {0, 1, 2, 3, 0, 1, 2, 3};
             uint8x8_t vec1_u8 = vtbl1_u8(vals, idx);
             for (; i < n_vectors; ++i) {
@@ -325,9 +325,9 @@ protected:
                         (to_multiply_d * to_multiply_d);
                 */
             }
-#ifdef BENCHMARK_TIME
-            end_to_end_clock.Toc();
-#endif
+//#ifdef BENCHMARK_TIME
+//            end_to_end_clock.Toc();
+//#endif
         }
         size_t group = start_dimension;
         size_t loop_c = 0;
@@ -655,9 +655,9 @@ public:
             }
         }
         //std::cout << "Clipped dimensions: " <<  clipped << " on " << ivf_nprobe << " clusters (" << (float)(clipped)/(ivf_nprobe*pdx_data.num_dimensions) * 100.0 << " )\n";
-//#ifdef BENCHMARK_TIME
-//        end_to_end_clock.Toc();
-//#endif
+#ifdef BENCHMARK_TIME
+        end_to_end_clock.Toc();
+#endif
         return BuildResultSet(k);
     }
 
