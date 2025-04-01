@@ -97,3 +97,4 @@ cmake_install.cmake
 /benchmarks/KernelNaryL1
 /benchmarks/KernelNaryL2
 /benchmarks/KernelNaryIP
+/benchmarks/BenchmarkU8*
