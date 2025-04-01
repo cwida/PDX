@@ -11,13 +11,13 @@ Recall is controled with nprobe parameter
 Download the .hdf5 data here: https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing
 """
 if __name__ == "__main__":
-    dataset_name = 'gist-960-euclidean.hdf5'
-    num_dimensions = 960
-    nprobe = 256
+    dataset_name = 'sift-128-euclidean.hdf5'
+    num_dimensions = 128
+    nprobe = 128
     knn = 10
     print(f'Running example: PDXearch + ADSampling (IVFFlat)\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
-    nbuckets = 2 * math.ceil(math.sqrt(len(train)))
+    nbuckets = 4 * math.ceil(math.sqrt(len(train)))
 
     index = IndexPDXADSamplingIVFFlat(ndim=num_dimensions, nbuckets=nbuckets)
     print('Preprocessing')
@@ -41,9 +41,9 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX avg. time:', sum(times) / float(len(times)))
     # To check results of first query
-    # results = index.search(queries[0], knn)
-    # for result in results:
-    #     print(result.index, result.distance)
+    results = index.search(queries[0], knn)
+    for result in results:
+        print(result.index, result.distance)
 
     print(f'{len(queries)} queries with FAISS')
     times = []

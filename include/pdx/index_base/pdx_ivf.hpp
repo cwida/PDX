@@ -23,6 +23,7 @@ struct VectorgroupU8 {
     uint32_t num_embeddings{};
     uint32_t *indices = nullptr;
     uint8_t *data = nullptr;
+    int32_t *for_bases{};
 };
 
 /******************************************************************
@@ -113,6 +114,11 @@ public:
             VectorgroupU8 &vectorgroup = vectorgroups[i];
             vectorgroup.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
+        }
+        for (size_t i = 0; i < num_vectorgroups; ++i) {
+            VectorgroupU8 &vectorgroup = vectorgroups[i];
+            vectorgroup.for_bases = (int32_t *) next_value;
+            next_value += sizeof(uint32_t) * num_dimensions;
         }
         means = (float *) next_value;
         next_value += sizeof(float) * num_dimensions;

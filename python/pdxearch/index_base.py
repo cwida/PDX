@@ -11,6 +11,7 @@ class Partition:
     def __init__(self):
         self.num_embeddings = 0
         self.indices = np.array([])
+        self.for_bases = np.array([])
         self.blocks = []
 
 #
@@ -67,7 +68,24 @@ class BaseIndexPDXIVF:
             #     if left_to_write != 0:
             #         partition.blocks.append(data[partition.indices[already_written:], :])
             # else:  # Variable block size
-            partition.blocks.append(data[partition.indices, :])
+            if _type == 'pdx-4' and kwargs.get('lep', False):
+                # TODO: Call to LEP class to determine exponent, FOR base, and bit-width
+                pre_data = data[partition.indices, :]
+                # TODO: Check if values fit in 8-bits
+                pre_data = pre_data * 1000
+                pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                print(for_bases)
+                for_data = pre_data - for_bases
+                if np.any(for_data > 255):  # TODO: We are assuming data fits in 8-bits
+                    raise ValueError(f'LEP overflow when converting to uint8 in partition {list_id}')
+                    # perhaps we can clip for now, instead of exceptions and see how recall is
+                    # for_data = np.clip(for_data, None, 255)
+                for_data = for_data.astype(dtype=np.uint8)
+                partition.for_bases = for_bases
+                partition.blocks.append(for_data)
+            else:
+                partition.blocks.append(data[partition.indices, :])
             if not use_original_centroids:
                 partition_centroids = np.mean(data[partition.indices, :], axis=0, dtype=np.float32)
                 self.centroids = np.append(self.centroids, partition_centroids)
@@ -107,6 +125,9 @@ class BaseIndexPDXIVF:
                         data.extend(self.partitions[i].blocks[p][:, delta_d:].tobytes("C"))
         for i in range(self.num_partitions):
             data.extend(self.partitions[i].indices.tobytes("C"))
+        if _type == 'pdx-4' and kwargs.get('lep', False):
+            for i in range(self.num_partitions):
+                data.extend(self.partitions[i].for_bases.tobytes("C"))
         data.extend(self.means.tobytes("C"))
         is_ivf = True
         data.extend(is_ivf.to_bytes(1, sys.byteorder))

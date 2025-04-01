@@ -32,6 +32,23 @@ def generate_u8(dataset_name: str):
     base_idx._persist(os.path.join(NARY_DATA, dataset_name + '-u8'))
 
 
+def generate_u8_ivf(dataset_name: str):
+    base_idx = BaseIndexPDXIVF(DIMENSIONALITIES[dataset_name], 'l2sq')
+    index_path = os.path.join(CORE_INDEXES_FAISS, get_core_index_filename(dataset_name))
+    print('Reading train data')
+    base_idx.core_index.index = faiss.read_index(index_path)
+    data = read_hdf5_train_data(dataset_name)
+    data = data.astype(dtype=np.uint8)
+    print('Saving')
+    # PDX FLAT BLOCKIFIED
+    base_idx._to_pdx(data, _type='pdx-4', use_original_centroids=True)
+    base_idx._persist(os.path.join(PDX_DATA, dataset_name + '-u8x4-ivf'))
+
+    # N-ARY: We also generate here the N-ary format
+    base_idx._to_pdx(data, _type='n-ary', use_original_centroids=True)
+    base_idx._persist(os.path.join(NARY_DATA, dataset_name + '-u8-ivf'))
+
+
 def generate_chunk_flat(dataset_name: str):
     base_idx = BaseIndexPDXFlat(DIMENSIONALITIES[dataset_name], 'l2sq')
     print('Reading train data')
@@ -47,5 +64,6 @@ if __name__ == "__main__":
     generate_flat('fashion-mnist-784-euclidean')
     generate_u8('fashion-mnist-784-euclidean')
     generate_chunk_flat('fashion-mnist-784-euclidean')
+    generate_u8_ivf('fashion-mnist-784-euclidean')
     # generate_adsampling_ivf('openai-1536-angular')
     # generate_adsampling_ivf('gist-960-euclidean')
