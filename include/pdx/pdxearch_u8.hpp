@@ -507,8 +507,8 @@ protected:
 
     void PrepareQuery(const float * raw_query, uint8_t *query, const int32_t *for_bases){
         for (size_t i = 0; i < pdx_data.num_dimensions; ++i){
-            //int rounded = (int)(raw_query[i] * 1000) - for_bases[i];
-            int rounded = (int)(raw_query[i]) - for_bases[i];
+            int rounded = (int)(raw_query[i] * 1000) - for_bases[i];
+            // int rounded = (int)(raw_query[i]) - for_bases[i];
             dim_clip[i] = rounded > 255 || rounded < 0;
             dim_clip_value[i] = rounded;
             //query[i] = static_cast<uint8_t>(std::clamp(rounded, 0, 255));
