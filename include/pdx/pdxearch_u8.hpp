@@ -304,7 +304,7 @@ protected:
                 if constexpr (SKIP_PRUNED){
                     vector_idx = pruning_positions[vector_idx];
                 }
-
+                /*
                 uint32x2_t res = vdup_n_s32(0);
                 // Not needed
                 //result = vld1_lane_s32(&distances_p[vector_idx], result, 0);
@@ -312,8 +312,9 @@ protected:
                 uint8x8_t diff_u8 = vabd_u8(vec1_u8, vec2_u8);
                 res = vdot_u32(res, diff_u8, diff_u8);
                 distances_p[vector_idx] = vget_lane_u32(res, 0);
+                */
 
-                /*
+
                 // I am sure I will have 4 dims
                 int to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
                 int to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
@@ -323,7 +324,7 @@ protected:
                         (to_multiply_b * to_multiply_b) +
                         (to_multiply_c * to_multiply_c) +
                         (to_multiply_d * to_multiply_d);
-                */
+
             }
 //#ifdef BENCHMARK_TIME
 //            end_to_end_clock.Toc();
@@ -619,14 +620,14 @@ public:
             } else {
                 vectorgroups_to_visit = ivf_nprobe;
             }
-//#ifdef BENCHMARK_TIME
-//            end_to_end_clock.Toc();
-//#endif
+#ifdef BENCHMARK_TIME
+            end_to_end_clock.Toc();
+#endif
             //GetVectorgroupsAccessOrderIVFPDX(query, vectorgroups_to_visit, vectorgroups_indices);
             GetVectorgroupsAccessOrderIVF(transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
-//#ifdef BENCHMARK_TIME
-//            end_to_end_clock.Tic();
-//#endif
+#ifdef BENCHMARK_TIME
+            end_to_end_clock.Tic();
+#endif
         } else {
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
