@@ -50,6 +50,8 @@ CMakeFiles
 pdxearch.egg-info
 /dist/
 
+*.dat
+
 /benchmarks/datasets/adsampling_nary
 /benchmarks/datasets/adsampling_dsm
 /benchmarks/datasets/adsampling_pdx

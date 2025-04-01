@@ -9,8 +9,8 @@
 #include <iostream>
 #include "utils/file_reader.hpp"
 #include "pdx/index_base/pdx_ivf.hpp"
-#include "pdx/bond.hpp"
-#include "pdx/adsampling.hpp"
+#include "pdx/bond_u8.hpp"
+#include "pdx/adsampling_u8.hpp"
 #include "utils/benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
@@ -28,7 +28,6 @@ int main(int argc, char *argv[]) {
     const bool VERIFY_RESULTS = BenchmarkUtils::VERIFY_RESULTS;
 
     uint8_t KNN = BenchmarkUtils::KNN;
-    float SELECTIVITY_THRESHOLD = BenchmarkUtils::SELECTIVITY_THRESHOLD;
     float EPSILON0 = BenchmarkUtils::EPSILON0;
     size_t NUM_QUERIES;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
@@ -36,25 +35,25 @@ int main(int argc, char *argv[]) {
     PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
 
     std::string RESULTS_PATH;
-    RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "IVF_PDX_ADSAMPLING.csv";
+    RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "U8_IVF_PDX_ADSAMPLING.csv";
 
 
     for (const auto & dataset : BenchmarkUtils::DATASETS) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlat pdx_data = PDX::IndexPDXIVFFlat();
-        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf");
-        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-matrix");
+        PDX::IndexPDXIVFFlatU8 pdx_data = PDX::IndexPDXIVFFlatU8();
+        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-u8x4-ivf");
+        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u8-matrix");
         Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
         matrix = matrix.inverse();
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
-        NUM_QUERIES = 100; //((uint32_t *)query)[0];
+        NUM_QUERIES = 100; // ((uint32_t *)query)[0];
         float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN));
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
-        PDX::ADSamplingSearcher searcher = PDX::ADSamplingSearcher(pdx_data, SELECTIVITY_THRESHOLD, 1, EPSILON0, matrix, DIMENSION_ORDER);
+        PDX::ADSamplingSearcherU8 searcher = PDX::ADSamplingSearcherU8(pdx_data, 1, EPSILON0, matrix, DIMENSION_ORDER);
 
         for (size_t ivf_nprobe : BenchmarkUtils::IVF_PROBES) {
             if (pdx_data.num_vectorgroups < ivf_nprobe){
@@ -82,7 +81,7 @@ int main(int argc, char *argv[]) {
                     };
                 }
             }
-            float real_selectivity = 1 - SELECTIVITY_THRESHOLD;
+            float real_selectivity = 1 - BenchmarkUtils::SELECTIVITY_THRESHOLD;
             BenchmarkMetadata results_metadata = {
                     dataset,
                     ALGORITHM,

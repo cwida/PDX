@@ -29,4 +29,4 @@ def generate_adsampling_ivf(dataset_name: str, _types=('pdx', 'dual')):
 
 
 if __name__ == "__main__":
-    generate_adsampling_ivf('fashion-mnist-784-euclidean')
+    generate_adsampling_ivf('sift-128-euclidean')

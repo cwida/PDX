@@ -1,0 +1,9 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
+fashion-mnist-784-euclidean,pdx-bond,0.119701,0.155667,0.084,0.820486,2,0,10,10000,0.2,1,0.1198,0.1737,0.08071
+fashion-mnist-784-euclidean,pdx-bond,0.180638,0.251833,0.110292,0.947057,4,0,10,10000,0.2,1,0.1828,0.6566,0.106
+fashion-mnist-784-euclidean,pdx-bond,0.66683,1.15554,0.226333,0.9998,32,0,10,10000,0.2,1,0.6673,1.269,0.2263
+fashion-mnist-784-euclidean,pdx-bond,1.12934,2.06154,0.308417,0.99999,64,0,10,10000,0.2,1,1.154,8.018,0.3084
+fashion-mnist-784-euclidean,pdx-bond,0.980945,1.65746,0.54175,1,64,0,10,100,0.2,1,0.9884,1.729,0.5417
+fashion-mnist-784-euclidean,pdx-bond,0.966321,1.60304,0.533958,1,64,0,10,100,0.2,1,0.9738,1.711,0.534
+fashion-mnist-784-euclidean,pdx-bond,0.7418,1.12437,0.4245,1,64,0,10,100,0.2,1,0.7418,1.124,0.4245
+fashion-mnist-784-euclidean,pdx-bond,0.108099,0.150166,0.074125,0.955,4,0,10,100,0.2,1,0.1081,0.1502,0.07412

@@ -9,55 +9,76 @@
 #include <iostream>
 #include "utils/file_reader.hpp"
 #include "pdx/index_base/pdx_ivf.hpp"
-#include "pdx/bond.hpp"
-#include "pdx/adsampling.hpp"
+#include "pdx/bond_u8.hpp"
 #include "utils/benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
     std::string arg_dataset;
     size_t arg_ivf_nprobe = 0;
+    std::string ALGORITHM = "pdx-bond";
+    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
     if (argc > 1){
         arg_dataset = argv[1];
     }
     if (argc > 2){
         arg_ivf_nprobe = atoi(argv[2]);
     }
-    std::cout << "==> PDX IVF ADSampling\n";
+    if (argc > 3){
+        // enum PDXearchDimensionsOrder {
+        //     SEQUENTIAL,
+        //     DISTANCE_TO_MEANS,
+        //     DECREASING,
+        //     DISTANCE_TO_MEANS_IMPROVED,
+        //     DECREASING_IMPROVED,
+        //     DIMENSION_ZONES 
+        // };
+        DIMENSION_ORDER = static_cast<PDX::PDXearchDimensionsOrder>(atoi(argv[3]));
+        if (DIMENSION_ORDER == PDX::DISTANCE_TO_MEANS_IMPROVED){
+            ALGORITHM = "pdx-bond";
+        }
+        else if (DIMENSION_ORDER == PDX::DISTANCE_TO_MEANS){
+            ALGORITHM = "pdx-bond-dtm";
+        }
+        else if (DIMENSION_ORDER == PDX::DECREASING_IMPROVED){
+            ALGORITHM = "pdx-bond-dec";
+        }
+        else if (DIMENSION_ORDER == PDX::SEQUENTIAL){
+            ALGORITHM = "pdx-bond-sec";
+        }
+        else if (DIMENSION_ORDER == PDX::DIMENSION_ZONES){
+            ALGORITHM = "pdx-bond-dz";
+        }
 
-    std::string ALGORITHM = "adsampling";
+    }
+    std::cout << "==> U8 PDX IVF BOND\n";
+
     const bool VERIFY_RESULTS = BenchmarkUtils::VERIFY_RESULTS;
 
     uint8_t KNN = BenchmarkUtils::KNN;
     float SELECTIVITY_THRESHOLD = BenchmarkUtils::SELECTIVITY_THRESHOLD;
-    float EPSILON0 = BenchmarkUtils::EPSILON0;
     size_t NUM_QUERIES;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
 
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
-
-    std::string RESULTS_PATH;
-    RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "IVF_PDX_ADSAMPLING.csv";
+    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "U8_IVF_PDX_BOND.csv";
 
 
     for (const auto & dataset : BenchmarkUtils::DATASETS) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlat pdx_data = PDX::IndexPDXIVFFlat();
-        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf");
-        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-matrix");
-        Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
-        matrix = matrix.inverse();
+        PDX::IndexPDXIVFFlatU8 pdx_data = PDX::IndexPDXIVFFlatU8();
+
+        pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-u8x4-ivf");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
-        NUM_QUERIES = 100; //((uint32_t *)query)[0];
+        NUM_QUERIES =  100; //((uint32_t *)query)[0];
         float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN));
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
-        PDX::ADSamplingSearcher searcher = PDX::ADSamplingSearcher(pdx_data, SELECTIVITY_THRESHOLD, 1, EPSILON0, matrix, DIMENSION_ORDER);
+        PDX::PDXBondSearcherU8 searcher = PDX::PDXBondSearcherU8(pdx_data, 1, 0, DIMENSION_ORDER);
 
         for (size_t ivf_nprobe : BenchmarkUtils::IVF_PROBES) {
-            if (pdx_data.num_vectorgroups < ivf_nprobe){
+            if (pdx_data.num_vectorgroups < ivf_nprobe) {
                 continue;
             }
             if (arg_ivf_nprobe > 0 && ivf_nprobe != arg_ivf_nprobe){
@@ -68,7 +89,7 @@ int main(int argc, char *argv[]) {
             searcher.SetNProbe(ivf_nprobe);
 
             float recalls = 0;
-            if (VERIFY_RESULTS) {
+            if (VERIFY_RESULTS){
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
                     auto result = searcher.Search(query + l * pdx_data.num_dimensions, KNN);
                     BenchmarkUtils::VerifyResult<true>(recalls, result, KNN, int_ground_truth, l);
@@ -91,10 +112,9 @@ int main(int argc, char *argv[]) {
                     ivf_nprobe,
                     KNN,
                     recalls,
-                    real_selectivity
+                    real_selectivity,
             };
             BenchmarkUtils::SaveResults(runtimes, RESULTS_PATH, results_metadata);
         }
     }
-    return 0;
 }

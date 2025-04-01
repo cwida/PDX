@@ -16,7 +16,7 @@ int main(int argc, char *argv[]) {
     std::string arg_dataset;
     size_t arg_ivf_nprobe = 0;
     std::string ALGORITHM = "pdx-bond";
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::DISTANCE_TO_MEANS_IMPROVED;
+    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL; // Just to test performance
     if (argc > 1){
         arg_dataset = argv[1];
     }
@@ -70,7 +70,7 @@ int main(int argc, char *argv[]) {
 
         pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-ivf");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
-        NUM_QUERIES = ((uint32_t *)query)[0];
+        NUM_QUERIES = 100; // ((uint32_t *)query)[0];
         float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN));
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings

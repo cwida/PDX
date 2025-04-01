@@ -19,6 +19,11 @@ public:
                      position_prune_distance,
                      dimensionOrder) {};
 
+    // TODO: This should not be needed, however the overhead is still meaningless
+    void PreprocessQuery(float *raw_query, float *query) override {
+        memcpy((void *) query, (void *) raw_query, pdx_data.num_dimensions * sizeof(float));
+    }
+
 };
 
 } // namespace PDX
