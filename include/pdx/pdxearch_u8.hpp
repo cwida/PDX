@@ -279,15 +279,15 @@ protected:
             size_t offset_to_dimension_start = dimension_idx * total_vectors;
             size_t i = 0;
             // TODO: RE ADD
-            if constexpr (!SKIP_PRUNED){
-                for (; i <= n_vectors - 4; i+=4) {
-                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
-                    uint32x4_t res = vld1q_u32(&distances_p[i]);
-                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]);
-                    uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
-                    vst1q_u32(&distances_p[i], vdotq_u32(res, diff_u8, diff_u8));
-                }
-            }
+//            if constexpr (!SKIP_PRUNED){
+//                for (; i <= n_vectors - 4; i+=4) {
+//                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+//                    uint32x4_t res = vld1q_u32(&distances_p[i]);
+//                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]);
+//                    uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
+//                    vst1q_u32(&distances_p[i], vdotq_u32(res, diff_u8, diff_u8));
+//                }
+//            }
             // n_vectors % 4 (rest)
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
@@ -305,29 +305,29 @@ protected:
                         (to_multiply_d * to_multiply_d);
             }
         }
-//        size_t group = start_dimension;
-//        size_t loop_c = 0;
-//        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; ++dim_idx) {
-//            if (loop_c == 4) {
-//                group += 4;
-//                loop_c = 0;
-//            }
-//            if (dim_clip[dim_idx]) {
-//                //std::cout << "Fixing clipping\n";
-//                for (size_t j=0; j < n_vectors; ++j) {
-//                    size_t vector_idx = j;
-//                    size_t offset_to_dimension_start = group * total_vectors;
-//                    if constexpr (SKIP_PRUNED){
-//                        vector_idx = pruning_positions[vector_idx];
-//                    }
-//                    //int to_multiply = (int)data[offset_to_dimension_start + (vector_idx * 4) + (dim_idx % 4)] - dim_clip_value[dim_idx];
-//                    //distances_p[vector_idx] += to_multiply * to_multiply;
-//                    distances_p[vector_idx] -= 2 * data[offset_to_dimension_start + (vector_idx * 4) + (dim_idx % 4)] * dim_clip_value[dim_idx];
-//                    distances_p[vector_idx] += dim_clip_value[dim_idx] * dim_clip_value[dim_idx];
-//                }
-//            }
-//            loop_c += 1;
-//        }
+        size_t group = start_dimension;
+        size_t loop_c = 0;
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; ++dim_idx) {
+            if (loop_c == 4) {
+                group += 4;
+                loop_c = 0;
+            }
+            if (dim_clip[dim_idx]) {
+                //std::cout << "Fixing clipping\n";
+                for (size_t j=0; j < n_vectors; ++j) {
+                    size_t vector_idx = j;
+                    size_t offset_to_dimension_start = group * total_vectors;
+                    if constexpr (SKIP_PRUNED){
+                        vector_idx = pruning_positions[vector_idx];
+                    }
+                    //int to_multiply = (int)data[offset_to_dimension_start + (vector_idx * 4) + (dim_idx % 4)] - dim_clip_value[dim_idx];
+                    //distances_p[vector_idx] += to_multiply * to_multiply;
+                    distances_p[vector_idx] -= 2 * data[offset_to_dimension_start + (vector_idx * 4) + (dim_idx % 4)] * dim_clip_value[dim_idx];
+                    distances_p[vector_idx] += dim_clip_value[dim_idx] * dim_clip_value[dim_idx];
+                }
+            }
+            loop_c += 1;
+        }
 #endif
     }
 
@@ -373,8 +373,8 @@ protected:
                 // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
                 uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 16]);
                 uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
-                // TODO: READ
-                res[i] = vdotq_u32(res[i], diff_u8, diff_u8);
+                // TODO: RE ADD
+                //es[i] = vdotq_u32(res[i], diff_u8, diff_u8);
             }
         }
         // Store results back
@@ -507,7 +507,8 @@ protected:
 
     void PrepareQuery(const float * raw_query, uint8_t *query, const int32_t *for_bases){
         for (size_t i = 0; i < pdx_data.num_dimensions; ++i){
-            int rounded = (int)(raw_query[i] * 1000) - for_bases[i];
+            //int rounded = (int)(raw_query[i] * 1000) - for_bases[i];
+            int rounded = (int)(raw_query[i]) - for_bases[i];
             dim_clip[i] = rounded > 255 || rounded < 0;
             dim_clip_value[i] = rounded;
             //query[i] = static_cast<uint8_t>(std::clamp(rounded, 0, 255));

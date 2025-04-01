@@ -20,8 +20,8 @@ def generate_adsampling_ivf(dataset_name: str, _types=('pdx', 'dual')):
     base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-ivf'))
 
     # DUAL-BLOCK
-    base_idx._to_pdx(data, _type='dual', delta_d=get_delta_d(len(data[0])), centroids_preprocessor=preprocessor, use_original_centroids=True)
-    base_idx._persist(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-ivf-dual-block'))
+    #base_idx._to_pdx(data, _type='dual', delta_d=get_delta_d(len(data[0])), centroids_preprocessor=preprocessor, use_original_centroids=True)
+    #base_idx._persist(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-ivf-dual-block'))
 
     # METADATA
     # Store metadata needed by ADSampling
@@ -29,4 +29,5 @@ def generate_adsampling_ivf(dataset_name: str, _types=('pdx', 'dual')):
 
 
 if __name__ == "__main__":
-    generate_adsampling_ivf('sift-128-euclidean')
+    # generate_adsampling_ivf('sift-128-euclidean')
+    generate_adsampling_ivf('openai-1536-angular')
