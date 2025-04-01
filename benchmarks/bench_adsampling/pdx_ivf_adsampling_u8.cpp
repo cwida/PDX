@@ -53,7 +53,11 @@ int main(int argc, char *argv[]) {
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
+        uint8_t lep_exponent_idx = BenchmarkUtils::PDX_EXPONENTS[dataset];
+        int lep_exponent = BenchmarkUtils::POW_10[lep_exponent_idx];
+
         PDX::ADSamplingSearcherU8 searcher = PDX::ADSamplingSearcherU8(pdx_data, 1, EPSILON0, matrix, DIMENSION_ORDER);
+        searcher.SetExponent(lep_exponent);
 
         for (size_t ivf_nprobe : BenchmarkUtils::IVF_PROBES) {
             if (pdx_data.num_vectorgroups < ivf_nprobe){

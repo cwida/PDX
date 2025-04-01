@@ -684,7 +684,13 @@ public:
             } else {
                 vectorgroups_to_visit = ivf_nprobe;
             }
+#ifdef BENCHMARK_TIME
+            end_to_end_clock.Toc();
+#endif
             GetVectorgroupsAccessOrderIVFPDX(query, vectorgroups_to_visit, vectorgroups_indices);
+#ifdef BENCHMARK_TIME
+            end_to_end_clock.Tic();
+#endif
             //GetVectorgroupsAccessOrderIVF(query, pdx_data, ivf_nprobe, vectorgroups_indices);
         } else {
             // If there is no index, we just access the vectorgroups in order
