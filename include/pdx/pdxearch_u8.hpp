@@ -299,6 +299,44 @@ protected:
 //#endif
             uint8x8_t idx = {0, 1, 2, 3, 0, 1, 2, 3};
             uint8x8_t vec1_u8 = vtbl1_u8(vals, idx);
+
+            /*
+            for (; i+1 < n_vectors; i+=2) {
+                size_t vector_idx = i;
+                size_t vector_idx_next = i+1;
+                if constexpr (SKIP_PRUNED){
+                    vector_idx = pruning_positions[vector_idx];
+                    vector_idx_next = pruning_positions[vector_idx_next];
+                }
+
+                uint32x2_t res = vdup_n_s32(0);
+                // Not needed
+                //result = vld1_lane_s32(&distances_p[vector_idx], result, 0);
+                uint8x8_t vec2_u8_prev = vld1_u8(&data[offset_to_dimension_start + (vector_idx * 4) - 4]);
+                uint8x8_t vec2_u8_next = vld1_u8(&data[offset_to_dimension_start + (vector_idx_next * 4)]);
+
+                uint8x8_t vec2_u8 = vext_u8(vec2_u8_prev, vec2_u8_next, 4);
+
+                uint8x8_t diff_u8 = vabd_u8(vec1_u8, vec2_u8);
+                res = vdot_u32(res, diff_u8, diff_u8);
+                distances_p[vector_idx] += vget_lane_u32(res, 0);
+                distances_p[vector_idx_next] += vget_lane_u32(res, 1);
+
+
+
+                // I am sure I will have 4 dims
+                //int to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
+                //int to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
+                //int to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
+                //int to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
+                //distances_p[vector_idx] += (to_multiply_a * to_multiply_a) +
+                //        (to_multiply_b * to_multiply_b) +
+                //        (to_multiply_c * to_multiply_c) +
+                //        (to_multiply_d * to_multiply_d);
+
+            }
+            */
+
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
                 if constexpr (SKIP_PRUNED){
@@ -311,9 +349,8 @@ protected:
                 uint8x8_t vec2_u8 = vld1_u8(&data[offset_to_dimension_start + (vector_idx * 4)]);
                 uint8x8_t diff_u8 = vabd_u8(vec1_u8, vec2_u8);
                 res = vdot_u32(res, diff_u8, diff_u8);
-                distances_p[vector_idx] = vget_lane_u32(res, 0);
+                distances_p[vector_idx] += vget_lane_u32(res, 0);
                 */
-
 
                 // I am sure I will have 4 dims
                 int to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
