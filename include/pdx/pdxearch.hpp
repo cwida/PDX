@@ -553,7 +553,9 @@ protected:
         uint32_t n_tuples_to_prune = 0;
         if (!is_positional_pruning) GetPruningThreshold(k, heap);
 
-        while (1.0 * n_tuples_to_prune < tuples_needed_to_exit && current_dimension_idx < pdx_data.num_dimensions) {
+        while (
+                1.0 * n_tuples_to_prune < tuples_needed_to_exit &&
+                current_dimension_idx < pdx_data.num_dimensions) {
             size_t last_dimension_to_fetch = std::min(current_dimension_idx + DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx],
                                                      pdx_data.num_dimensions);
             if (dimension_order == SEQUENTIAL){
@@ -659,6 +661,17 @@ protected:
         pruning_threshold = heap.size() == k ? heap.top().distance : std::numeric_limits<float>::max();
     };
 
+    void NormalizeQuery(const float * src, float * dst) {
+        float sum = 0.0f;
+        for (size_t i = 0; i < pdx_data.num_dimensions; ++i) {
+            sum += src[i] * src[i];
+        }
+        float norm = std::sqrt(sum);
+        for (size_t i = 0; i < pdx_data.num_dimensions; ++i) {
+            dst[i] = src[i] / norm;
+        }
+    }
+
     virtual void PreprocessQuery(float * raw_query, float *query){};
 
 public:
@@ -673,7 +686,9 @@ public:
         end_to_end_clock.Tic();
 #endif
         alignas(64) float query[pdx_data.num_dimensions];
-        PreprocessQuery(raw_query, query);
+        alignas(64) float normalized_query[pdx_data.num_dimensions];
+        NormalizeQuery(raw_query, normalized_query);
+        PreprocessQuery(normalized_query, query);
         best_k = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
         GetDimensionsAccessOrder(query, pdx_data.means);

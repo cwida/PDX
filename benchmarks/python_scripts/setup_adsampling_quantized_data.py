@@ -4,16 +4,18 @@ from setup_settings import *
 from pdxearch.index_base import BaseIndexPDXIVF, BaseIndexPDXFlat
 from pdxearch.preprocessors import ADSampling
 from pdxearch.constants import PDXConstants
+from sklearn import preprocessing
 
-
-def generate_u8_ivf(dataset_name: str):
+def generate_u8_ivf(dataset_name: str, normalize=True):
     base_idx = BaseIndexPDXIVF(DIMENSIONALITIES[dataset_name], 'l2sq')
     # Core index IVF must exist
-    index_path = os.path.join(CORE_INDEXES_FAISS, get_core_index_filename(dataset_name))
+    index_path = os.path.join(CORE_INDEXES_FAISS, get_core_index_filename(dataset_name, norm=normalize))
     # Reads the core index created by faiss to generate the PDX index
     base_idx.core_index.index = faiss.read_index(index_path)
     print('Reading train data')
     data = read_hdf5_train_data(dataset_name)
+    if normalize:
+        data = preprocessing.normalize(data, axis=1, norm='l2')
     preprocessor = ADSampling(DIMENSIONALITIES[dataset_name])
     preprocessor.preprocess(data, inplace=True)
     print('Saving')
@@ -24,8 +26,60 @@ def generate_u8_ivf(dataset_name: str):
     preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-u8-matrix'))
 
 
+def generate_u6_ivf(dataset_name: str, normalize=True):
+    base_idx = BaseIndexPDXIVF(DIMENSIONALITIES[dataset_name], 'l2sq')
+    # Core index IVF must exist
+    index_path = os.path.join(CORE_INDEXES_FAISS, get_core_index_filename(dataset_name, norm=normalize))
+    # Reads the core index created by faiss to generate the PDX index
+    base_idx.core_index.index = faiss.read_index(index_path)
+    print('Reading train data')
+    data = read_hdf5_train_data(dataset_name)
+    if normalize:
+        data = preprocessing.normalize(data, axis=1, norm='l2')
+    preprocessor = ADSampling(DIMENSIONALITIES[dataset_name])
+    preprocessor.preprocess(data, inplace=True)
+    print('Saving')
+    # PDX FLAT BLOCKIFIED
+    base_idx._to_pdx(data, _type='pdx-4', lep=True, lep_bw=6, centroids_preprocessor=preprocessor, use_original_centroids=True)
+    base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-u6x4-ivf'))
+
+    preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-u8-matrix'))
+
+
+def generate_u4_ivf(dataset_name: str, normalize=True):
+    base_idx = BaseIndexPDXIVF(DIMENSIONALITIES[dataset_name], 'l2sq')
+    # Core index IVF must exist
+    index_path = os.path.join(CORE_INDEXES_FAISS, get_core_index_filename(dataset_name, norm=normalize))
+    # Reads the core index created by faiss to generate the PDX index
+    base_idx.core_index.index = faiss.read_index(index_path)
+    print('Reading train data')
+    data = read_hdf5_train_data(dataset_name)
+    if normalize:
+        data = preprocessing.normalize(data, axis=1, norm='l2')
+    preprocessor = ADSampling(DIMENSIONALITIES[dataset_name])
+    preprocessor.preprocess(data, inplace=True)
+    print('Saving')
+    # PDX FLAT BLOCKIFIED
+    base_idx._to_pdx(data, _type='pdx-4', lep=True, lep_bw=4, centroids_preprocessor=preprocessor, use_original_centroids=True)
+    base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-u4x4-ivf'))
+
+    preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-u8-matrix'))
+
 if __name__ == "__main__":
     # generate_u8_ivf('fashion-mnist-784-euclidean')
     # generate_u8_ivf('sift-128-euclidean')
-    generate_u8_ivf('openai-1536-angular')
-    # generate_adsampling_ivf('gist-960-euclidean')
+
+    # generate_u6_ivf('openai-1536-angular')
+    # generate_u4_ivf('openai-1536-angular')
+
+    generate_u8_ivf('gist-960-euclidean')
+    # generate_u6_ivf('gist-960-euclidean')
+    # generate_u4_ivf('gist-960-euclidean')
+
+    # generate_u8_ivf('instructorxl-arxiv-768')
+    # generate_u6_ivf('instructorxl-arxiv-768')
+    # generate_u4_ivf('instructorxl-arxiv-768')
+
+    # generate_u8_ivf('contriever-768')
+    # generate_u6_ivf('contriever-768')
+    # generate_u4_ivf('contriever-768')

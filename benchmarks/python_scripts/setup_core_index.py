@@ -4,10 +4,11 @@ from pdxearch.index_core import IVF
 from setup_utils import *
 from setup_settings import *
 
+from sklearn import preprocessing
 
 # Generates core IVF index with FAISS
-def generate_core_ivf(dataset_name: str):
-    idx_path = os.path.join(CORE_INDEXES_FAISS, get_core_index_filename(dataset_name))
+def generate_core_ivf(dataset_name: str, normalize=True):
+    idx_path = os.path.join(CORE_INDEXES_FAISS, get_core_index_filename(dataset_name, normalize))
     data = read_hdf5_train_data(dataset_name)
     num_embeddings = len(data)
     print('Num embeddings:', num_embeddings)
@@ -18,6 +19,8 @@ def generate_core_ivf(dataset_name: str):
     else:  # Deep with 10m
         nbuckets = math.ceil(8 * math.sqrt(num_embeddings))
     print('N buckets:', nbuckets)
+    if normalize:
+        data = preprocessing.normalize(data, axis=1, norm='l2')
     core_idx = IVF(DIMENSIONALITIES[dataset_name], 'l2sq', nbuckets)
     training_points = nbuckets * 300  # Our collections do not need that many training points
     if training_points < num_embeddings:
@@ -36,5 +39,9 @@ def generate_core_ivf(dataset_name: str):
 
 
 if __name__ == "__main__":
-    # generate_core_ivf('fashion-mnist-784-euclidean')
-    generate_core_ivf('openai-1536-angular')
+    # generate_core_ivf('fashion-mnist-784-euclidean', normalize=True)
+    # generate_core_ivf('sift-128-euclidean', normalize=True)
+    # generate_core_ivf('openai-1536-angular', normalize=True)
+    # generate_core_ivf('instructorxl-arxiv-768', normalize=True)
+    # generate_core_ivf('contriever-768', normalize=True)
+    generate_core_ivf('gist-960-euclidean', normalize=True)
