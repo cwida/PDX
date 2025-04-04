@@ -282,17 +282,17 @@ protected:
             size_t offset_to_dimension_start = dimension_idx * total_vectors;
             size_t i = 0;
             // TODO: RE ADD
-            if constexpr (!SKIP_PRUNED){
-                uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
-                uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
-                for (; i <= n_vectors - 4; i+=4) {
-                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
-                    uint32x4_t res = vld1q_u32(&distances_p[i]);
-                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]);
-                    uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
-                    vst1q_u32(&distances_p[i], vdotq_u32(res, diff_u8, diff_u8));
-                }
-            }
+//            if constexpr (!SKIP_PRUNED){
+//                uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+//                uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
+//                for (; i <= n_vectors - 4; i+=4) {
+//                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+//                    uint32x4_t res = vld1q_u32(&distances_p[i]);
+//                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]);
+//                    uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
+//                    vst1q_u32(&distances_p[i], vdotq_u32(res, diff_u8, diff_u8));
+//                }
+//            }
             // n_vectors % 4 (rest)
 //#ifdef BENCHMARK_TIME
 //            end_to_end_clock.Tic();
@@ -336,7 +336,11 @@ protected:
 
             }
             */
-
+//            uint8x8_t mask = vdup_n_u8(0xFF);  // Create all 1s
+//            mask = vset_lane_u8(0, mask, 4);
+//            mask = vset_lane_u8(0, mask, 5);
+//            mask = vset_lane_u8(0, mask, 6);
+//            mask = vset_lane_u8(0, mask, 7);
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
                 if constexpr (SKIP_PRUNED){
@@ -353,6 +357,7 @@ protected:
                 */
 
                 // I am sure I will have 4 dims
+                // L2
                 int to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
                 int to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
                 int to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
@@ -361,6 +366,32 @@ protected:
                         (to_multiply_b * to_multiply_b) +
                         (to_multiply_c * to_multiply_c) +
                         (to_multiply_d * to_multiply_d);
+
+                // Other alternative which uses SIMD for 4 dimensions, but it is slower
+                // Load 8-bit query and data values (first 4 elements)
+//                uint8x8_t query_vals = vld1_u8(query + dimension_idx);
+//                uint8x8_t data_vals = vld1_u8(data + offset_to_dimension_start + (vector_idx * 4));
+//                // Compute absolute differences (8-bit result)
+//                uint8x8_t abs_diff = vabd_u8(query_vals, data_vals);
+//                abs_diff = vand_u8(abs_diff, mask);
+//                // Square differences: first widen to 16-bit, then multiply
+//                uint16x8_t abs_diff_u16 = vmull_u8(abs_diff, abs_diff);  // Widen and square
+//                // Sum 16-bit values pairwise to 32-bit
+//                uint32x4_t sum_low = vpaddlq_u16(abs_diff_u16);
+//                // Horizontal sum to a single scalar
+//                uint32_t sum = vaddvq_u32(sum_low);
+//                // Accumulate result
+//                distances_p[vector_idx] += sum;
+
+                // IP
+//                int to_multiply_a = query[dimension_idx] * data[offset_to_dimension_start + (vector_idx * 4)];
+//                int to_multiply_b = query[dimension_idx + 1] * data[offset_to_dimension_start + (vector_idx * 4) + 1];
+//                int to_multiply_c = query[dimension_idx + 2] * data[offset_to_dimension_start + (vector_idx * 4) + 2];
+//                int to_multiply_d = query[dimension_idx + 3] * data[offset_to_dimension_start + (vector_idx * 4) + 3];
+//                distances_p[vector_idx] += to_multiply_a +
+//                                           to_multiply_b +
+//                                           to_multiply_c +
+//                                           to_multiply_d;
 
             }
 //#ifdef BENCHMARK_TIME
@@ -375,6 +406,7 @@ protected:
                 group += 4;
                 loop_c = 0;
             }
+            // Todo: detect clip up, but this is super rare
             if (dim_clip_value[dim_idx] < 0) {
                 for (size_t j=0; j < n_vectors; ++j) {
                     size_t vector_idx = j;
@@ -382,16 +414,22 @@ protected:
                     if constexpr (SKIP_PRUNED){
                         vector_idx = pruning_positions[vector_idx];
                     }
-                    //int to_multiply = (int)data[offset_to_dimension_start + (vector_idx * 4) + (dim_idx % 4)] - dim_clip_value[dim_idx];
-                    //distances_p[vector_idx] += to_multiply * to_multiply;
-                    distances_p[vector_idx] -= 2 * data[offset_to_dimension_start + (vector_idx * 4) + (dim_idx % 4)] * dim_clip_value[dim_idx];
+                    // L2
                     // TODO: Altho this clipping fixing is meaningless to the total runtime
                     // We can pushup this term to the end of the calculation, and only add it on vectors
                     // when we are merging to the heap.
                     // If I remove it completely, and not push it up before adding it to the queue,
                     // it will only work if the same query dimension always clips in all the buckets
                     // otherwise I could get some errors
-                    distances_p[vector_idx] += dim_clip_value[dim_idx] * dim_clip_value[dim_idx];
+                    // ACTUALLY THIS ALWAYS WORK BECAUSE dim_clip_value[dim_idx] IS ALWAYS NEGATIVE
+                    // IF THE CLIPPING IS POSITIVE, I COULD BE PRUNING VECTORS INCORRECTLY
+                    // (in other context, here it works because it is an instant correction)
+                    // In fact TODO: Check that dim_clip_value[dim_idx] is always negative
+                     distances_p[vector_idx] -= 2 * data[offset_to_dimension_start + (vector_idx * 4) + (dim_idx % 4)] * dim_clip_value[dim_idx];
+                     distances_p[vector_idx] += dim_clip_value[dim_idx] * dim_clip_value[dim_idx];
+                    clipped += 1;
+                    // IP
+                    // distances_p[vector_idx] += data[offset_to_dimension_start + (vector_idx * 4) + (dim_idx % 4)] * dim_clip_value[dim_idx];
                 }
             }
             loop_c += 1;
@@ -442,7 +480,7 @@ protected:
                 uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 16]);
                 uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
                 // TODO: RE ADD
-                res[i] = vdotq_u32(res[i], diff_u8, diff_u8);
+                //res[i] = vdotq_u32(res[i], diff_u8, diff_u8);
             }
         }
         // Store results back
@@ -573,11 +611,25 @@ protected:
         std::iota(vectorgroups_indices.begin(), vectorgroups_indices.end(), 0);
     }
 
+    void NormalizeQuery(const float * src, float * dst) {
+        float sum = 0.0f;
+        for (size_t i = 0; i < pdx_data.num_dimensions; ++i) {
+            sum += src[i] * src[i];
+        }
+        float norm = std::sqrt(sum);
+        for (size_t i = 0; i < pdx_data.num_dimensions; ++i) {
+            dst[i] = src[i] / norm;
+        }
+    }
+
     void ScaleQuery(const float * src, int32_t * dst) {
         for (size_t i = 0; i < pdx_data.num_dimensions; ++i) {
-            // Fast round
-            dst[i] = (src[i] * lep_exponent); // + 12582912.0 - 12582912.0;
+            // Fast round: + 12582912.0 - 12582912.0;
+            dst[i] = static_cast<int>(std::round(src[i] * lep_exponent));
+            //dst[i] = (src[i] * 316.227766017f); // gist 10^2.5
+            // dst[i] = (src[i] * 1258.92541179f); // arXiv to slighlly increase recall 10^3.1
         }
+        //std::cout << +dst[0] << "\n";
     }
 
     // TODO: There are several ways to optimize this
@@ -618,6 +670,7 @@ protected:
             uint8x8_t result_2 = vqmovun_s16(combined_2);
 
             // Mask out values that were clamped to 255 (set them to 0)
+            // TODO: 255 is going to be clamped to 0
             uint8x8_t mask_1 = vceq_u8(result_1, vdup_n_u8(255)); // Create mask where result == 255
             uint8x8_t mask_2 = vceq_u8(result_2, vdup_n_u8(255)); // Create mask where result == 255
             result_1 = vbic_u8(result_1, mask_1); // Zero out those values
@@ -642,13 +695,16 @@ public:
         ResetClocks();
         end_to_end_clock.Tic();
 #endif
-        // clipped = 0;
+        clipped = 0;
+        size_t all_values = 0;
         alignas(64) uint8_t query[pdx_data.num_dimensions];
         alignas(64) int32_t scaled_query[4096]; // TODO
         alignas(64) float transformed_raw_query[pdx_data.num_dimensions];
+        alignas(64) float normalized_query[pdx_data.num_dimensions];
         best_k = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
-        PreprocessQuery(raw_query, transformed_raw_query);
+        NormalizeQuery(raw_query, normalized_query);
+        PreprocessQuery(normalized_query, transformed_raw_query);
         GetDimensionsAccessOrder(transformed_raw_query, pdx_data.means);
         // TODO: This should probably not be evaluated here
         if (pdx_data.is_ivf) {
@@ -675,6 +731,7 @@ public:
         VectorgroupU8& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         ScaleQuery(transformed_raw_query, scaled_query);
         PrepareQuery(scaled_query, query, first_vectorgroup.for_bases);
+        all_values += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         Start(query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
@@ -685,6 +742,7 @@ public:
 //            end_to_end_clock.Toc();
 //#endif
             Prune(query, vectorgroup.data, vectorgroup.num_embeddings, k, best_k);
+            all_values += vectorgroup.num_embeddings * pdx_data.num_dimensions;
 //#ifdef BENCHMARK_TIME
 //            end_to_end_clock.Tic();
 //#endif
@@ -693,6 +751,7 @@ public:
             }
         }
         //std::cout << "Clipped dimensions: " <<  clipped << " on " << ivf_nprobe << " clusters (" << (float)(clipped)/(ivf_nprobe*pdx_data.num_dimensions) * 100.0 << " )\n";
+        //std::cout << "Clipped values: " <<  clipped << " on " << ivf_nprobe << " clusters (" << (double)(clipped)/(all_values) * 100.0 << " )\n";
 #ifdef BENCHMARK_TIME
         end_to_end_clock.Toc();
 #endif

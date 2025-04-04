@@ -21,10 +21,16 @@ def read_hdf5_data(dataset):
     return np.array(hdf5_file["train"], dtype=np.float32), np.array(hdf5_file["test"], dtype=np.float32)
 
 
-def get_ground_truth_filename(file, k): return f"{file}_{k}.json"
+def get_ground_truth_filename(file, k, norm=True):
+    if norm:
+        return f"{file}_{k}_norm.json"
+    return f"{file}_{k}.json"
 
 
-def get_core_index_filename(file): return f"ivf_{file}.index"
+def get_core_index_filename(file, norm=True):
+    if norm:
+        return f"ivf_{file}_norm.index"
+    return f"ivf_{file}.index"
 
 
 def get_delta_d(ndim):

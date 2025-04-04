@@ -1,6 +1,7 @@
 import numpy as np
 import sys
 import math
+from bitarray import bitarray
 
 from typing import List
 from pdxearch.index_core import IVF
@@ -43,6 +44,9 @@ class BaseIndexPDXIVF:
     # Separate the data in the PDX blocks
     # TODO: Most probably this can be much more efficient
     def _to_pdx(self, data: np.array, _type='pdx', centroids_preprocessor=None, use_original_centroids=False, **kwargs):
+        exceptions_count = 0
+        lep_bw = kwargs.get('lep_bw', 8)
+        use_lep = kwargs.get('lep', False)
         self.partitions = []
         self.means = data.mean(axis=0, dtype=np.float32)
         self.centroids = np.array([], dtype=np.float32)
@@ -68,19 +72,49 @@ class BaseIndexPDXIVF:
             #     if left_to_write != 0:
             #         partition.blocks.append(data[partition.indices[already_written:], :])
             # else:  # Variable block size
-            if _type == 'pdx-4' and kwargs.get('lep', False):
+            if _type == 'pdx-4' and use_lep:
                 # TODO: Call to LEP class to determine exponent, FOR base, and bit-width
                 pre_data = data[partition.indices, :]
-                # TODO: Check if values fit in 8-bits
-                pre_data = pre_data * 1000
-                pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
-                for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
-                print(for_bases)
-                for_data = pre_data - for_bases
-                if np.any(for_data > 255):  # TODO: We are assuming data fits in 8-bits
-                    raise ValueError(f'LEP overflow when converting to uint8 in partition {list_id}')
+                if lep_bw == 6:  # TODO: More smart min/max
+                    # Method 1, Clip means:
+                    # pre_data = pre_data * 1000
+                    # pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                    # for_bases = np.mean(pre_data, axis=0).astype(dtype=np.int32) - 32  # 32 (64 / 2) below the mean
+                    # for_data = pre_data - for_bases
+                    # lep_min = 0
+                    # lep_max = 64
+                    # Method 2: Scale all:
+                    pre_data = pre_data * 1000
+                    pre_data = pre_data * 0.25
+                    pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                    for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                    for_data = pre_data - for_bases
+                    lep_min = 0
+                    lep_max = 64
+                elif lep_bw == 4:   # LEP-4
+                    pre_data = pre_data * 1000
+                    pre_data = pre_data * 0.0625
+                    pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                    for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                    for_data = pre_data - for_bases
+                    lep_min = 0
+                    lep_max = 16
+                else:  # LEP-8
+                    pre_data = pre_data * 1000
+                    pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                    for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                    for_data = pre_data - for_bases
+                    lep_min = 0
+                    lep_max = 255
+                if np.any(for_data > lep_max) or np.any(for_data < lep_min):  # TODO: We are assuming data fits in 8-bits
+                    if lep_bw == 8:  # I am only interested of knowing this if we use 8-bits
+                        print(f'LEP overflow when converting to uint8 in partition {list_id}')
+                    exceptions_count += ((for_data > lep_max) | (for_data < lep_min)).sum()
+                    # TODO: Support exceptions
+                    for_data = np.clip(for_data, lep_min, lep_max)  # Perhaps using a mask (e.g. matrix & 0x3F) is faster
                     # perhaps we can clip for now, instead of exceptions and see how recall is
                     # for_data = np.clip(for_data, None, 255)
+                # Always using np.uint8
                 for_data = for_data.astype(dtype=np.uint8)
                 partition.for_bases = for_bases
                 partition.blocks.append(for_data)
@@ -91,6 +125,7 @@ class BaseIndexPDXIVF:
                 self.centroids = np.append(self.centroids, partition_centroids)
             self.partitions.append(partition)
         self.num_partitions = len(self.partitions)
+        print(f'LEP-{lep_bw} Compression finished. Found: {exceptions_count} exceptions')
         self._materialize_index(_type, **kwargs)
 
     # Materialize the index with the given layout
@@ -115,8 +150,28 @@ class BaseIndexPDXIVF:
                         data.extend(self.partitions[i].blocks[p].tobytes("F"))  # PDX
                     elif _type == 'pdx-4':
                         tmp_block = self.partitions[i].blocks[p]
-                        for k in range(0, self.ndim, 4):
-                            data.extend(tmp_block[:, k:k+4].tobytes("C"))
+                        tmp_bitarray = bitarray()
+                        for k in range(0, self.ndim, 4): # Probably with 4 bits I can group 8 dims
+                            # tmp_bitarray = bitarray()
+                            lep_bw = kwargs.get('lep_bw', 8)
+                            if lep_bw == 8:
+                                data.extend(tmp_block[:, k:k+4].tobytes("C"))
+                            elif lep_bw == 6:
+                                offset = 2
+                                tmp_flat = tmp_block[:, k:k+4].flatten(order='C')
+                                flat_unpacked = np.unpackbits(tmp_flat)
+                                for z in range(0, len(flat_unpacked), 8):
+                                    tmp_bitarray.extend(flat_unpacked[z + offset: z + 8])
+                            elif lep_bw == 4:
+                                offset = 4
+                                tmp_flat = tmp_block[:, k:k+4].flatten(order='C')
+                                flat_unpacked = np.unpackbits(tmp_flat)
+                                for z in range(0, len(flat_unpacked), 8):
+                                    tmp_bitarray.extend(flat_unpacked[z + offset: z + 8])
+                            # if len(tmp_bitarray):  # Byte aligned every 4 dimensions
+                            #     data.extend(tmp_bitarray.tobytes())
+                        if len(tmp_bitarray):  # Byte aligned every partition
+                            data.extend(tmp_bitarray.tobytes())
                     elif _type == 'n-ary':
                         data.extend(self.partitions[i].blocks[p].tobytes("C"))
                     elif _type == 'dual':

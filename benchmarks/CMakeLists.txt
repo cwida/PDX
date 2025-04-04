@@ -3,6 +3,8 @@ add_executable(BenchmarkNaryIVFADSampling bench_adsampling/nary_ivf_adsampling.c
 add_executable(BenchmarkNaryIVFADSamplingSIMD bench_adsampling/nary_ivf_adsampling_simd.cpp)
 add_executable(BenchmarkPDXADSampling bench_adsampling/pdx_ivf_adsampling.cpp)
 add_executable(BenchmarkU8PDXADSampling bench_adsampling/pdx_ivf_adsampling_u8.cpp)
+add_executable(BenchmarkU6PDXADSampling bench_adsampling/pdx_ivf_adsampling_u6.cpp)
+add_executable(BenchmarkU4PDXADSampling bench_adsampling/pdx_ivf_adsampling_u4.cpp)
 
 # BSA
 add_executable(BenchmarkNaryIVFBSASIMD bench_bsa/nary_ivf_bsa_simd.cpp)

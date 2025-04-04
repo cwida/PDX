@@ -90,8 +90,9 @@ DIMENSIONALITIES = {
 }
 
 DATA_EXPONENTS = {
-    'msong-420': 1,
+    'msong-420': 3,
     'sift-128-euclidean': 0,
     'instructorxl-arxiv-768': 3,
-    'openai-1536-angular': 3
+    'openai-1536-angular': 3,
+    'gist-960-euclidean': 2
 }

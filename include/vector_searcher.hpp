@@ -261,6 +261,48 @@ simsimd_ip_f32_skylake_cycle:
         );
     }
 
+    // U6 override: todo: template
+    static void GetVectorgroupsAccessOrderIVF(const float *__restrict query, const PDX::IndexPDXIVFFlatU6x8 &data, size_t ivf_nprobe, std::vector<uint32_t> &vectorgroups_indices) {
+        std::vector<float> distances_to_centroids;
+        distances_to_centroids.resize(data.num_vectorgroups);
+        for (size_t vectorgroup_idx = 0; vectorgroup_idx < data.num_vectorgroups; vectorgroup_idx++) {
+            // TODO: From query to centroids we only support L2
+            distances_to_centroids[vectorgroup_idx] = CalculateDistanceL2(query,
+                                                                          data.centroids +
+                                                                          vectorgroup_idx *
+                                                                          data.num_dimensions,
+                                                                          data.num_dimensions);
+        }
+        vectorgroups_indices.resize(data.num_vectorgroups);
+        std::iota(vectorgroups_indices.begin(), vectorgroups_indices.end(), 0);
+        std::partial_sort(vectorgroups_indices.begin(), vectorgroups_indices.begin() + ivf_nprobe, vectorgroups_indices.end(),
+                          [&distances_to_centroids](size_t i1, size_t i2) {
+                              return distances_to_centroids[i1] < distances_to_centroids[i2];
+                          }
+        );
+    }
+
+    // U4 override: todo: template
+    static void GetVectorgroupsAccessOrderIVF(const float *__restrict query, const PDX::IndexPDXIVFFlatU4x8 &data, size_t ivf_nprobe, std::vector<uint32_t> &vectorgroups_indices) {
+        std::vector<float> distances_to_centroids;
+        distances_to_centroids.resize(data.num_vectorgroups);
+        for (size_t vectorgroup_idx = 0; vectorgroup_idx < data.num_vectorgroups; vectorgroup_idx++) {
+            // TODO: From query to centroids we only support L2
+            distances_to_centroids[vectorgroup_idx] = CalculateDistanceL2(query,
+                                                                          data.centroids +
+                                                                          vectorgroup_idx *
+                                                                          data.num_dimensions,
+                                                                          data.num_dimensions);
+        }
+        vectorgroups_indices.resize(data.num_vectorgroups);
+        std::iota(vectorgroups_indices.begin(), vectorgroups_indices.end(), 0);
+        std::partial_sort(vectorgroups_indices.begin(), vectorgroups_indices.begin() + ivf_nprobe, vectorgroups_indices.end(),
+                          [&distances_to_centroids](size_t i1, size_t i2) {
+                              return distances_to_centroids[i1] < distances_to_centroids[i2];
+                          }
+        );
+    }
+
 };
 
 #endif //EMBEDDINGSEARCH_VECTOR_SEARCHER_HPP

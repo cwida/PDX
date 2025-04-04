@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
         matrix = matrix.inverse();
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
         NUM_QUERIES = 100; // ((uint32_t *)query)[0];
-        float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN));
+        float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN) + "_norm");
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
