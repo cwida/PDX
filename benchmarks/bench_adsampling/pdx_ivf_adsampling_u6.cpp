@@ -44,11 +44,11 @@ int main(int argc, char *argv[]) {
         }
         PDX::IndexPDXIVFFlatU6x8 pdx_data = PDX::IndexPDXIVFFlatU6x8();
         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-u6x4-ivf");
-        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u8-matrix");
+        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u6-matrix");
         Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
         matrix = matrix.inverse();
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
-        NUM_QUERIES = 100; // ((uint32_t *)query)[0];
+        NUM_QUERIES = 1000; // ((uint32_t *)query)[0];
         float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN) + "_norm");
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings

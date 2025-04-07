@@ -196,7 +196,7 @@ public:
 //            for (size_t d = 0; d < num_dimensions; d+=4){
 //                next_value += AlignValue<uint32_t, 8>(BW * vectorgroup.num_embeddings * 4) / 8;
 //            }
-            next_value += AlignValue<uint32_t, 8>(BW * vectorgroup.num_embeddings * num_dimensions) / 8;
+            next_value += (int)(AlignValue<uint32_t, 1024>(vectorgroup.num_embeddings * num_dimensions) * 0.75); // 6 / 8
         }
         // Indices
         for (size_t i = 0; i < num_vectorgroups; ++i) {
@@ -281,7 +281,7 @@ public:
 //            for (size_t d = 0; d < num_dimensions; d+=4){
 //                next_value += AlignValue<uint32_t, 8>(BW * vectorgroup.num_embeddings * 4) / 8;
 //            }
-            next_value += AlignValue<uint32_t, 8>(BW * vectorgroup.num_embeddings * num_dimensions) / 8;
+            next_value += (int)(AlignValue<uint32_t, 1024>(vectorgroup.num_embeddings * num_dimensions) * 0.50); // 4 / 8
         }
         // Indices
         for (size_t i = 0; i < num_vectorgroups; ++i) {
