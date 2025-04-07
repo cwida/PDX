@@ -561,12 +561,15 @@ protected:
         std::iota(vectorgroups_indices.begin(), vectorgroups_indices.end(), 0);
     }
 
-    void Decompress(const uint8_t * data, uint8_t * out, size_t length){
+    void Decompress(uint8_t * data, uint8_t * out, size_t length){
 //        uint8_t * out = new uint8_t[(n_vectors * total_dims) + 64];
         uint8_t * out_ptr = out;
+        uint8_t * data_ptr = data;
         // TODO: Handle remain properly, for now I will let it overflow slightly at the end by aligning n_vectors to 32
-        for (uint32_t pos = 0; pos < IndexPDXIVFFlatU6x8::AlignValue<uint32_t, 32>(length); pos+=32){
-            Unpacker::unpackblock6_notoptimal(&data, &out_ptr);
+        for (uint32_t pos = 0; pos < IndexPDXIVFFlatU6x8::AlignValue<uint32_t, 1024>(length); pos+=1024){
+            //Unpacker::unpackblock6_notoptimal(&data, &out_ptr);
+            size_t data_pos = (size_t)(pos * 0.75); // To skip correctly
+            Unpacker::unpack_6bw_8ow_128crw_8uf(data_ptr + data_pos, out_ptr+pos);
         }
     }
 
@@ -650,6 +653,8 @@ public:
      ******************************************************************/
     // PDXearch: PDX + Pruning
     std::vector<KNNCandidate> Search(float *__restrict raw_query, uint32_t k) {
+        size_t max_length = 4096 * pdx_data.num_dimensions;
+        uint8_t * out = new uint8_t[max_length];
 #ifdef BENCHMARK_TIME
         ResetClocks();
         end_to_end_clock.Tic();
@@ -694,16 +699,22 @@ public:
         PrepareQuery(scaled_query, query, first_vectorgroup.for_bases);
         all_values += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         size_t length = first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
-        uint8_t * out = new uint8_t[length + 64];
+//        uint8_t * out = new uint8_t[length + 1024];
         Decompress(first_vectorgroup.data, out, length);
         Start(query, out, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
-        delete [] out;
+        //delete [] out;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VectorgroupU6x8& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             length = vectorgroup.num_embeddings * pdx_data.num_dimensions;
-            out = new uint8_t[length + 64];
+//            out = new uint8_t[length + 1024];
+//#ifdef BENCHMARK_TIME
+//            end_to_end_clock.Toc();
+//#endif
             Decompress(vectorgroup.data, out, length);
+//#ifdef BENCHMARK_TIME
+//            end_to_end_clock.Tic();
+//#endif
             PrepareQuery(scaled_query, query, vectorgroup.for_bases);
             Warmup(query, out, vectorgroup.num_embeddings, k, selectivity_threshold, best_k);
 //#ifdef BENCHMARK_TIME
@@ -717,13 +728,14 @@ public:
             if (n_vectors_not_pruned){
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, best_k);
             }
-            delete [] out;
+            //delete [] out;
         }
         //std::cout << "Clipped dimensions: " <<  clipped << " on " << ivf_nprobe << " clusters (" << (float)(clipped)/(ivf_nprobe*pdx_data.num_dimensions) * 100.0 << " )\n";
         //std::cout << "Clipped values: " <<  clipped << " on " << ivf_nprobe << " clusters (" << (double)(clipped)/(all_values) * 100.0 << " )\n";
 #ifdef BENCHMARK_TIME
         end_to_end_clock.Toc();
 #endif
+        delete [] out;
         return BuildResultSet(k);
     }
 

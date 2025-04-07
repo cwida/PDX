@@ -6,6 +6,7 @@ from bitarray import bitarray
 from typing import List
 from pdxearch.index_core import IVF
 from pdxearch.constants import PDXConstants
+from pdxearch.fastlanes_pack import *
 
 
 class Partition:
@@ -145,33 +146,41 @@ class BaseIndexPDXIVF:
             data.extend(whole_f.tobytes("F"))
         else:
             for i in range(self.num_partitions):
+                if i % 100 == 0:
+                    print(f"{i}/{self.num_partitions} partitions processed")
                 for p in range(len(self.partitions[i].blocks)):
                     if _type == 'pdx':
                         data.extend(self.partitions[i].blocks[p].tobytes("F"))  # PDX
                     elif _type == 'pdx-4':
                         tmp_block = self.partitions[i].blocks[p]
-                        tmp_bitarray = bitarray()
-                        for k in range(0, self.ndim, 4): # Probably with 4 bits I can group 8 dims
-                            # tmp_bitarray = bitarray()
-                            lep_bw = kwargs.get('lep_bw', 8)
-                            if lep_bw == 8:
-                                data.extend(tmp_block[:, k:k+4].tobytes("C"))
+                        rows, _ = tmp_block.shape
+                        pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
+                        lep_bw = kwargs.get('lep_bw', 8)
+                        if lep_bw == 8:
+                            data.extend(pdx_4_block.tobytes("C"))
+                        else:
+                            total_values = len(pdx_4_block)
+                            padding_length = (1024 - total_values % 1024) % 1024  # Fastlanes needs 1024 values
+                            pdx_4_block = np.pad(pdx_4_block, (0, padding_length), mode='constant', constant_values=0)
+                            out_array = np.zeros(packed_length(len(pdx_4_block), lep_bw), dtype=np.uint8)
+                            compression_unit_length = packed_length(1024, lep_bw)
+                            if lep_bw == 4:
+                                compression_unit_offset = 0
+                                for i in range(0, len(pdx_4_block), 1024):
+                                    #pack_4bit(pdx_4_block[i: i+1024], out_array[compression_unit_offset: compression_unit_offset+compression_unit_length])
+                                    pack_4bit_symmetric(pdx_4_block[i: i+1024], out_array[compression_unit_offset: compression_unit_offset+compression_unit_length])
+                                    compression_unit_offset += compression_unit_length
                             elif lep_bw == 6:
-                                offset = 2
-                                tmp_flat = tmp_block[:, k:k+4].flatten(order='C')
-                                flat_unpacked = np.unpackbits(tmp_flat)
-                                for z in range(0, len(flat_unpacked), 8):
-                                    tmp_bitarray.extend(flat_unpacked[z + offset: z + 8])
-                            elif lep_bw == 4:
-                                offset = 4
-                                tmp_flat = tmp_block[:, k:k+4].flatten(order='C')
-                                flat_unpacked = np.unpackbits(tmp_flat)
-                                for z in range(0, len(flat_unpacked), 8):
-                                    tmp_bitarray.extend(flat_unpacked[z + offset: z + 8])
+                                compression_unit_offset = 0
+                                for i in range(0, len(pdx_4_block), 1024):
+                                    pack_6bit(pdx_4_block[i: i+1024], out_array[compression_unit_offset: compression_unit_offset+compression_unit_length])
+                                    # pack_4bit_symmetric(pdx_4_block[i: i+1024], out_array[compression_unit_offset: compression_unit_offset+compression_unit_length])
+                                    compression_unit_offset += compression_unit_length
+                            data.extend(out_array.tobytes("C"))
                             # if len(tmp_bitarray):  # Byte aligned every 4 dimensions
                             #     data.extend(tmp_bitarray.tobytes())
-                        if len(tmp_bitarray):  # Byte aligned every partition
-                            data.extend(tmp_bitarray.tobytes())
+                        # if len(tmp_bitarray):  # Byte aligned every partition
+                        #     data.extend(tmp_bitarray.tobytes())
                     elif _type == 'n-ary':
                         data.extend(self.partitions[i].blocks[p].tobytes("C"))
                     elif _type == 'dual':
