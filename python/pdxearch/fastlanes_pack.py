@@ -76,5 +76,5 @@ def pack_4bit_symmetric(in_array, out_array):
     for i in range(0, 1024, 2):
         x0 = in_array[i] & 0x0F
         x1 = in_array[i + 1] & 0x0F
-        out_array[j] = x0 | (x1 << 4)
+        out_array[j] = (x1 << 4) | x0
         j += 1
