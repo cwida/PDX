@@ -425,29 +425,29 @@ protected:
                     // loading 128-bits --> 32 nibbles
                     uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 2]); // *2 because each dimension is two
 
-                    // Extract nibbles (i don't need the lookup table as uint4 are already the correct rep. of uint8
-                    uint8x16_t a_lo = vandq_u8(vec2_u8, nibble_mask);
-                    uint8x16_t a_hi = vandq_u8(vshrq_n_u8(vec2_u8, 4), nibble_mask);
+                    // Extract nibbles (i don't need the lookup table as uint4 are already the correct rep. of uint8)
+                    uint8x16_t a_even = vandq_u8(vec2_u8, nibble_mask);
+                    uint8x16_t a_odd = vandq_u8(vshrq_n_u8(vec2_u8, 4), nibble_mask);
 
                     // Right now they are:
                     // a_lo = [x0, x2, x4, x6, ...]
                     // a_hi = [x1, x3, x5, x7, ...]
                     //        [v1, v1, v2, v2  ...]
                     // I need to unpack lo and unpack hi to put 4 of each vector consecutively
-                    uint8x16_t r_lo = vcombine_u8(vget_high_u8(a_lo), vget_high_u8(a_hi));
-                    uint8x16_t r_hi = vcombine_u8(vget_low_u8(a_lo), vget_low_u8(a_lo));
+                    uint8x16_t r_first = vcombine_u8(vget_high_u8(a_even), vget_high_u8(a_odd));
+                    uint8x16_t r_second = vcombine_u8(vget_low_u8(a_even), vget_low_u8(a_odd));
                     // Now they are:
                     // r_lo = [x0, x1, x2, x3, ...]
                     // r_hi = [x4, x5, x6, x7, ...]
                     // TODO: Probably a smarter layout would help me to avoid this vcombine_u8
 
                     // Abs diff
-                    uint8x16_t d_lo = vabdq_u8(r_lo, vec1_u8);
-                    uint8x16_t d_hi = vabdq_u8(r_hi, vec1_u8);
+                    uint8x16_t d_first = vabdq_u8(r_first, vec1_u8);
+                    uint8x16_t d_second = vabdq_u8(r_second, vec1_u8);
 
                     // Option 1:
-                    vst1q_u32(&distances_p[i], vdotq_u32(res_1, d_lo, d_lo));
-                    vst1q_u32(&distances_p[i+4], vdotq_u32(res_2, d_hi, d_hi));
+                    vst1q_u32(&distances_p[i], vdotq_u32(res_1, d_first, d_first));
+                    vst1q_u32(&distances_p[i+4], vdotq_u32(res_2, d_second, d_second));
 
                     // Option 2:
 //                    uint8x16_t sq_lo = vqtbl1q_u8(u4_lookup_table, r_lo);
