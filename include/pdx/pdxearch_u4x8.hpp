@@ -430,15 +430,17 @@ protected:
                     uint8x16_t a_odd = vandq_u8(vshrq_n_u8(vec2_u8, 4), nibble_mask);
 
                     // Right now they are:
-                    // a_lo = [x0, x2, x4, x6, ...]
-                    // a_hi = [x1, x3, x5, x7, ...]
+                    // a_even = [x0, x2, x4, x6, ...]
+                    // a_odd  = [x1, x3, x5, x7, ...]
                     //        [v1, v1, v2, v2  ...]
                     // I need to unpack lo and unpack hi to put 4 of each vector consecutively
-                    uint8x16_t r_first = vcombine_u8(vget_high_u8(a_even), vget_high_u8(a_odd));
-                    uint8x16_t r_second = vcombine_u8(vget_low_u8(a_even), vget_low_u8(a_odd));
+//                    uint8x16_t r_first = vcombine_u8(vget_high_u8(a_even), vget_high_u8(a_odd));
+//                    uint8x16_t r_second = vcombine_u8(vget_low_u8(a_even), vget_low_u8(a_odd));
+                    uint8x16_t r_first = vzip1q_u8(a_even, a_odd);
+                    uint8x16_t r_second = vzip2q_u8(a_even, a_odd);
                     // Now they are:
-                    // r_lo = [x0, x1, x2, x3, ...]
-                    // r_hi = [x4, x5, x6, x7, ...]
+                    // r_first  = [x0, x1, x2, x3, ...]
+                    // r_second = [x4, x5, x6, x7, ...]
                     // TODO: Probably a smarter layout would help me to avoid this vcombine_u8
 
                     // Abs diff
