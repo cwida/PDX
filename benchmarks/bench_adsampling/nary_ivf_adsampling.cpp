@@ -44,7 +44,7 @@ int main(int argc, char *argv[]) {
         query += 1; // skip number of embeddings
 
         // Using the dual-block layout
-        PDX::IndexPDXIVFFlat nary_dual_block = PDX::IndexPDXIVFFlat();
+        PDX::IndexPDXIVF nary_dual_block = PDX::IndexPDXIVF<PDX::F32>();
         nary_dual_block.Restore(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-ivf-dual-block");
 
         uint32_t num_dimensions = nary_dual_block.num_dimensions;

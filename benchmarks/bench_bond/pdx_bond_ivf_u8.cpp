@@ -9,7 +9,7 @@
 #include <iostream>
 #include "utils/file_reader.hpp"
 #include "pdx/index_base/pdx_ivf.hpp"
-#include "pdx/bond_u8.hpp"
+#include "pdx/bond.hpp"
 #include "utils/benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
@@ -66,7 +66,7 @@ int main(int argc, char *argv[]) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlatU8 pdx_data = PDX::IndexPDXIVFFlatU8();
+        PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::U8>();
 
         pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-u8x4-ivf");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
@@ -75,7 +75,7 @@ int main(int argc, char *argv[]) {
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
-        PDX::PDXBondSearcherU8 searcher = PDX::PDXBondSearcherU8(pdx_data, 1, 0, DIMENSION_ORDER);
+        PDX::PDXBondSearcher searcher = PDX::PDXBondSearcher<PDX::U8>(pdx_data, 1, 0, DIMENSION_ORDER);
 
         for (size_t ivf_nprobe : BenchmarkUtils::IVF_PROBES) {
             if (pdx_data.num_vectorgroups < ivf_nprobe) {

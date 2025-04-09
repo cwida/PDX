@@ -113,6 +113,7 @@ public:
             vectorgroup.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
         }
+        // TODO: Should not always load!
         for (size_t i = 0; i < num_vectorgroups; ++i) {
             VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.for_bases = (int32_t *) next_value;
@@ -145,11 +146,6 @@ public:
     float *centroids_pdx{};
     size_t BW=6; // in bits
     size_t EXCEPTION_SIZE=1; // byte
-
-    template<class T, T val=8>
-    static constexpr std::uint32_t AlignValue(T n) {
-        return ((n + (val - 1)) / val) * val;
-    }
 
     void Restore(const std::string &filename) {
         size_t num_tuples;

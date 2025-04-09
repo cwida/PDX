@@ -13,7 +13,7 @@ namespace PDX {
  * and bounds evaluation is not quite straightforward
  ******************************************************************/
 template<Quantization q=F32>
-class BSASearcher : public PDXearch<q, LEPQuantizer<q>, DistanceComputer<IP, q>> {
+class BSASearcher : public PDXearch<q, LEPQuantizer<q>, DistanceComputer<NEGATIVE_L2, q>> {
 public:
     using DISTANCES_TYPE = DistanceType_t<q>;
     using QUANTIZED_VECTOR_TYPE = QuantizedVectorType_t<q>;
@@ -23,12 +23,12 @@ public:
     using KNNCandidate_t = KNNCandidate<q>;
     using VectorComparator_t = VectorComparator<q>;
 
-    BSASearcher(INDEX_TYPE &pdx_index, float selectivity_threshold,
+    BSASearcher(INDEX_TYPE &pdx_index,
                 size_t ivf_nprobe, float sigma_count, Eigen::MatrixXf matrix,
                 float *dimension_variances, float *dimension_means, float *base_square,
                 DimensionsOrder dimension_order)
-            : PDXearch<q, LEPQuantizer<q>, DistanceComputer<IP, q>>(pdx_index,
-                           selectivity_threshold, ivf_nprobe,
+            : PDXearch<q, LEPQuantizer<q>, DistanceComputer<NEGATIVE_L2, q>>(pdx_index,
+                           ivf_nprobe,
                            0,
                            dimension_order),
               base_square(base_square),

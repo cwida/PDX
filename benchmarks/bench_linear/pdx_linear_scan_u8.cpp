@@ -9,7 +9,7 @@
 #include <iostream>
 #include "utils/file_reader.hpp"
 #include "pdx/index_base/pdx_ivf.hpp"
-#include "pdx/bond_u8.hpp"
+#include "pdx/bond.hpp"
 #include "utils/benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
@@ -35,8 +35,7 @@ int main(int argc, char *argv[]) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlatU8 pdx_data = PDX::IndexPDXIVFFlatU8();
-
+        PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::U8>();
         pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-u8x4-flat-blocks");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
         NUM_QUERIES = 100; // ((uint32_t *)query)[0];
@@ -47,7 +46,7 @@ int main(int argc, char *argv[]) {
 
         std::vector<PhasesRuntime> runtimes;
         runtimes.resize(NUM_MEASURE_RUNS * NUM_QUERIES);
-        PDX::PDXBondSearcherU8 searcher = PDX::PDXBondSearcherU8(pdx_data, 0, 0, PDX::SEQUENTIAL);
+        PDX::PDXBondSearcher searcher = PDX::PDXBondSearcher<PDX::U8>(pdx_data, 0, 0, PDX::SEQUENTIAL);
 
         float recalls = 0;
         if (VERIFY_RESULTS){

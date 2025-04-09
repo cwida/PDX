@@ -61,9 +61,9 @@ def generate_chunk_flat(dataset_name: str):
 
 
 if __name__ == "__main__":
-    generate_flat('fashion-mnist-784-euclidean')
-    generate_u8('fashion-mnist-784-euclidean')
+    # generate_flat('fashion-mnist-784-euclidean')
+    # generate_u8('fashion-mnist-784-euclidean')
     generate_chunk_flat('fashion-mnist-784-euclidean')
-    generate_u8_ivf('fashion-mnist-784-euclidean')
+    # generate_u8_ivf('fashion-mnist-784-euclidean')
     # generate_adsampling_ivf('openai-1536-angular')
     # generate_adsampling_ivf('gist-960-euclidean')

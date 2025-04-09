@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
         data += 1;
         uint32_t num_embeddings = ((uint32_t *)data)[0];
 
-        PDX::IndexPDXIVFFlat nary_ivf_data = PDX::IndexPDXIVFFlat();
+        PDX::IndexPDXIVF nary_ivf_data = PDX::IndexPDXIVF<PDX::F32>();
         nary_ivf_data.Restore(BenchmarkUtils::NARY_DATA + dataset + "-ivf");
         LinearSearcher searcher {num_dimensions, num_embeddings};
 

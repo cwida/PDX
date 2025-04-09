@@ -35,7 +35,7 @@ int main(int argc, char *argv[]) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlat pdx_data = PDX::IndexPDXIVFFlat();
+        PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::F32>();
 
         pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-flat-blocks");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
 
         std::vector<PhasesRuntime> runtimes;
         runtimes.resize(NUM_MEASURE_RUNS * NUM_QUERIES);
-        PDX::PDXBondSearcher searcher = PDX::PDXBondSearcher(pdx_data, 0, 0, 0, PDX::SEQUENTIAL);
+        PDX::PDXBondSearcher searcher = PDX::PDXBondSearcher<PDX::F32>(pdx_data, 0, 0, PDX::SEQUENTIAL);
 
         float recalls = 0;
         if (VERIFY_RESULTS){

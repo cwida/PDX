@@ -1,0 +1,2 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
+fashion-mnist-784-euclidean,adsampling,0.564739,1.04779,0.359041,0.99986,128,2.1,10,10000,0,1,0.64,5.715,0.359

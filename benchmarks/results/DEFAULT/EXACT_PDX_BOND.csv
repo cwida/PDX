@@ -1,0 +1,2 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
+sift-128-euclidean,pdx-bond,7.77504,12.0568,3.58658,0.99937,0,0,10,10000,0.2,1,7.891,54.89,2.187

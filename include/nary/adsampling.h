@@ -13,13 +13,21 @@
 #include "pdx/index_base/pdx_ivf.hpp"
 #include "Eigen/Eigen/Dense"
 #include "utils/tictoc.hpp"
+#include "pdx/distance_computers/base_computers.hpp"
 
 /******************************************************************
  * Our implementation of ADSampling
  * https://github.com/gaoj0017/ADSampling
  * Same as the original but improved matrix transformation performance and SIMD
  ******************************************************************/
-class NaryADSamplingSearcher: public VectorSearcher {
+class NaryADSamplingSearcher: public VectorSearcher<PDX::F32> {
+
+    using KNNCandidate = PDX::KNNCandidate<PDX::F32>;
+    using VectorComparator = PDX::VectorComparator<PDX::F32>;
+    using IndexPDXIVF = PDX::IndexPDXIVF<PDX::F32>;
+    using Vectorgroup = PDX::Vectorgroup<PDX::F32>;
+
+
     Eigen::MatrixXf matrix;
     uint32_t num_dimensions;
     uint32_t num_embeddings;
@@ -51,7 +59,7 @@ class NaryADSamplingSearcher: public VectorSearcher {
             // It continues to sample additional delta_d dimensions.
             int check = std::min(delta_d, ((int) num_dimensions) - visited_dimensions);
             visited_dimensions += check;
-            result += CalculateDistanceL2(d, q, check);
+            result += PDX::DistanceComputer<PDX::DistanceFunction::L2, PDX::Quantization::F32>::Horizontal(d, q, check);
             d += check;
             q += check;
             // Hypothesis tesing
@@ -126,7 +134,7 @@ public:
         return result;
     }
 
-    std::vector<KNNCandidate> SearchIVF(float *raw_query, uint32_t k, PDX::IndexPDXIVFFlat& nary_ivf_data) {
+    std::vector<KNNCandidate> SearchIVF(float *raw_query, uint32_t k, IndexPDXIVF& nary_ivf_data) {
 #ifdef BENCHMARK_TIME
         ResetClocks();
         end_to_end_clock.Tic();
@@ -139,7 +147,7 @@ public:
         size_t buckets_to_visit = ivf_nprobe;
         size_t points_to_visit = 0;
         for (size_t bucket_idx = 0; bucket_idx < buckets_to_visit; ++bucket_idx){
-            PDX::Vectorgroup& bucket = nary_ivf_data.vectorgroups[vectorgroup_indices[bucket_idx]];
+            Vectorgroup& bucket = nary_ivf_data.vectorgroups[vectorgroup_indices[bucket_idx]];
             points_to_visit += bucket.num_embeddings;
         }
         auto * distances = new float[points_to_visit];
@@ -148,10 +156,12 @@ public:
         // FROM 0 to DELTA_D
         float distance_limit = std::numeric_limits<float>::max();
         for (size_t bucket_idx = 0; bucket_idx < buckets_to_visit; ++bucket_idx){
-            PDX::Vectorgroup& partition = nary_ivf_data.vectorgroups[vectorgroup_indices[bucket_idx]];
+            Vectorgroup& partition = nary_ivf_data.vectorgroups[vectorgroup_indices[bucket_idx]];
             for (size_t vector_idx = 0; vector_idx < partition.num_embeddings; ++vector_idx) {
-                float distance = CalculateDistanceL2(partition.data + (vector_idx * delta_d),
-                                                     query.data(), delta_d);
+                float distance = PDX::DistanceComputer<PDX::DistanceFunction::L2, PDX::Quantization::F32>::Horizontal(
+                        partition.data + (vector_idx * delta_d),
+                        query.data(),
+                        delta_d);
                 distances[cur_point] = distance;
                 cur_point++;
             }
@@ -160,7 +170,7 @@ public:
         cur_point = 0;
         // FROM DELTA_D to num_dimensions
         for (size_t bucket_idx = 0; bucket_idx < buckets_to_visit; ++bucket_idx){
-            PDX::Vectorgroup& bucket = nary_ivf_data.vectorgroups[vectorgroup_indices[bucket_idx]];
+            Vectorgroup& bucket = nary_ivf_data.vectorgroups[vectorgroup_indices[bucket_idx]];
             float * res_data = bucket.data + (bucket.num_embeddings * delta_d);
             for (size_t vector_idx = 0; vector_idx < bucket.num_embeddings; ++vector_idx) {
                 float distance = CalculateADSamplingDistance(distance_limit,

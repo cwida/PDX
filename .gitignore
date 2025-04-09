@@ -90,6 +90,8 @@ cmake_install.cmake
 /benchmarks/BenchmarkPDXIVFBOND
 /benchmarks/BenchmarkPDXBOND
 /benchmarks/BenchmarkPDXLinearScan
+/benchmarks/BenchmarkU*
+/benchmarks/G4*
 /benchmarks/BenchmarkNaryIVFLinearScan
 /benchmarks/KernelPDXL1
 /benchmarks/KernelPDXL2

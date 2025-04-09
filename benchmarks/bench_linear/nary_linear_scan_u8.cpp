@@ -4,7 +4,7 @@
 
 #include <iostream>
 #include "utils/file_reader.hpp"
-#include "nary/linear_u8.hpp"
+#include "nary/linear.hpp"
 #include "utils/benchmark_utils.hpp"
 
 
@@ -46,9 +46,7 @@ int main(int argc, char *argv[]) {
         uint8_t * vectors = (uint8_t*) data;
         std::vector<PhasesRuntime> runtimes;
         runtimes.resize(NUM_MEASURE_RUNS * NUM_QUERIES);
-        //std::cout << "num dim " << num_dimensions << "\n";
-        //std::cout << "num embeddings " << num_embeddings << "\n";
-        LinearSearcherU8 searcher {num_dimensions, num_embeddings};
+        LinearSearcher<PDX::U8> searcher {num_dimensions, num_embeddings};
 
         float recalls = 0.0;
         if (VERIFY_RESULTS) {
