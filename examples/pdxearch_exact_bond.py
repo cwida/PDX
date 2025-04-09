@@ -18,6 +18,7 @@ if __name__ == "__main__":
 
     index = IndexPDXBONDFlat(ndim=num_dimensions)
     print('PDXifying Collection')
+    index.preprocess(train)
     index.add_load(train)
 
     print(f'{len(queries)} queries with PDX')
@@ -31,9 +32,9 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX avg. time:', sum(times) / float(len(times)))
     # To check results of first query
-    # results = index.search(queries[0], knn)
-    # for result in results:
-    #     print(result.index, result.distance)
+    results = index.search(queries[0], knn)
+    for result in results:
+        print(result.index, result.distance)
 
     print(f'{len(queries)} queries with FAISS')
     times = []
@@ -41,6 +42,7 @@ if __name__ == "__main__":
     results = []
     faiss_index = faiss.IndexFlatL2(num_dimensions)
     faiss_index.add(train)
+    index.preprocess(queries)  # Normalize
     for i in range(len(queries)):
         q = np.ascontiguousarray(np.array([queries[i]]))
         clock.tic()
@@ -48,4 +50,4 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('FAISS avg. time:', sum(times) / float(len(times)))
     # To check results of first query
-    # print(faiss_index.search(np.array([queries[0]]), k=knn))
+    print(faiss_index.search(np.array([queries[0]]), k=knn))

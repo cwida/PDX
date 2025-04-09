@@ -126,7 +126,7 @@ class BaseIndexPDXIVF:
                 self.centroids = np.append(self.centroids, partition_centroids)
             self.partitions.append(partition)
         self.num_partitions = len(self.partitions)
-        print(f'LEP-{lep_bw} Compression finished. Found: {exceptions_count} exceptions')
+        # print(f'LEP-{lep_bw} Compression finished. Found: {exceptions_count} exceptions')
         self._materialize_index(_type, **kwargs)
 
     # Materialize the index with the given layout
@@ -146,8 +146,8 @@ class BaseIndexPDXIVF:
             data.extend(whole_f.tobytes("F"))
         else:
             for i in range(self.num_partitions):
-                if i % 100 == 0:
-                    print(f"{i}/{self.num_partitions} partitions processed")
+                # if i % 100 == 0:
+                #     print(f"{i}/{self.num_partitions} partitions processed")
                 for p in range(len(self.partitions[i].blocks)):
                     if _type == 'pdx':
                         data.extend(self.partitions[i].blocks[p].tobytes("F"))  # PDX

@@ -5,31 +5,32 @@ namespace py = pybind11;
 
 /******************************************************************
  * Wrapper for Python bindings
+ * TODO: Implement quantized classes
  ******************************************************************/
 PYBIND11_MODULE(compiled, m) {
 
     m.doc() = "A library to do vertical pruned vector similarity search";
 
-    py::class_<PDX::Vectorgroup>(m, "Vectorgroup")
+    py::class_<PDX::Vectorgroup<PDX::F32>>(m, "Vectorgroup")
             .def(py::init<>())
-            .def_readwrite("num_embeddings", &PDX::Vectorgroup::num_embeddings)
-            .def_readwrite("indices", &PDX::Vectorgroup::indices)
-            .def_readwrite("data", &PDX::Vectorgroup::data);
+            .def_readwrite("num_embeddings", &PDX::Vectorgroup<PDX::F32>::num_embeddings)
+            .def_readwrite("indices", &PDX::Vectorgroup<PDX::F32>::indices)
+            .def_readwrite("data", &PDX::Vectorgroup<PDX::F32>::data);
 
-    py::class_<PDX::IndexPDXIVFFlat>(m, "IndexPDXIVFFlat")
-            .def_readwrite("num_dimensions", &PDX::IndexPDXIVFFlat::num_dimensions)
-            .def_readwrite("num_vectorgroups", &PDX::IndexPDXIVFFlat::num_vectorgroups)
-            .def_readwrite("vectorgroups", &PDX::IndexPDXIVFFlat::vectorgroups)
-            .def_readwrite("means", &PDX::IndexPDXIVFFlat::means)
-            .def_readwrite("is_ivf", &PDX::IndexPDXIVFFlat::is_ivf)
-            .def_readwrite("centroids", &PDX::IndexPDXIVFFlat::centroids)
-            .def_readwrite("centroids_pdx", &PDX::IndexPDXIVFFlat::centroids_pdx)
-            .def("restore", &PDX::IndexPDXIVFFlat::Restore);
+    py::class_<PDX::IndexPDXIVF<PDX::F32>>(m, "IndexPDXIVFFlat")
+            .def_readwrite("num_dimensions", &PDX::IndexPDXIVF<PDX::F32>::num_dimensions)
+            .def_readwrite("num_vectorgroups", &PDX::IndexPDXIVF<PDX::F32>::num_vectorgroups)
+            .def_readwrite("vectorgroups", &PDX::IndexPDXIVF<PDX::F32>::vectorgroups)
+            .def_readwrite("means", &PDX::IndexPDXIVF<PDX::F32>::means)
+            .def_readwrite("is_ivf", &PDX::IndexPDXIVF<PDX::F32>::is_ivf)
+            .def_readwrite("centroids", &PDX::IndexPDXIVF<PDX::F32>::centroids)
+            .def_readwrite("centroids_pdx", &PDX::IndexPDXIVF<PDX::F32>::centroids_pdx)
+            .def("restore", &PDX::IndexPDXIVF<PDX::F32>::Restore);
 
-    py::class_<KNNCandidate>(m, "KNNCandidate")
+    py::class_<PDX::KNNCandidate<PDX::F32>>(m, "KNNCandidate")
             .def(py::init<>())
-            .def_readwrite("index", &KNNCandidate::index)
-            .def_readwrite("distance", &KNNCandidate::distance);
+            .def_readwrite("index", &PDX::KNNCandidate<PDX::F32>::index)
+            .def_readwrite("distance", &PDX::KNNCandidate<PDX::F32>::distance);
 
     py::class_<PDX::IndexADSamplingIVFFlat>(m, "IndexADSamplingIVFFlat")
             .def(py::init<>())
