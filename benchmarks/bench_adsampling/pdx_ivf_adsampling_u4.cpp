@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
     size_t NUM_QUERIES;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
 
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
+    PDX::DimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
 
     std::string RESULTS_PATH;
     RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "U4_IVF_PDX_ADSAMPLING.csv";
@@ -42,13 +42,13 @@ int main(int argc, char *argv[]) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlatU4x8 pdx_data = PDX::IndexPDXIVFFlatU4x8();
+        PDX::IndexPDXIVFFlatU4 pdx_data = PDX::IndexPDXIVFFlatU4();
         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-u4x4-ivf-s");
         float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u4-s-matrix");
         Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
         matrix = matrix.inverse();
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
-        NUM_QUERIES = 10; // ((uint32_t *)query)[0];
+        NUM_QUERIES = 1000; // ((uint32_t *)query)[0];
         float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN) + "_norm");
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
@@ -58,7 +58,6 @@ int main(int argc, char *argv[]) {
 
         PDX::ADSamplingSearcherU4 searcher = PDX::ADSamplingSearcherU4(pdx_data, 1, EPSILON0, matrix, DIMENSION_ORDER);
         searcher.SetExponent(lep_exponent);
-
         for (size_t ivf_nprobe : BenchmarkUtils::IVF_PROBES) {
             if (pdx_data.num_vectorgroups < ivf_nprobe){
                 continue;
@@ -78,6 +77,7 @@ int main(int argc, char *argv[]) {
                     BenchmarkUtils::VerifyResult<true>(recalls, result, KNN, int_ground_truth, l);
                 }
             }
+
             for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
                     searcher.SearchSymmetric(query + l * pdx_data.num_dimensions, KNN);

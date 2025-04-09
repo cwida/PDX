@@ -1,5 +1,5 @@
-#ifndef EMBEDDINGSEARCH_UNPACKER_HPP
-#define EMBEDDINGSEARCH_UNPACKER_HPP
+#ifndef PDX_UNPACKER_HPP
+#define PDX_UNPACKER_HPP
 
 
 #include <queue>
@@ -7,6 +7,10 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+
+#ifdef __ARM_NEON
+#include "arm_neon.h"
+#endif
 
 namespace PDX {
 

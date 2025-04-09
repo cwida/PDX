@@ -14,7 +14,7 @@
 
 int main(int argc, char *argv[]) {
     std::string arg_dataset;
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
+    PDX::DimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
     std::string ALGORITHM = "vertical-scan";
     if (argc > 1){
         arg_dataset = argv[1];

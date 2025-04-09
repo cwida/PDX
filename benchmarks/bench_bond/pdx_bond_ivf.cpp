@@ -16,7 +16,7 @@ int main(int argc, char *argv[]) {
     std::string arg_dataset;
     size_t arg_ivf_nprobe = 0;
     std::string ALGORITHM = "pdx-bond";
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL; // Just to test performance
+    PDX::DimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL; // Just to test performance
     if (argc > 1){
         arg_dataset = argv[1];
     }
@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
         //     DECREASING_IMPROVED,
         //     DIMENSION_ZONES 
         // };
-        DIMENSION_ORDER = static_cast<PDX::PDXearchDimensionsOrder>(atoi(argv[3]));
+        DIMENSION_ORDER = static_cast<PDX::DimensionsOrder>(atoi(argv[3]));
         if (DIMENSION_ORDER == PDX::DISTANCE_TO_MEANS_IMPROVED){
             ALGORITHM = "pdx-bond";
         }

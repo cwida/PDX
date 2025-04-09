@@ -1,5 +1,5 @@
-#ifndef EMBEDDINGSEARCH_ADSAMPLING_HPP
-#define EMBEDDINGSEARCH_ADSAMPLING_HPP
+#ifndef PDX_ADSAMPLING_U8_HPP
+#define PDX_ADSAMPLING_U8_HPP
 
 #include "pdx/pdxearch.hpp"
 #include <Eigen/Eigen/Dense>
@@ -14,19 +14,28 @@ static std::vector<float> ratios{};
  * Overrides GetPruningThreshold() from pdxearch.hpp to use the ADSampling threshold
  * Overrides PreprocessQuery() to use ADSampling query preprocessing
  ******************************************************************/
-class ADSamplingSearcher : public PDXearch<L2> {
+template<Quantization q=F32>
+class ADSamplingSearcher : public PDXearch<q> {
+    using DISTANCES_TYPE = DistanceType_t<q>;
+    using QUANTIZED_VECTOR_TYPE = QuantizedVectorType_t<q>;
+    using DATA_TYPE = DataType_t<q>;
+    using INDEX_TYPE = IndexPDXIVF<q>;
+    using VECTORGROUP_TYPE = Vectorgroup<q>;
+    using KNNCandidate_t = KNNCandidate<q>;
+    using VectorComparator_t = VectorComparator<q>;
+
 public:
-    ADSamplingSearcher(IndexPDXIVFFlat &pdx_index, float selectivity_threshold,
-                       size_t ivf_nprobe, float epsilon0, Eigen::MatrixXf matrix,
-                       PDXearchDimensionsOrder dimension_order)
-            : PDXearch<L2>(pdx_index,
-                           selectivity_threshold, ivf_nprobe,
+    ADSamplingSearcher(INDEX_TYPE &pdx_index,
+                         size_t ivf_nprobe, float epsilon0, Eigen::MatrixXf matrix,
+                         DimensionsOrder dimension_order)
+            : PDXearch<q>(pdx_index,
+                           ivf_nprobe,
                            1,
                            dimension_order),
               epsilon0(epsilon0), matrix(std::move(matrix)) {
         // Initialize ratios for the dataset
-        ratios.resize(pdx_data.num_dimensions);
-        for (size_t i = 0; i < pdx_data.num_dimensions; ++i) {
+        ratios.resize(this->pdx_data.num_dimensions);
+        for (size_t i = 0; i < this->pdx_data.num_dimensions; ++i) {
             ratios[i] = GetRatio(i);
         }
     }
@@ -39,13 +48,13 @@ public:
         ADSamplingSearcher::matrix = matrix;
     }
 
-    inline void GetPruningThreshold(uint32_t k, std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator> &heap) override {
-        float ratio = current_dimension_idx == pdx_data.num_dimensions ? 1 : ratios[current_dimension_idx];
-        pruning_threshold = heap.top().distance * ratio;
+    inline void GetPruningThreshold(uint32_t k, std::priority_queue<KNNCandidate_t , std::vector<KNNCandidate_t>, VectorComparator_t> &heap) override {
+        float ratio = this->current_dimension_idx == this->pdx_data.num_dimensions ? 1 : ratios[this->current_dimension_idx];
+        this->pruning_threshold = heap.top().distance * ratio;
     }
 
     void PreprocessQuery(float *raw_query, float * query) override {
-        Multiply(raw_query, query, pdx_data.num_dimensions);
+        Multiply(raw_query, query, this->pdx_data.num_dimensions);
     }
 
 private:
@@ -53,10 +62,10 @@ private:
     Eigen::MatrixXf matrix;
 
     inline float GetRatio(const size_t &visited_dimensions) {
-        if(visited_dimensions == (int) pdx_data.num_dimensions) {
+        if(visited_dimensions == (int) this->pdx_data.num_dimensions) {
             return 1.0;
         }
-        return 1.0 * visited_dimensions / ((int) pdx_data.num_dimensions) *
+        return 1.0 * visited_dimensions / ((int) this->pdx_data.num_dimensions) *
                (1.0 + epsilon0 / std::sqrt(visited_dimensions)) * (1.0 + epsilon0 / std::sqrt(visited_dimensions));
     }
 
@@ -74,4 +83,4 @@ private:
 
 } // namespace PDX
 
-#endif //EMBEDDINGSEARCH_ADSAMPLING_HPP
+#endif //PDX_ADSAMPLING_HPP

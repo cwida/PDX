@@ -1,5 +1,5 @@
-#ifndef EMBEDDINGSEARCH_BENCHMARK_UTILS_HPP
-#define EMBEDDINGSEARCH_BENCHMARK_UTILS_HPP
+#ifndef PDX_BENCHMARK_UTILS_HPP
+#define PDX_BENCHMARK_UTILS_HPP
 
 #include <cstdint>
 #include <fcntl.h>
@@ -15,7 +15,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <filesystem>
-#include "vector_searcher.hpp"
+#include "pdx/common.hpp"
 
 
 struct BenchmarkMetadata {
@@ -138,8 +138,8 @@ public:
     inline static uint8_t KNN = 10;
 
     // TODO: Sometimes 1.0 recall is not achievable due to ambiguity on results
-    template<bool MEASURE_RECALL>
-    static void VerifyResult(float &recalls, const std::vector<KNNCandidate> &result, size_t knn,
+    template<bool MEASURE_RECALL, PDX::Quantization q=PDX::F32>
+    static void VerifyResult(float &recalls, const std::vector<PDX::KNNCandidate<q>> &result, size_t knn,
                              const uint32_t *int_ground_truth, size_t n_query) {
         if constexpr (MEASURE_RECALL) {
             size_t true_positives = 0;
@@ -244,4 +244,4 @@ public:
 
 BenchmarkUtils BENCHMARK_UTILS;
 
-#endif //EMBEDDINGSEARCH_BENCHMARK_UTILS_HPP
+#endif //PDX_BENCHMARK_UTILS_HPP

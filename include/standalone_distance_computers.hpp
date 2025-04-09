@@ -18,7 +18,7 @@
 
 /******************************************************************
  * Standalone scanners for float32 L2, IP and L1
- * NOT used for pruned PDXearch but on the linear scans experiment
+ * NOT used for PDXearch but on the linear scans experiment
  * PDXScanner: Vertical distance kernels that auto-vectorize efficiently for float32
  *      Accepts the block size of PDX as a template parameter
  * SIMDScanner: Horizontal distance calculations with SIMD kernels

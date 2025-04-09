@@ -9,8 +9,8 @@
 #include <iostream>
 #include "utils/file_reader.hpp"
 #include "pdx/index_base/pdx_ivf.hpp"
-#include "pdx/bond_u8.hpp"
-#include "pdx/adsampling_u8.hpp"
+#include "pdx/bond.hpp"
+#include "pdx/adsampling.hpp"
 #include "utils/benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
     size_t NUM_QUERIES;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
 
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
+    PDX::DimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
 
     std::string RESULTS_PATH;
     RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "U8_IVF_PDX_ADSAMPLING.csv";
@@ -42,7 +42,7 @@ int main(int argc, char *argv[]) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlatU8 pdx_data = PDX::IndexPDXIVFFlatU8();
+        PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::Quantization::U8>();
         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-u8x4-ivf");
         float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u8-matrix");
         Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
         uint8_t lep_exponent_idx = BenchmarkUtils::PDX_EXPONENTS[dataset];
         int lep_exponent = BenchmarkUtils::POW_10[lep_exponent_idx];
 
-        PDX::ADSamplingSearcherU8 searcher = PDX::ADSamplingSearcherU8(pdx_data, 1, EPSILON0, matrix, DIMENSION_ORDER);
+        PDX::ADSamplingSearcher searcher = PDX::ADSamplingSearcher<PDX::U8>(pdx_data, 1, EPSILON0, matrix, DIMENSION_ORDER);
         searcher.SetExponent(lep_exponent);
 
         for (size_t ivf_nprobe : BenchmarkUtils::IVF_PROBES) {
@@ -74,7 +74,7 @@ int main(int argc, char *argv[]) {
             if (VERIFY_RESULTS) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
                     auto result = searcher.Search(query + l * pdx_data.num_dimensions, KNN);
-                    BenchmarkUtils::VerifyResult<true>(recalls, result, KNN, int_ground_truth, l);
+                    BenchmarkUtils::VerifyResult<true, PDX::U8>(recalls, result, KNN, int_ground_truth, l);
                 }
             }
             for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {

@@ -33,7 +33,7 @@ int main(int argc, char *argv[]) {
     size_t NUM_QUERIES;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
 
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
+    PDX::DimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
 
     std::string RESULTS_PATH;
     RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "IVF_PDX_ADSAMPLING.csv";
@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlat pdx_data = PDX::IndexPDXIVFFlat();
+        PDX::IndexPDXIVF<PDX::F32> pdx_data = PDX::IndexPDXIVF<PDX::F32>();
         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf");
         float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-matrix");
         Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
-        PDX::ADSamplingSearcher searcher = PDX::ADSamplingSearcher(pdx_data, SELECTIVITY_THRESHOLD, 1, EPSILON0, matrix, DIMENSION_ORDER);
+        PDX::ADSamplingSearcher searcher = PDX::ADSamplingSearcher<PDX::F32>(pdx_data,  1, EPSILON0, matrix, DIMENSION_ORDER);
 
         for (size_t ivf_nprobe : BenchmarkUtils::IVF_PROBES) {
             if (pdx_data.num_vectorgroups < ivf_nprobe){
@@ -71,7 +71,7 @@ int main(int argc, char *argv[]) {
             if (VERIFY_RESULTS) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
                     auto result = searcher.Search(query + l * pdx_data.num_dimensions, KNN);
-                    BenchmarkUtils::VerifyResult<true>(recalls, result, KNN, int_ground_truth, l);
+                    BenchmarkUtils::VerifyResult<true, PDX::F32>(recalls, result, KNN, int_ground_truth, l);
                 }
             }
             for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {

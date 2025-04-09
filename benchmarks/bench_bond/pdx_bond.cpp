@@ -14,13 +14,13 @@
 
 int main(int argc, char *argv[]) {
     std::string arg_dataset;
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::DISTANCE_TO_MEANS_IMPROVED;
+    PDX::DimensionsOrder DIMENSION_ORDER = PDX::DISTANCE_TO_MEANS_IMPROVED;
     std::string ALGORITHM = "pdx-bond";
     if (argc > 1){
         arg_dataset = argv[1];
     }
     if (argc > 2){
-        DIMENSION_ORDER = static_cast<PDX::PDXearchDimensionsOrder>(atoi(argv[2]));
+        DIMENSION_ORDER = static_cast<PDX::DimensionsOrder>(atoi(argv[2]));
         if (DIMENSION_ORDER == PDX::DISTANCE_TO_MEANS_IMPROVED){
             ALGORITHM = "pdx-bond";
         }
