@@ -22,11 +22,15 @@ namespace py = pybind11;
 namespace PDX {
 
 class IndexADSamplingIVFFlat {
+    
+    using KNNCandidate = KNNCandidate<PDX::F32>;
+    using IndexPDXIVF = IndexPDXIVF<PDX::F32>;
+    using ADSamplingSearcher = ADSamplingSearcher<PDX::F32>;
+    
     public:
-        IndexPDXIVFFlat index = IndexPDXIVFFlat();
+        IndexPDXIVF index = IndexPDXIVF();
         std::unique_ptr<ADSamplingSearcher> searcher = nullptr;
         constexpr static const float epsilon0 = 2.1;
-        constexpr static const float selectivity_threshold = 0.80;
 
         // TODO: A preprocess and create function, right now it will reside on Python
 
@@ -40,7 +44,7 @@ class IndexADSamplingIVFFlat {
             Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(matrix_ptr, index.num_dimensions, index.num_dimensions);
             matrix = matrix.inverse();
 
-            searcher = std::make_unique<ADSamplingSearcher>(index, selectivity_threshold, 64, epsilon0, matrix, SEQUENTIAL);
+            searcher = std::make_unique<ADSamplingSearcher>(index, 64, epsilon0, matrix, SEQUENTIAL);
         }
 
         void Restore(const std::string &path, const std::string &matrix_path){
@@ -48,7 +52,7 @@ class IndexADSamplingIVFFlat {
             float * _matrix = MmapFile32(matrix_path); // TODO: Fix and put in same index file
             Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, index.num_dimensions, index.num_dimensions);
             matrix = matrix.inverse();
-            searcher = std::make_unique<ADSamplingSearcher>(index, selectivity_threshold, 64, epsilon0, matrix, SEQUENTIAL);
+            searcher = std::make_unique<ADSamplingSearcher>(index, 64, epsilon0, matrix, SEQUENTIAL);
         }
 
         std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
@@ -70,10 +74,12 @@ class IndexADSamplingIVFFlat {
     };
 
 class IndexBONDIVFFlat {
+    using KNNCandidate = KNNCandidate<PDX::F32>;
+    using IndexPDXIVF = IndexPDXIVF<PDX::F32>;
+    using PDXBondSearcher = PDXBondSearcher<PDX::F32>;
     public:
-        IndexPDXIVFFlat index = IndexPDXIVFFlat();
+        IndexPDXIVF index = IndexPDXIVF();
         std::unique_ptr<PDXBondSearcher> searcher = nullptr;
-        constexpr static const float selectivity_threshold = 0.80;
 
         // TODO: A preprocess and create function, right now it will reside on Python
 
@@ -83,9 +89,9 @@ class IndexBONDIVFFlat {
             index.Load(data_);
 #if defined(__AVX512FP16__)
             // In Intel architectures with low bandwidth at L3/DRAM, the DISTANCE_TO_MEANS criteria performs better
-            searcher = std::make_unique<PDXBondSearcher>(index, selectivity_threshold, 64, 0, DISTANCE_TO_MEANS);
+            searcher = std::make_unique<PDXBondSearcher>(index, 64, 0, DISTANCE_TO_MEANS);
 #else
-            searcher = std::make_unique<PDXBondSearcher>(index, selectivity_threshold, 64, 0, DIMENSION_ZONES);
+            searcher = std::make_unique<PDXBondSearcher>(index, 64, 0, DIMENSION_ZONES);
 #endif
         }
 
@@ -93,9 +99,9 @@ class IndexBONDIVFFlat {
             index.Restore(path);
 #if defined(__AVX512FP16__)
             // In Intel architectures with low bandwidth at L3/DRAM, the DISTANCE_TO_MEANS criteria performs better
-            searcher = std::make_unique<PDXBondSearcher>(index, selectivity_threshold, 64, 0, DISTANCE_TO_MEANS);
+            searcher = std::make_unique<PDXBondSearcher>(index, 64, 0, DISTANCE_TO_MEANS);
 #else
-            searcher = std::make_unique<PDXBondSearcher>(index, selectivity_threshold, 64, 0, DIMENSION_ZONES);
+            searcher = std::make_unique<PDXBondSearcher>(index, 64, 0, DIMENSION_ZONES);
 #endif
         }
 
@@ -118,10 +124,12 @@ class IndexBONDIVFFlat {
     };
 
 class IndexBONDFlat {
+    using KNNCandidate = KNNCandidate<PDX::F32>;
+    using IndexPDXIVF = IndexPDXIVF<PDX::F32>;
+    using PDXBondSearcher = PDXBondSearcher<PDX::F32>;
 public:
-    IndexPDXIVFFlat index = IndexPDXIVFFlat();
+    IndexPDXIVF index = IndexPDXIVF();
     std::unique_ptr<PDXBondSearcher> searcher = nullptr;
-    constexpr static const float selectivity_threshold = 0.80;
 
     // TODO: A preprocess and create function, right now it will reside on Python
 
@@ -129,12 +137,12 @@ public:
         py::buffer_info info(py::buffer(data).request());
         auto data_ = static_cast<char*>(info.ptr);
         index.Load(data_);
-        searcher = std::make_unique<PDXBondSearcher>(index, selectivity_threshold, 0, 0, DISTANCE_TO_MEANS);
+        searcher = std::make_unique<PDXBondSearcher>(index, 0, 0, DISTANCE_TO_MEANS);
     }
 
     void Restore(const std::string &path){
         index.Restore(path);
-        searcher = std::make_unique<PDXBondSearcher>(index, selectivity_threshold, 0, 0, DISTANCE_TO_MEANS);
+        searcher = std::make_unique<PDXBondSearcher>(index, 0, 0, DISTANCE_TO_MEANS);
     }
 
     std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
@@ -153,11 +161,13 @@ public:
 };
 
 class IndexADSamplingFlat {
+    using KNNCandidate = KNNCandidate<PDX::F32>;
+    using IndexPDXIVF = IndexPDXIVF<PDX::F32>;
+    using ADSamplingSearcher = ADSamplingSearcher<PDX::F32>;
     public:
-        IndexPDXIVFFlat index = IndexPDXIVFFlat();
+        IndexPDXIVF index = IndexPDXIVF();
         std::unique_ptr<ADSamplingSearcher> searcher = nullptr;
         constexpr static const float epsilon0 = 2.1;
-        constexpr static const float selectivity_threshold = 0.80;
 
         // TODO: A preprocess and create function, right now it will reside on Python
 
@@ -171,7 +181,7 @@ class IndexADSamplingFlat {
             Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(matrix_ptr, index.num_dimensions, index.num_dimensions);
             matrix = matrix.inverse();
 
-            searcher = std::make_unique<ADSamplingSearcher>(index, selectivity_threshold, 0, epsilon0, matrix, SEQUENTIAL);
+            searcher = std::make_unique<ADSamplingSearcher>(index, 0, epsilon0, matrix, SEQUENTIAL);
         }
 
         void Restore(const std::string &path, const std::string &matrix_path){
@@ -179,7 +189,7 @@ class IndexADSamplingFlat {
             float * _matrix = MmapFile32(matrix_path); // TODO: Should be inside same index file?
             Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, index.num_dimensions, index.num_dimensions);
             matrix = matrix.inverse();
-            searcher = std::make_unique<ADSamplingSearcher>(index, selectivity_threshold, 0, epsilon0, matrix, SEQUENTIAL);
+            searcher = std::make_unique<ADSamplingSearcher>(index, 0, epsilon0, matrix, SEQUENTIAL);
         }
 
         std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
@@ -198,10 +208,12 @@ class IndexADSamplingFlat {
     };
 
 class IndexPDXFlat {
+    using KNNCandidate = KNNCandidate<PDX::F32>;
+    using IndexPDXIVF = IndexPDXIVF<PDX::F32>;
+    using PDXBondSearcher = PDXBondSearcher<PDX::F32>;
     public:
-        IndexPDXIVFFlat index = IndexPDXIVFFlat();
+        IndexPDXIVF index = IndexPDXIVF();
         std::unique_ptr<PDXBondSearcher> searcher = nullptr;
-        constexpr static const float selectivity_threshold = 0.80;
 
         // TODO: A preprocess and create function, right now it will reside on Python
 
@@ -209,12 +221,12 @@ class IndexPDXFlat {
             py::buffer_info info(py::buffer(data).request());
             auto data_ = static_cast<char*>(info.ptr);
             index.Load(data_);
-            searcher = std::make_unique<PDXBondSearcher>(index, selectivity_threshold, 0, 0, SEQUENTIAL);
+            searcher = std::make_unique<PDXBondSearcher>(index, 0, 0, SEQUENTIAL);
         }
 
         void Restore(const std::string &path){
             index.Restore(path);
-            searcher = std::make_unique<PDXBondSearcher>(index, selectivity_threshold, 0, 0, SEQUENTIAL);
+            searcher = std::make_unique<PDXBondSearcher>(index, 0, 0, SEQUENTIAL);
         }
 
         std::vector<KNNCandidate> Search(float *q, uint32_t k) const {

@@ -4,7 +4,7 @@ from pdxearch.index_base import (
     BaseIndexPDXIVF, BaseIndexPDXFlat
 )
 from pdxearch.preprocessors import (
-    ADSampling
+    ADSampling, Preprocessor
 )
 from pdxearch.compiled import (
     IndexADSamplingIVFFlat as _IndexPDXADSamplingIVFFlat,
@@ -31,8 +31,8 @@ class IndexPDXADSamplingIVFFlat(BaseIndexPDXIVF):
         self.preprocessor = ADSampling(ndim)
         self.pdx_index = _IndexPDXADSamplingIVFFlat()
 
-    def preprocess(self, data, inplace: bool = True):
-        return self.preprocessor.preprocess(data, inplace=inplace)
+    def preprocess(self, data, inplace: bool = True, normalize: bool = True):
+        return self.preprocessor.preprocess(data, inplace=inplace, normalize=normalize)
 
     def add_persist(self, data, path: str, matrix_path: str):
         self.add(data)
@@ -61,10 +61,11 @@ class IndexPDXBONDIVFFlat(BaseIndexPDXIVF):
             *, ndim: int = 0, metric: str = "l2sq", nbuckets: int = 256
     ) -> None:
         super().__init__(ndim, metric, nbuckets)
+        self.preprocessor = Preprocessor()
         self.pdx_index = _IndexPDXBONDIVFFlat()
 
-    def preprocess(self, data, inplace: bool = True):
-        pass
+    def preprocess(self, data, inplace: bool = True, normalize: bool = True):
+        return self.preprocessor.preprocess(data, inplace=inplace, normalize=normalize)
 
     def add_persist(self, data, path: str):
         self.add(data)
@@ -90,8 +91,12 @@ class IndexPDXBONDFlat(BaseIndexPDXFlat):
             self, *, ndim: int = 0, metric: str = "l2sq"
     ) -> None:
         super().__init__(ndim=ndim, metric=metric)
+        self.preprocessor = Preprocessor()
         self.pdx_index = _IndexBONDFlat()
         self.block_sizes = PDXConstants.PDXEARCH_VECTOR_SIZE
+
+    def preprocess(self, data, inplace: bool = True, normalize: bool = True):
+        return self.preprocessor.preprocess(data, inplace=inplace, normalize=normalize)
 
     def add_persist(self, data, path: str):
         self._to_pdx(data, self.block_sizes)
@@ -145,11 +150,15 @@ class IndexPDXFlat(BaseIndexPDXFlat):
     def __init__(self, *, ndim: int = 0, metric: str = "l2sq") -> None:
         super().__init__(ndim, metric)
         self.pdx_index = _IndexPDXFlat()
+        self.preprocessor = Preprocessor()
         self.block_sizes = PDXConstants.PDX_VECTOR_SIZE
 
     def add_persist(self, data, path: str):
         self._to_pdx(data, self.block_sizes)
         self._persist(path)
+
+    def preprocess(self, data, inplace: bool = True, normalize: bool = True):
+        return self.preprocessor.preprocess(data, inplace=inplace, normalize=normalize)
 
     def persist(self, path: str):  # TODO: Rename
         self._persist(path)

@@ -40,6 +40,7 @@ if is_linux:
 
 if is_macos:
     compile_args.append("-std=c++17")
+    compile_args.append("-mmacosx-version-min=10.13")
     compile_args.append("-O3")
     compile_args.append("-march=native")
     compile_args.append("-fPIC")
