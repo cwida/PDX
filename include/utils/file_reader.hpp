@@ -50,7 +50,6 @@ float* MmapFile32(const std::string& filename) {
 uint8_t* MmapFile8(size_t& n_values, const std::string& filename) {
     size_t file_size;
     struct stat file_stats;
-
     int fd = ::open(filename.c_str(), O_RDONLY);
     fstat(fd, &file_stats);
     file_size = file_stats.st_size;

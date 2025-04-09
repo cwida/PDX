@@ -41,7 +41,6 @@ public:
             dimension_order(dimension_order){
         indices_dimensions.resize(pdx_data.num_dimensions);
         vectorgroups_indices.resize(pdx_data.num_vectorgroups);
-        // TODO: We should not need this
         for (size_t i = 0; i < pdx_data.num_vectorgroups; ++i){
             total_embeddings += pdx_data.vectorgroups[i].num_embeddings;
         }
@@ -333,29 +332,28 @@ protected:
         }
     }
 
-    // TODO: Manage the heap elsewhere
-    template <bool IS_PRUNING=false>
-    void MergeIntoHeap2(const uint32_t * vector_indices, size_t n_vectors, uint32_t k, std::priority_queue<KNNCandidate<F32>, std::vector<KNNCandidate<F32>>, VectorComparator<F32>> &heap) {
-        for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
-            size_t index = position_idx;
-            float current_distance;
-            if constexpr (IS_PRUNING){
-                index = pruning_positions[position_idx];
-                current_distance = pruning_distances[index];
-            } else {
-                current_distance = distances[index];
-            }
-            if (heap.size() < k || current_distance < heap.top().distance) {
-                KNNCandidate_t embedding{};
-                embedding.distance = current_distance;
-                embedding.index = vector_indices[index];
-                if (heap.size() >= k) {
-                    heap.pop();
-                }
-                heap.push(embedding);
-            }
-        }
-    }
+//    template <bool IS_PRUNING=false>
+//    void MergeIntoHeap2(const uint32_t * vector_indices, size_t n_vectors, uint32_t k, std::priority_queue<KNNCandidate<F32>, std::vector<KNNCandidate<F32>>, VectorComparator<F32>> &heap) {
+//        for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
+//            size_t index = position_idx;
+//            float current_distance;
+//            if constexpr (IS_PRUNING){
+//                index = pruning_positions[position_idx];
+//                current_distance = pruning_distances[index];
+//            } else {
+//                current_distance = distances[index];
+//            }
+//            if (heap.size() < k || current_distance < heap.top().distance) {
+//                KNNCandidate_t embedding{};
+//                embedding.distance = current_distance;
+//                embedding.index = vector_indices[index];
+//                if (heap.size() >= k) {
+//                    heap.pop();
+//                }
+//                heap.push(embedding);
+//            }
+//        }
+//    }
 
     std::vector<KNNCandidate_t> BuildResultSet(uint32_t k){
         std::vector<KNNCandidate_t> result;
@@ -448,7 +446,7 @@ protected:
             memset((void*) distances, 0, PDX_VECTOR_SIZE * sizeof(float));
             DistanceComputer<L2, F32>::VerticalBlock(query, tmp_centroids_pdx, 0, pdx_data.num_dimensions, distances);
             // CalculateVerticalDistancesVectorized<false, L2>(query, tmp_centroids_pdx, 0, pdx_data.num_dimensions);
-            MergeIntoHeap2<false>(tmp_vectorgroup_indices, PDX_VECTOR_SIZE, ivf_nprobe, best_k_centroids);
+            MergeIntoHeap<false>(tmp_vectorgroup_indices, PDX_VECTOR_SIZE, ivf_nprobe, best_k_centroids);
             tmp_vectorgroup_indices += PDX_VECTOR_SIZE;
             tmp_centroids_pdx += SKIPPING_SIZE;
         }
@@ -456,7 +454,7 @@ protected:
             memset((void*) distances, 0, PDX_VECTOR_SIZE * sizeof(float));
             DistanceComputer<L2, F32>::Vertical(query, tmp_centroids_pdx, remainder_block_size, remainder_block_size, 0, pdx_data.num_dimensions, distances, nullptr, nullptr, nullptr);
             // CalculateVerticalDistancesScalar<false, L2>(query, tmp_centroids_pdx, remainder_block_size, 0, pdx_data.num_dimensions);
-            MergeIntoHeap2<false>(tmp_vectorgroup_indices, remainder_block_size, ivf_nprobe, best_k_centroids);
+            MergeIntoHeap<false>(tmp_vectorgroup_indices, remainder_block_size, ivf_nprobe, best_k_centroids);
         }
         for (size_t i = 0; i < ivf_nprobe; ++i){
             const KNNCandidate<F32> & c = best_k_centroids.top();
@@ -536,8 +534,16 @@ public:
         this->end_to_end_clock.Tic();
 #endif
         alignas(64) float query[pdx_data.num_dimensions];
-        quant.NormalizeQuery(raw_query);
-        PreprocessQuery(quant.normalized_query, query);
+        // TODO: The query transformer should be given somewhere
+        // Here I am doing this to support BSA, and now I am ignoring PDX bond actually
+        // But this depends on the dataset and query. So it should be a parameter
+        // This would also be the case in other calls of Search
+        if constexpr (std::is_same_v<distance_computer, DistanceComputer<NEGATIVE_L2, F32>>){
+            PreprocessQuery(raw_query, query);
+        } else {
+            quant.NormalizeQuery(raw_query);
+            PreprocessQuery(quant.normalized_query, query);
+        }
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
         GetDimensionsAccessOrder(query, pdx_data.means);
@@ -581,17 +587,18 @@ public:
     }
 
 
-    // Full Linear Scans that do not prune vectors
     template<Quantization Q=q, std::enable_if_t<Q==U8, int> = 0>
     std::vector<KNNCandidate_t> LinearScan(float *__restrict raw_query, uint32_t k) {
+        std::vector<int> dummy_for_bases(4096, 0);
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
         this->end_to_end_clock.Tic();
 #endif
-        uint8_t transformed_raw_query[pdx_data.num_dimensions];
-        uint8_t query[pdx_data.num_dimensions];
-        PreprocessQuery(raw_query, transformed_raw_query);
-        PrepareQuery(transformed_raw_query, query);
+        // TODO: Not all queries will need this step. What if raw data is uint8?
+        quant.NormalizeQuery(raw_query);
+        quant.ScaleQuery(quant.normalized_query);
+        quant.PrepareQuery(dummy_for_bases.data());
+        // TODO: How to quantize query?
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
         GetVectorgroupsAccessOrderRandom();
@@ -600,11 +607,12 @@ public:
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             if (vectorgroup.num_embeddings == PDX_VECTOR_SIZE){
                 ResetDistancesVectorized();
-                distance_computer::VerticalBlock(query, vectorgroup.data, 0, pdx_data.num_dimensions, distances);
+                distance_computer::VerticalBlock(quant.quantized_query, vectorgroup.data, 0, pdx_data.num_dimensions, distances);
                 MergeIntoHeap<false>(vectorgroup.indices, PDX_VECTOR_SIZE, k, this->best_k);
             } else if (vectorgroup.num_embeddings < PDX_VECTOR_SIZE) {
                 ResetDistancesVectorized();
-                distance_computer::Vertical(query, vectorgroup.data, vectorgroup.num_embeddings, vectorgroup.num_embeddings,  0, pdx_data.num_dimensions, distances);
+                distance_computer::Vertical(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, vectorgroup.num_embeddings,  0, pdx_data.num_dimensions, distances,
+                                            nullptr, nullptr, nullptr);
                 MergeIntoHeap<false>(vectorgroup.indices, vectorgroup.num_embeddings, k, this->best_k);
             }
         }
@@ -635,7 +643,7 @@ public:
                 MergeIntoHeap<false>(vectorgroup.indices, PDX_VECTOR_SIZE, k, this->best_k);
             } else if (vectorgroup.num_embeddings < PDX_VECTOR_SIZE) {
                 ResetDistancesVectorized();
-                distance_computer::Vertical(query, vectorgroup.data, vectorgroup.num_embeddings, vectorgroup.num_embeddings, 0, pdx_data.num_dimensions);
+                distance_computer::Vertical(query, vectorgroup.data, vectorgroup.num_embeddings, vectorgroup.num_embeddings, 0, pdx_data.num_dimensions, distances, nullptr, nullptr, nullptr);
                 MergeIntoHeap<false>(vectorgroup.indices, vectorgroup.num_embeddings, k, this->best_k);
             }
         }
@@ -644,6 +652,154 @@ public:
 #endif
         return BuildResultSet(k);
     }
+
+
+    // PDXearch: PDX + Pruning
+    template<Quantization Q=q, std::enable_if_t<(Q==U4 || Q==U6), int> = 0>
+    std::vector<KNNCandidate_t> Search(float *__restrict raw_query, uint32_t k) {
+        auto * out = new uint8_t[4096 * pdx_data.num_dimensions];
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
+        this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
+        size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
+        quant.NormalizeQuery(raw_query);
+        PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
+        // TODO: This should probably not be evaluated here
+        if (pdx_data.is_ivf) {
+            if (ivf_nprobe == 0){
+                vectorgroups_to_visit = pdx_data.num_vectorgroups;
+            } else {
+                vectorgroups_to_visit = ivf_nprobe;
+            }
+#ifdef BENCHMARK_TIME
+            this->end_to_end_clock.Toc();
+#endif
+            //this->GetVectorgroupsAccessOrderIVFPDX(query, vectorgroups_to_visit, vectorgroups_indices);
+            //this->GetVectorgroupsAccessOrderRandom();
+            this->GetVectorgroupsAccessOrderIVF(quant.transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
+#ifdef BENCHMARK_TIME
+            this->end_to_end_clock.Tic();
+#endif
+        } else {
+            // If there is no index, we just access the vectorgroups in order
+            GetVectorgroupsAccessOrderRandom();
+        }
+        // PDXearch core
+        current_dimension_idx = 0;
+        current_vectorgroup = vectorgroups_indices[0];
+        VECTORGROUP_TYPE & first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
+
+        quant.ScaleQuery(quant.transformed_raw_query);
+        quant.PrepareQuery(first_vectorgroup.for_bases);
+        size_t length = first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
+        quant.Decompress(first_vectorgroup.data, out, length);
+        Start(quant.quantized_query, out, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
+        for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
+            current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
+            VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
+            length = vectorgroup.num_embeddings * pdx_data.num_dimensions;
+            quant.Decompress(vectorgroup.data, out, length);
+            quant.PrepareQuery(vectorgroup.for_bases);
+            Warmup(quant.quantized_query, out, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
+            Prune(quant.quantized_query, out, vectorgroup.num_embeddings, k, this->best_k);
+            if (n_vectors_not_pruned){
+                MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
+            }
+        }
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
+        delete [] out;
+        return BuildResultSet(k);
+    }
+
+    // PDXearch: PDX + Pruning
+    template<Quantization Q=q, std::enable_if_t<Q==U4, int> = 0>
+    std::vector<KNNCandidate_t> SearchSymmetric(float *__restrict raw_query, uint32_t k) {
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
+        this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
+        size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
+        quant.NormalizeQuery(raw_query);
+        PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
+        if (pdx_data.is_ivf) {
+            if (ivf_nprobe == 0){
+                vectorgroups_to_visit = pdx_data.num_vectorgroups;
+            } else {
+                vectorgroups_to_visit = ivf_nprobe;
+            }
+#ifdef BENCHMARK_TIME
+            this->end_to_end_clock.Toc();
+#endif
+            //GetVectorgroupsAccessOrderIVFPDX(query, vectorgroups_to_visit, vectorgroups_indices);
+            this->GetVectorgroupsAccessOrderIVF(quant.transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
+#ifdef BENCHMARK_TIME
+            this->end_to_end_clock.Tic();
+#endif
+        } else {
+            // If there is no index, we just access the vectorgroups in order
+            GetVectorgroupsAccessOrderRandom();
+        }
+        // PDXearch core
+        current_dimension_idx = 0;
+        current_vectorgroup = vectorgroups_indices[0];
+        VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
+        quant.ScaleQuery(quant.transformed_raw_query);
+        quant.PrepareQuery(first_vectorgroup.for_bases);
+        Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
+        for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
+            current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
+            VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
+            quant.PrepareQuery(vectorgroup.for_bases);
+            Warmup(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
+            Prune(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
+            if (n_vectors_not_pruned){
+                MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
+            }
+        }
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
+        return BuildResultSet(k);
+    }
+
+
+    // TODO: Full Linear Scans that do not prune vectors
+//    template<Quantization Q=q, std::enable_if_t<Q==U4, int> = 0>
+//    std::vector<KNNCandidate_t> LinearScan(float *__restrict raw_query, uint32_t k) {
+//#ifdef BENCHMARK_TIME
+//        this->ResetClocks();
+//        this->end_to_end_clock.Tic();
+//#endif
+//        PreprocessQuery(raw_query, quant.transformed_raw_query);
+//        PrepareQuery(transformed_raw_query, query);
+//        this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
+//        size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
+//        GetVectorgroupsAccessOrderRandom();
+//        for (size_t vectorgroup_idx = 0; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
+//            current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
+//            VECTORGROUP_TYPE & vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
+//            if (vectorgroup.num_embeddings == PDX_VECTOR_SIZE){
+//                ResetDistancesVectorized();
+//                distance_computer::VerticalBlock(quant.quantized_query, vectorgroup.data, 0, pdx_data.num_dimensions, distances);
+//                MergeIntoHeap<false>(vectorgroup.indices, PDX_VECTOR_SIZE, k, this->best_k);
+//            } else if (vectorgroup.num_embeddings < PDX_VECTOR_SIZE) {
+//                ResetDistancesVectorized();
+//                distance_computer::Vertical(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, vectorgroup.num_embeddings,  0, pdx_data.num_dimensions, distances);
+//                MergeIntoHeap<false>(vectorgroup.indices, vectorgroup.num_embeddings, k, this->best_k);
+//            }
+//        }
+//#ifdef BENCHMARK_TIME
+//        this->end_to_end_clock.Toc();
+//#endif
+//        return BuildResultSet(k);
+//    }
 
 };
 

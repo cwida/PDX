@@ -1,11 +1,16 @@
-//
-// Created by Leonardo on 08/04/2025.
-//
-
 #ifndef PDX_COMMON_HPP
 #define PDX_COMMON_HPP
 
+#include <cstdint>
+#include <cstdio>
+
+
 namespace PDX {
+
+    template<class T, T val=8>
+    static constexpr uint32_t AlignValue(T n) {
+        return ((n + (val - 1)) / val) * val;
+    }
 
     enum DimensionsOrder {
         SEQUENTIAL,
@@ -19,7 +24,8 @@ namespace PDX {
     enum DistanceFunction {
         L2,
         IP,
-        L1
+        L1,
+        NEGATIVE_L2 // Only the negative term of L2 (-2*q[i]*d[i])
     };
 
     enum Quantization {

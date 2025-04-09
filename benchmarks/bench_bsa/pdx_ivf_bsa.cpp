@@ -42,7 +42,7 @@ int main(int argc, char *argv[]) {
             continue;
         }
         float MULTIPLIER_M = BenchmarkUtils::BSA_MULTIPLIERS_M[dataset];
-        PDX::IndexPDXIVFFlat pdx_data = PDX::IndexPDXIVFFlat();
+        PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::F32>();
         pdx_data.Restore(BenchmarkUtils::PDX_BSA_DATA + dataset + "-ivf");
         float *_matrix = MmapFile32(BenchmarkUtils::NARY_BSA_DATA + dataset + "-matrix");
         float *base_square = MmapFile32(BenchmarkUtils::NARY_BSA_DATA + dataset + "-base-square");
@@ -57,8 +57,8 @@ int main(int argc, char *argv[]) {
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
-        PDX::BSASearcher searcher = PDX::BSASearcher(
-            pdx_data, SELECTIVITY_THRESHOLD,
+        PDX::BSASearcher searcher = PDX::BSASearcher<PDX::F32>(
+            pdx_data,
             1, MULTIPLIER_M, matrix,dimension_variances,
             dimension_means, base_square, DIMENSION_ORDER);
 

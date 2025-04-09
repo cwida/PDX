@@ -137,7 +137,6 @@ public:
     inline static bool VERIFY_RESULTS = true;
     inline static uint8_t KNN = 10;
 
-    // TODO: Sometimes 1.0 recall is not achievable due to ambiguity on results
     template<bool MEASURE_RECALL, PDX::Quantization q=PDX::F32>
     static void VerifyResult(float &recalls, const std::vector<PDX::KNNCandidate<q>> &result, size_t knn,
                              const uint32_t *int_ground_truth, size_t n_query) {

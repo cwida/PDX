@@ -19,17 +19,15 @@ class PDXBondSearcher : public PDXearch<q> {
     using KNNCandidate_t = KNNCandidate<q>;
     using VectorComparator_t = VectorComparator<q>;
 public:
-    PDXBondSearcher(INDEX_TYPE &pdx_index, float selectivity_threshold,
+    PDXBondSearcher(INDEX_TYPE &pdx_index,
                     size_t ivf_nprobe, int position_prune_distance,
                     DimensionsOrder dimensionOrder) :
             PDXearch<q>(pdx_index,
-                     selectivity_threshold,
                      ivf_nprobe,
                      position_prune_distance,
                      dimensionOrder) {};
 
-    // TODO: This should not be needed, however the overhead is still meaningless
-    // Insted of copying, do a pointer reassigning
+    // TODO: Insted of copying, do a pointer reassigning
     void PreprocessQuery(float *raw_query, float *query) override {
         memcpy((void *) query, (void *) raw_query, this->pdx_data.num_dimensions * sizeof(QUANTIZED_VECTOR_TYPE));
     }

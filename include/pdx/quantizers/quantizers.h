@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cmath>
 #include "pdx/common.hpp"
+#include "pdx/quantizers/bitpacker/unpacker_neon.h"
 
 namespace PDX {
 
@@ -43,7 +44,6 @@ public:
 
 template <Quantization q=U8>
 class LEPQuantizer : public Quantizer {
-
 public:
     using QUANTIZED_QUERY_TYPE = QuantizedVectorType_t<q>;
     alignas(64) inline static int32_t scaled_query[4096];
@@ -54,12 +54,22 @@ public:
         if constexpr (q == Quantization::U8){
             lep_factor = 1.0;
             MAX_VALUE = 255;
+            SKIP_DECOMP_FACTOR = 1.0;
+        } else if constexpr (q == Quantization::U4){
+            lep_factor = 0.0625;
+            MAX_VALUE = 15;
+            SKIP_DECOMP_FACTOR = 0.5;
+        } else if constexpr (q == Quantization::U6){
+            lep_factor = 0.25;
+            MAX_VALUE = 63;
+            SKIP_DECOMP_FACTOR = 0.75;
         }
     }
 
     int lep_exponent;
     float lep_factor;
     uint8_t MAX_VALUE;
+    float SKIP_DECOMP_FACTOR;
 
     void SetExponent(int exponent){
         lep_exponent = exponent;
@@ -71,7 +81,22 @@ public:
         }
     }
 
-    // TODO: There are several ways to optimize this
+    void Decompress(uint8_t * data, uint8_t * out, size_t length){
+        uint8_t * out_ptr = out;
+        uint8_t * data_ptr = data;
+        // TODO: Handle remain properly, for now I will let it overflow slightly at the end by aligning n_vectors to 32
+        for (uint32_t pos = 0; pos < AlignValue<uint32_t, 1024>(length); pos+=1024){
+            auto data_pos = (size_t)(pos * SKIP_DECOMP_FACTOR); // To skip correctly
+            if constexpr (q == U4) {
+                Unpacker::unpack_4bw_8ow_128crw_8uf(data_ptr + data_pos, out_ptr+pos);
+            } else if constexpr (q == U6) {
+                Unpacker::unpack_6bw_8ow_128crw_8uf(data_ptr + data_pos, out_ptr+pos);
+            }
+
+        }
+    }
+
+    // TODO: Separate the avx512 code to somewhere else
     void PrepareQuery(const int32_t *for_bases){
         for (size_t i = 0; i < num_dimensions; i += 16) {
             // Load 8 int32 values in two NEON registers

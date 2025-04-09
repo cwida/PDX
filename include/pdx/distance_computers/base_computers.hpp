@@ -27,19 +27,6 @@ template <DistanceFunction alpha, Quantization q>
 class DistanceComputer {};
 
 template<>
-class DistanceComputer<L2, Quantization::U8> {
-    using computer = SIMDComputer<L2, U8>;
-public:
-    constexpr static auto VerticalReorderedPruning = computer::VerticalPruning<true, true>;
-    constexpr static auto VerticalPruning = computer::VerticalPruning<false, true>;
-    constexpr static auto VerticalReordered = computer::VerticalPruning<true, false>;
-    constexpr static auto Vertical = computer::VerticalPruning<false, false>;
-
-    constexpr static auto VerticalBlock = SIMDComputer<L2, U8>::Vertical;
-    constexpr static auto Horizontal = SIMDComputer<L2, U8>::Horizontal;
-};
-
-template<>
 class DistanceComputer<L2, Quantization::F32> {
     using computer = SIMDComputer<L2, F32>;
 public:
@@ -48,8 +35,68 @@ public:
     constexpr static auto VerticalReordered = computer::VerticalPruning<true, false>;
     constexpr static auto Vertical = computer::VerticalPruning<false, false>;
 
-    constexpr static auto VerticalBlock = SIMDComputer<L2, F32>::Vertical;
-    constexpr static auto Horizontal = SIMDComputer<L2, F32>::Horizontal;
+    constexpr static auto VerticalBlock = computer::Vertical;
+    constexpr static auto Horizontal = computer::Horizontal;
+};
+
+template<>
+class DistanceComputer<NEGATIVE_L2, Quantization::F32> {
+    using computer = SIMDComputer<NEGATIVE_L2, F32>;
+public:
+    constexpr static auto VerticalReorderedPruning = computer::VerticalPruning<true, true>;
+    constexpr static auto VerticalPruning = computer::VerticalPruning<false, true>;
+    constexpr static auto VerticalReordered = computer::VerticalPruning<true, false>;
+    constexpr static auto Vertical = computer::VerticalPruning<false, false>;
+
+    constexpr static auto VerticalBlock = computer::Vertical;
+    constexpr static auto Horizontal = computer::Horizontal;
+};
+
+template<>
+class DistanceComputer<L2, Quantization::U8> {
+    using computer = SIMDComputer<L2, U8>;
+public:
+    constexpr static auto VerticalReorderedPruning = computer::VerticalPruning<true, true>;
+    constexpr static auto VerticalPruning = computer::VerticalPruning<false, true>;
+    constexpr static auto VerticalReordered = computer::VerticalPruning<true, false>;
+    constexpr static auto Vertical = computer::VerticalPruning<false, false>;
+
+    constexpr static auto VerticalBlock = computer::Vertical;
+    constexpr static auto Horizontal = computer::Horizontal;
+};
+
+template<>
+class DistanceComputer<L2, Quantization::U6> {
+    using computer = SIMDComputer<L2, U8>; // TODO: Use a proper computer for U6 that fuse decomp and distance calc
+public:
+    constexpr static auto VerticalReorderedPruning = computer::VerticalPruning<true, true>;
+    constexpr static auto VerticalPruning = computer::VerticalPruning<false, true>;
+    constexpr static auto VerticalReordered = computer::VerticalPruning<true, false>;
+    constexpr static auto Vertical = computer::VerticalPruning<false, false>;
+
+    constexpr static auto VerticalBlock = computer::Vertical;
+    constexpr static auto Horizontal = computer::Horizontal;
+};
+
+template<>
+class DistanceComputer<L2, Quantization::U4> {
+    using computer = SIMDComputer<L2, U4>;
+public:
+    constexpr static auto VerticalReorderedPruning = computer::VerticalPruning<true, true>;
+    constexpr static auto VerticalPruning = computer::VerticalPruning<false, true>;
+    constexpr static auto VerticalReordered = computer::VerticalPruning<true, false>;
+    constexpr static auto Vertical = computer::VerticalPruning<false, false>;
+
+    constexpr static auto VerticalBlock = computer::Vertical;
+    constexpr static auto Horizontal = computer::Horizontal;
+};
+
+
+template<>
+class DistanceComputer<IP, Quantization::F32> {
+    using computer = SIMDComputer<IP, F32>;
+public:
+    constexpr static auto Horizontal = computer::Horizontal;
 };
 
 //template <Quantization q>

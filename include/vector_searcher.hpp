@@ -13,6 +13,7 @@
 #include <cinttypes>
 #include "pdx/common.hpp"
 #include "pdx/index_base/pdx_ivf.hpp"
+#include "pdx/distance_computers/base_computers.hpp"
 #include "utils/tictoc.hpp"
 
 
