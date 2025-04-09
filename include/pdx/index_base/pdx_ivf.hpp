@@ -1,5 +1,5 @@
-#ifndef EMBEDDINGSEARCH_DATA_LOADER_HPP
-#define EMBEDDINGSEARCH_DATA_LOADER_HPP
+#ifndef PDX_DATA_LOADER_HPP
+#define PDX_DATA_LOADER_HPP
 
 #include <cstdint>
 #include <vector>
@@ -10,52 +10,26 @@
 #include <cstring>
 #include <iostream>
 #include "utils/file_reader.hpp"
+#include "pdx/common.hpp"
 
 namespace PDX {
-
-struct Vectorgroup {
-    uint32_t num_embeddings{};
-    uint32_t *indices = nullptr;
-    float *data = nullptr;
-};
-
-struct VectorgroupU8 {
-    uint32_t num_embeddings{};
-    uint32_t *indices = nullptr;
-    uint8_t *data = nullptr;
-    int32_t *for_bases{};
-};
-
-struct VectorgroupU6x8 {
-    uint32_t num_embeddings{};
-    uint32_t *indices = nullptr;
-    alignas(8) uint8_t *data = nullptr;
-    uint8_t *exceptions{};
-    int32_t *for_bases{};
-    uint32_t exceptions_n{};
-    uint16_t * exceptions_per_dimension{};
-};
-
-struct VectorgroupU4x8 {
-    uint32_t num_embeddings{};
-    uint32_t *indices = nullptr;
-    alignas(8) uint8_t *data = nullptr;
-    uint8_t *exceptions{};
-    int32_t *for_bases{};
-    uint32_t exceptions_n{};
-    uint16_t * exceptions_per_dimension{};
-};
 
 
 /******************************************************************
  * Very rudimentary memory to IVF index reader
  ******************************************************************/
-class IndexPDXIVFFlat {
+template <Quantization q>
+class IndexPDXIVF{};
+
+template <>
+class IndexPDXIVF<F32> {
 public:
+
+    using VECTORGROUP_TYPE = Vectorgroup<F32>;
 
     uint32_t num_dimensions{};
     uint32_t num_vectorgroups{};
-    std::vector<Vectorgroup> vectorgroups;
+    std::vector<VECTORGROUP_TYPE> vectorgroups;
     float *means{};
     bool is_ivf{};
     float *centroids{};
@@ -77,13 +51,13 @@ public:
         next_value += num_vectorgroups * sizeof(uint32_t);
         vectorgroups.resize(num_vectorgroups);
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            Vectorgroup &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.num_embeddings = nums_embeddings[i];
             vectorgroup.data = (float *) next_value;
             next_value += sizeof(float) * vectorgroup.num_embeddings * num_dimensions;
         }
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            Vectorgroup &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
         }
@@ -99,12 +73,15 @@ public:
     }
 };
 
-class IndexPDXIVFFlatU8 {
+template <>
+class IndexPDXIVF<U8> {
 public:
+
+    using VECTORGROUP_TYPE = Vectorgroup<U8>;
 
     uint32_t num_dimensions{};
     uint32_t num_vectorgroups{};
-    std::vector<VectorgroupU8> vectorgroups;
+    std::vector<Vectorgroup<U8>> vectorgroups;
     float *means{};
     bool is_ivf{};
     float *centroids{};
@@ -126,18 +103,18 @@ public:
         next_value += num_vectorgroups * sizeof(uint32_t);
         vectorgroups.resize(num_vectorgroups);
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VectorgroupU8 &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.num_embeddings = nums_embeddings[i];
             vectorgroup.data = (uint8_t *) next_value;
             next_value += sizeof(uint8_t) * vectorgroup.num_embeddings * num_dimensions;
         }
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VectorgroupU8 &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
         }
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VectorgroupU8 &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.for_bases = (int32_t *) next_value;
             next_value += sizeof(uint32_t) * num_dimensions;
         }
@@ -153,12 +130,15 @@ public:
     }
 };
 
-class IndexPDXIVFFlatU6x8 {
+template <>
+class IndexPDXIVF<U6> {
 public:
+
+    using VECTORGROUP_TYPE = Vectorgroup<U6>;
 
     uint32_t num_dimensions{};
     uint32_t num_vectorgroups{};
-    std::vector<VectorgroupU6x8> vectorgroups;
+    std::vector<Vectorgroup<U6>> vectorgroups;
     float *means{};
     bool is_ivf{};
     float *centroids{};
@@ -188,7 +168,7 @@ public:
         vectorgroups.resize(num_vectorgroups);
         // Vectors Data
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VectorgroupU6x8 &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.num_embeddings = nums_embeddings[i];
             vectorgroup.data = (uint8_t *) next_value;
             // Values are byte aligned every 4 dimensions
@@ -200,19 +180,19 @@ public:
         }
         // Indices
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VectorgroupU6x8 &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
         }
         // For Bases
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VectorgroupU6x8 &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.for_bases = (int32_t *) next_value;
             next_value += sizeof(uint32_t) * num_dimensions;
         }
         // Exceptions
 //        for (size_t i = 0; i < num_vectorgroups; ++i) {
-//            VectorgroupU6x8 &vectorgroup = vectorgroups[i];
+//            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
 //            vectorgroup.exceptions_n = ((uint32_t *) next_value)[0];
 //            next_value += sizeof(uint32_t);
 //            vectorgroup.exceptions_per_dimension = (uint16_t *) next_value;
@@ -238,12 +218,15 @@ public:
 };
 
 
-class IndexPDXIVFFlatU4x8 {
+template <>
+class IndexPDXIVF<U4> {
 public:
+    
+    using VECTORGROUP_TYPE = Vectorgroup<U4>;
 
     uint32_t num_dimensions{};
     uint32_t num_vectorgroups{};
-    std::vector<VectorgroupU4x8> vectorgroups;
+    std::vector<VECTORGROUP_TYPE> vectorgroups;
     float *means{};
     bool is_ivf{};
     float *centroids{};
@@ -273,7 +256,7 @@ public:
         vectorgroups.resize(num_vectorgroups);
         // Vectors Data
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VectorgroupU4x8 &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.num_embeddings = nums_embeddings[i];
             vectorgroup.data = (uint8_t *) next_value;
             // Values are byte aligned every 4 dimensions
@@ -285,19 +268,19 @@ public:
         }
         // Indices
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VectorgroupU4x8 &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
         }
         // For Bases
         for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VectorgroupU4x8 &vectorgroup = vectorgroups[i];
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.for_bases = (int32_t *) next_value;
             next_value += sizeof(uint32_t) * num_dimensions;
         }
         // Exceptions
 //        for (size_t i = 0; i < num_vectorgroups; ++i) {
-//            VectorgroupU6x8 &vectorgroup = vectorgroups[i];
+//            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
 //            vectorgroup.exceptions_n = ((uint32_t *) next_value)[0];
 //            next_value += sizeof(uint32_t);
 //            vectorgroup.exceptions_per_dimension = (uint16_t *) next_value;
@@ -324,4 +307,4 @@ public:
 
 } // namespace PDX
 
-#endif //EMBEDDINGSEARCH_DATA_LOADER_HPP
+#endif //PDX_DATA_LOADER_HPP

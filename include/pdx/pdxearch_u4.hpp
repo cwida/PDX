@@ -1,5 +1,5 @@
-#ifndef EMBEDDINGSEARCH_PDXEARCH_U4x8_HPP
-#define EMBEDDINGSEARCH_PDXEARCH_U4x8_HPP
+#ifndef PDX_PDXEARCH_U4x8_HPP
+#define PDX_PDXEARCH_U4x8_HPP
 
 #ifdef __AVX2__
 #include <immintrin.h>
@@ -15,25 +15,11 @@
 #include <array>
 #include "pdx/index_base/pdx_ivf.hpp"
 #include "pdx/bitpacker/unpacker_neon.h"
+#include "pdx/common.hpp"
 #include "vector_searcher.hpp"
 #include "utils/tictoc.hpp"
 
 namespace PDX {
-
-enum PDXearchDimensionsOrder {
-    SEQUENTIAL,
-    DISTANCE_TO_MEANS,
-    DECREASING,
-    DISTANCE_TO_MEANS_IMPROVED,
-    DECREASING_IMPROVED,
-    DIMENSION_ZONES
-};
-
-enum DistanceFunction {
-    L2,
-    IP,
-    L1
-};
 
 /******************************************************************
  * PDXearch
@@ -43,10 +29,10 @@ enum DistanceFunction {
  * TODO: Probably having the distance metric as a template parameter was not the smartest idea
  ******************************************************************/
 template<DistanceFunction ALPHA=L2>
-class PDXearchU4x8: public VectorSearcher {
+class PDXearchU4: public VectorSearcher {
 public:
-    PDXearchU4x8(IndexPDXIVFFlatU4x8 &data_index, size_t ivf_nprobe, int position_prune_distance,
-             PDXearchDimensionsOrder dimension_order) :
+    PDXearchU4(IndexPDXIVFFlatU4 &data_index, size_t ivf_nprobe, int position_prune_distance,
+               DimensionsOrder dimension_order) :
             pdx_data(data_index),
             ivf_nprobe(ivf_nprobe),
             is_positional_pruning(position_prune_distance),
@@ -59,7 +45,7 @@ public:
         }
     }
 
-    IndexPDXIVFFlatU4x8 &pdx_data;
+    IndexPDXIVFFlatU4 &pdx_data;
     uint32_t current_dimension_idx {0};
 
 
@@ -78,7 +64,7 @@ protected:
     size_t current_vectorgroup = 0;
     int lep_exponent = 0;
 
-    PDXearchDimensionsOrder dimension_order = SEQUENTIAL;
+    DimensionsOrder dimension_order = SEQUENTIAL;
     // Evaluating the pruning threshold is so fast that we can allow smaller fetching sizes
     // to avoid more data access. Super useful in architectures with low bandwidth at L3/DRAM like Intel SPR
     static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[24] = {
@@ -104,7 +90,6 @@ protected:
     alignas(64) inline static uint32_t pruning_distances[10240]; // TODO: Use dynamic arrays. Buckets with more than 10k vectors (rare) overflow
     alignas(64) inline static uint32_t pruning_positions[10240];
     alignas(64) inline static uint32_t pruning_distances_tmp[10240];
-    alignas(64) inline static bool dim_clip[4096];
     alignas(64) inline static int32_t dim_clip_value[4096];
 
     std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator> best_k_centroids;
@@ -414,50 +399,50 @@ protected:
             size_t i = 0;
             // TODO: RE ADD
             // DIRECT SIMD
-            if constexpr (!SKIP_PRUNED){
-                uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
-                uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
-                for (; i <= n_vectors - 8; i+=8) {
-                    // Read 16 bytes of data (16 values) with 4 dimensions of 8 vectors (32 nibbles)
-                    uint32x4_t res_1 = vld1q_u32(&distances_p[i]);
-                    uint32x4_t res_2 = vld1q_u32(&distances_p[i+4]);
-
-                    // loading 128-bits --> 32 nibbles
-                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 2]); // *2 because each dimension is two
-
-                    // Extract nibbles (i don't need the lookup table as uint4 are already the correct rep. of uint8)
-                    uint8x16_t a_even = vandq_u8(vec2_u8, nibble_mask);
-                    uint8x16_t a_odd = vandq_u8(vshrq_n_u8(vec2_u8, 4), nibble_mask);
-
-                    // Right now they are:
-                    // a_even = [x0, x2, x4, x6, ...]
-                    // a_odd  = [x1, x3, x5, x7, ...]
-                    //        [v1, v1, v2, v2  ...]
-                    // I need to unpack lo and unpack hi to put 4 of each vector consecutively
-//                    uint8x16_t r_first = vcombine_u8(vget_high_u8(a_even), vget_high_u8(a_odd));
-//                    uint8x16_t r_second = vcombine_u8(vget_low_u8(a_even), vget_low_u8(a_odd));
-                    uint8x16_t r_first = vzip1q_u8(a_even, a_odd);
-                    uint8x16_t r_second = vzip2q_u8(a_even, a_odd);
-                    // Now they are:
-                    // r_first  = [x0, x1, x2, x3, ...]
-                    // r_second = [x4, x5, x6, x7, ...]
-                    // TODO: Probably a smarter layout would help me to avoid this vcombine_u8
-
-                    // Abs diff
-                    uint8x16_t d_first = vabdq_u8(r_first, vec1_u8);
-                    uint8x16_t d_second = vabdq_u8(r_second, vec1_u8);
-
-                    // Option 1:
-                    vst1q_u32(&distances_p[i], vdotq_u32(res_1, d_first, d_first));
-                    vst1q_u32(&distances_p[i+4], vdotq_u32(res_2, d_second, d_second));
-
-                    // Option 2:
-//                    uint8x16_t sq_lo = vqtbl1q_u8(u4_lookup_table, r_lo);
-//                    uint8x16_t sq_hi = vqtbl1q_u8(u4_lookup_table, r_hi);
-//                    vst1q_u32(&distances_p[i], vdotq_u32(res_1, d_lo, ones_tmp));
-//                    vst1q_u32(&distances_p[i+4], vdotq_u32(res_2, d_hi, ones_tmp));
-                }
-            }
+//            if constexpr (!SKIP_PRUNED){
+//                uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+//                uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
+//                for (; i <= n_vectors - 8; i+=8) {
+//                    // Read 16 bytes of data (16 values) with 4 dimensions of 8 vectors (32 nibbles)
+//                    uint32x4_t res_1 = vld1q_u32(&distances_p[i]);
+//                    uint32x4_t res_2 = vld1q_u32(&distances_p[i+4]);
+//
+//                    // loading 128-bits --> 32 nibbles
+//                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 2]); // *2 because each dimension is two
+//
+//                    // Extract nibbles (i don't need the lookup table as uint4 are already the correct rep. of uint8)
+//                    uint8x16_t a_even = vandq_u8(vec2_u8, nibble_mask);
+//                    uint8x16_t a_odd = vandq_u8(vshrq_n_u8(vec2_u8, 4), nibble_mask);
+//
+//                    // Right now they are:
+//                    // a_even = [x0, x2, x4, x6, ...]
+//                    // a_odd  = [x1, x3, x5, x7, ...]
+//                    //        [v1, v1, v2, v2  ...]
+//                    // I need to unpack lo and unpack hi to put 4 of each vector consecutively
+////                    uint8x16_t r_first = vcombine_u8(vget_high_u8(a_even), vget_high_u8(a_odd));
+////                    uint8x16_t r_second = vcombine_u8(vget_low_u8(a_even), vget_low_u8(a_odd));
+//                    uint8x16_t r_first = vzip1q_u8(a_even, a_odd);
+//                    uint8x16_t r_second = vzip2q_u8(a_even, a_odd);
+//                    // Now they are:
+//                    // r_first  = [x0, x1, x2, x3, ...]
+//                    // r_second = [x4, x5, x6, x7, ...]
+//                    // TODO: Probably a smarter layout would help me to avoid this vcombine_u8
+//
+//                    // Abs diff
+//                    uint8x16_t d_first = vabdq_u8(r_first, vec1_u8);
+//                    uint8x16_t d_second = vabdq_u8(r_second, vec1_u8);
+//
+//                    // Option 1:
+//                    vst1q_u32(&distances_p[i], vdotq_u32(res_1, d_first, d_first));
+//                    vst1q_u32(&distances_p[i+4], vdotq_u32(res_2, d_second, d_second));
+//
+//                    // Option 2:
+////                    uint8x16_t sq_lo = vqtbl1q_u8(u4_lookup_table, r_lo);
+////                    uint8x16_t sq_hi = vqtbl1q_u8(u4_lookup_table, r_hi);
+////                    vst1q_u32(&distances_p[i], vdotq_u32(res_1, d_lo, ones_tmp));
+////                    vst1q_u32(&distances_p[i+4], vdotq_u32(res_2, d_hi, ones_tmp));
+//                }
+//            }
             // n_vectors % 4 (rest)
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
@@ -703,7 +688,7 @@ protected:
         uint8_t * out_ptr = out;
         uint8_t * data_ptr = data;
         // TODO: Handle remain properly, for now I will let it overflow slightly at the end by aligning n_vectors to 32
-        for (uint32_t pos = 0; pos < IndexPDXIVFFlatU4x8::AlignValue<uint32_t, 1024>(length); pos+=1024){
+        for (uint32_t pos = 0; pos < IndexPDXIVFFlatU4::AlignValue<uint32_t, 1024>(length); pos+=1024){
             size_t data_pos = (size_t)(pos * 0.5); // To skip correctly
             //std::cout << "data_pos: " << data_pos << "\n";
             Unpacker::unpack_4bw_8ow_128crw_8uf(data_ptr + data_pos, out_ptr+pos);
@@ -768,10 +753,10 @@ protected:
             uint8x8_t result_1 = vqmovun_s16(combined_1);
             uint8x8_t result_2 = vqmovun_s16(combined_2);
 
-            // Mask out values that were clamped to 255 (set them to 0)
-            // TODO: 255 is going to be clamped to 0
-            uint8x8_t mask_1 = vceq_u8(result_1, vdup_n_u8(255)); // Create mask where result == 255
-            uint8x8_t mask_2 = vceq_u8(result_2, vdup_n_u8(255)); // Create mask where result == 255
+            // Mask out values that were clamped to 15 (set them to 0)
+            // TODO: 15 is going to be clamped to 0 to detect it as an exception
+            uint8x8_t mask_1 = vcgt_u8(result_1, vdup_n_u8(15)); // Create mask where result > 15
+            uint8x8_t mask_2 = vcgt_u8(result_2, vdup_n_u8(15)); // Create mask where result > 15
             result_1 = vbic_u8(result_1, mask_1); // Zero out those values
             result_2 = vbic_u8(result_2, mask_2);
 
@@ -968,4 +953,4 @@ public:
 
 } // namespace PDX
 
-#endif //EMBEDDINGSEARCH_PDXEARCH_HPP
+#endif //PDX_PDXEARCH_HPP

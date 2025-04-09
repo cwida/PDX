@@ -1,5 +1,5 @@
-#ifndef EMBEDDINGSEARCH_PDXEARCH_U8_HPP
-#define EMBEDDINGSEARCH_PDXEARCH_U8_HPP
+#ifndef PDX_PDXEARCH_U6x8_HPP
+#define PDX_PDXEARCH_U6x8_HPP
 
 #ifdef __AVX2__
 #include <immintrin.h>
@@ -14,26 +14,12 @@
 #include <algorithm>
 #include <array>
 #include "pdx/index_base/pdx_ivf.hpp"
+#include "pdx/common.hpp"
+#include "pdx/bitpacker/unpacker_neon.h"
 #include "vector_searcher.hpp"
 #include "utils/tictoc.hpp"
 
 namespace PDX {
-
-enum PDXearchDimensionsOrder {
-    SEQUENTIAL,
-    DISTANCE_TO_MEANS,
-    DECREASING,
-    DISTANCE_TO_MEANS_IMPROVED,
-    DECREASING_IMPROVED,
-    DIMENSION_ZONES
-};
-
-enum DistanceFunction {
-    L2,
-    IP,
-    L1
-};
-
 /******************************************************************
  * PDXearch
  * Implements our algorithm for vertical pruning
@@ -42,10 +28,10 @@ enum DistanceFunction {
  * TODO: Probably having the distance metric as a template parameter was not the smartest idea
  ******************************************************************/
 template<DistanceFunction ALPHA=L2>
-class PDXearchU8: public VectorSearcher {
+class PDXearchU6: public VectorSearcher {
 public:
-    PDXearchU8(IndexPDXIVFFlatU8 &data_index, size_t ivf_nprobe, int position_prune_distance,
-             PDXearchDimensionsOrder dimension_order) :
+    PDXearchU6(IndexPDXIVFFlatU6 &data_index, size_t ivf_nprobe, int position_prune_distance,
+               DimensionsOrder dimension_order) :
             pdx_data(data_index),
             ivf_nprobe(ivf_nprobe),
             is_positional_pruning(position_prune_distance),
@@ -58,7 +44,7 @@ public:
         }
     }
 
-    IndexPDXIVFFlatU8 &pdx_data;
+    IndexPDXIVFFlatU6 &pdx_data;
     uint32_t current_dimension_idx {0};
 
 
@@ -77,7 +63,7 @@ protected:
     size_t current_vectorgroup = 0;
     int lep_exponent = 0;
 
-    PDXearchDimensionsOrder dimension_order = SEQUENTIAL;
+    DimensionsOrder dimension_order = SEQUENTIAL;
     // Evaluating the pruning threshold is so fast that we can allow smaller fetching sizes
     // to avoid more data access. Super useful in architectures with low bandwidth at L3/DRAM like Intel SPR
     static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[24] = {
@@ -272,6 +258,11 @@ protected:
         // as all the datasets are divisible by 4
         // Todo: template this 4 parameter
         // TODO: Get this distance functions out of here to another folder / file structure
+
+        // TODO: BIT UNPACKING should happen here
+
+        /////////////////
+
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
             // TODO: Readd dimension reordering efficiently
@@ -282,17 +273,17 @@ protected:
             size_t offset_to_dimension_start = dimension_idx * total_vectors;
             size_t i = 0;
             // TODO: RE ADD
-            if constexpr (!SKIP_PRUNED){
-                uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
-                uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
-                for (; i <= n_vectors - 4; i+=4) {
-                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
-                    uint32x4_t res = vld1q_u32(&distances_p[i]);
-                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]);
-                    uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
-                    vst1q_u32(&distances_p[i], vdotq_u32(res, diff_u8, diff_u8));
-                }
-            }
+//            if constexpr (!SKIP_PRUNED){
+//                uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+//                uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
+//                for (; i <= n_vectors - 4; i+=4) {
+//                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+//                    uint32x4_t res = vld1q_u32(&distances_p[i]);
+//                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]);
+//                    uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
+//                    vst1q_u32(&distances_p[i], vdotq_u32(res, diff_u8, diff_u8));
+//                }
+//            }
             // n_vectors % 4 (rest)
 //#ifdef BENCHMARK_TIME
 //            end_to_end_clock.Tic();
@@ -300,47 +291,7 @@ protected:
             uint8x8_t idx = {0, 1, 2, 3, 0, 1, 2, 3};
             uint8x8_t vec1_u8 = vtbl1_u8(vals, idx);
 
-            /*
-            for (; i+1 < n_vectors; i+=2) {
-                size_t vector_idx = i;
-                size_t vector_idx_next = i+1;
-                if constexpr (SKIP_PRUNED){
-                    vector_idx = pruning_positions[vector_idx];
-                    vector_idx_next = pruning_positions[vector_idx_next];
-                }
 
-                uint32x2_t res = vdup_n_s32(0);
-                // Not needed
-                //result = vld1_lane_s32(&distances_p[vector_idx], result, 0);
-                uint8x8_t vec2_u8_prev = vld1_u8(&data[offset_to_dimension_start + (vector_idx * 4) - 4]);
-                uint8x8_t vec2_u8_next = vld1_u8(&data[offset_to_dimension_start + (vector_idx_next * 4)]);
-
-                uint8x8_t vec2_u8 = vext_u8(vec2_u8_prev, vec2_u8_next, 4);
-
-                uint8x8_t diff_u8 = vabd_u8(vec1_u8, vec2_u8);
-                res = vdot_u32(res, diff_u8, diff_u8);
-                distances_p[vector_idx] += vget_lane_u32(res, 0);
-                distances_p[vector_idx_next] += vget_lane_u32(res, 1);
-
-
-
-                // I am sure I will have 4 dims
-                //int to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
-                //int to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
-                //int to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
-                //int to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
-                //distances_p[vector_idx] += (to_multiply_a * to_multiply_a) +
-                //        (to_multiply_b * to_multiply_b) +
-                //        (to_multiply_c * to_multiply_c) +
-                //        (to_multiply_d * to_multiply_d);
-
-            }
-            */
-//            uint8x8_t mask = vdup_n_u8(0xFF);  // Create all 1s
-//            mask = vset_lane_u8(0, mask, 4);
-//            mask = vset_lane_u8(0, mask, 5);
-//            mask = vset_lane_u8(0, mask, 6);
-//            mask = vset_lane_u8(0, mask, 7);
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
                 if constexpr (SKIP_PRUNED){
@@ -366,22 +317,6 @@ protected:
                         (to_multiply_b * to_multiply_b) +
                         (to_multiply_c * to_multiply_c) +
                         (to_multiply_d * to_multiply_d);
-
-                // Other alternative which uses SIMD for 4 dimensions, but it is slower
-                // Load 8-bit query and data values (first 4 elements)
-//                uint8x8_t query_vals = vld1_u8(query + dimension_idx);
-//                uint8x8_t data_vals = vld1_u8(data + offset_to_dimension_start + (vector_idx * 4));
-//                // Compute absolute differences (8-bit result)
-//                uint8x8_t abs_diff = vabd_u8(query_vals, data_vals);
-//                abs_diff = vand_u8(abs_diff, mask);
-//                // Square differences: first widen to 16-bit, then multiply
-//                uint16x8_t abs_diff_u16 = vmull_u8(abs_diff, abs_diff);  // Widen and square
-//                // Sum 16-bit values pairwise to 32-bit
-//                uint32x4_t sum_low = vpaddlq_u16(abs_diff_u16);
-//                // Horizontal sum to a single scalar
-//                uint32_t sum = vaddvq_u32(sum_low);
-//                // Accumulate result
-//                distances_p[vector_idx] += sum;
 
                 // IP
 //                int to_multiply_a = query[dimension_idx] * data[offset_to_dimension_start + (vector_idx * 4)];
@@ -611,6 +546,18 @@ protected:
         std::iota(vectorgroups_indices.begin(), vectorgroups_indices.end(), 0);
     }
 
+    void Decompress(uint8_t * data, uint8_t * out, size_t length){
+//        uint8_t * out = new uint8_t[(n_vectors * total_dims) + 64];
+        uint8_t * out_ptr = out;
+        uint8_t * data_ptr = data;
+        // TODO: Handle remain properly, for now I will let it overflow slightly at the end by aligning n_vectors to 32
+        for (uint32_t pos = 0; pos < IndexPDXIVFFlatU6::AlignValue<uint32_t, 1024>(length); pos+=1024){
+            //Unpacker::unpackblock6_notoptimal(&data, &out_ptr);
+            size_t data_pos = (size_t)(pos * 0.75); // To skip correctly
+            Unpacker::unpack_6bw_8ow_128crw_8uf(data_ptr + data_pos, out_ptr+pos);
+        }
+    }
+
     void NormalizeQuery(const float * src, float * dst) {
         float sum = 0.0f;
         for (size_t i = 0; i < pdx_data.num_dimensions; ++i) {
@@ -625,7 +572,7 @@ protected:
     void ScaleQuery(const float * src, int32_t * dst) {
         for (size_t i = 0; i < pdx_data.num_dimensions; ++i) {
             // Fast round: + 12582912.0 - 12582912.0;
-            dst[i] = static_cast<int>(std::round(src[i] * lep_exponent));
+            dst[i] = static_cast<int>(std::round(src[i] * lep_exponent * 0.25));
             //dst[i] = (src[i] * 316.227766017f); // gist 10^2.5
             // dst[i] = (src[i] * 1258.92541179f); // arXiv to slighlly increase recall 10^3.1
         }
@@ -691,6 +638,8 @@ public:
      ******************************************************************/
     // PDXearch: PDX + Pruning
     std::vector<KNNCandidate> Search(float *__restrict raw_query, uint32_t k) {
+        size_t max_length = 4096 * pdx_data.num_dimensions;
+        uint8_t * out = new uint8_t[max_length];
 #ifdef BENCHMARK_TIME
         ResetClocks();
         end_to_end_clock.Tic();
@@ -717,6 +666,7 @@ public:
             end_to_end_clock.Toc();
 #endif
             //GetVectorgroupsAccessOrderIVFPDX(query, vectorgroups_to_visit, vectorgroups_indices);
+            //GetVectorgroupsAccessOrderRandom();
             GetVectorgroupsAccessOrderIVF(transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
 #ifdef BENCHMARK_TIME
             end_to_end_clock.Tic();
@@ -728,20 +678,34 @@ public:
         // PDXearch core
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];
-        VectorgroupU8& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
+        VectorgroupU6x8& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
+
         ScaleQuery(transformed_raw_query, scaled_query);
         PrepareQuery(scaled_query, query, first_vectorgroup.for_bases);
         all_values += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
-        Start(query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
+        size_t length = first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
+//        uint8_t * out = new uint8_t[length + 1024];
+        Decompress(first_vectorgroup.data, out, length);
+        Start(query, out, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
+        //delete [] out;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
-            VectorgroupU8& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
-            PrepareQuery(scaled_query, query, vectorgroup.for_bases);
-            Warmup(query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, best_k);
+            VectorgroupU6x8& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
+            length = vectorgroup.num_embeddings * pdx_data.num_dimensions;
+//            out = new uint8_t[length + 1024];
 //#ifdef BENCHMARK_TIME
 //            end_to_end_clock.Toc();
 //#endif
-            Prune(query, vectorgroup.data, vectorgroup.num_embeddings, k, best_k);
+            Decompress(vectorgroup.data, out, length);
+//#ifdef BENCHMARK_TIME
+//            end_to_end_clock.Tic();
+//#endif
+            PrepareQuery(scaled_query, query, vectorgroup.for_bases);
+            Warmup(query, out, vectorgroup.num_embeddings, k, selectivity_threshold, best_k);
+//#ifdef BENCHMARK_TIME
+//            end_to_end_clock.Toc();
+//#endif
+            Prune(query, out, vectorgroup.num_embeddings, k, best_k);
             all_values += vectorgroup.num_embeddings * pdx_data.num_dimensions;
 //#ifdef BENCHMARK_TIME
 //            end_to_end_clock.Tic();
@@ -749,12 +713,14 @@ public:
             if (n_vectors_not_pruned){
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, best_k);
             }
+            //delete [] out;
         }
         //std::cout << "Clipped dimensions: " <<  clipped << " on " << ivf_nprobe << " clusters (" << (float)(clipped)/(ivf_nprobe*pdx_data.num_dimensions) * 100.0 << " )\n";
         //std::cout << "Clipped values: " <<  clipped << " on " << ivf_nprobe << " clusters (" << (double)(clipped)/(all_values) * 100.0 << " )\n";
 #ifdef BENCHMARK_TIME
         end_to_end_clock.Toc();
 #endif
+        delete [] out;
         return BuildResultSet(k);
     }
 
@@ -774,7 +740,7 @@ public:
         GetVectorgroupsAccessOrderRandom();
         for (size_t vectorgroup_idx = 0; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
-            VectorgroupU8& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
+            VectorgroupU6x8& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             if (vectorgroup.num_embeddings == PDX_VECTOR_SIZE){
                 ResetDistancesVectorized();
                 CalculateVerticalDistancesVectorized<ALPHA>(query, vectorgroup.data, 0, pdx_data.num_dimensions, distances);
@@ -795,4 +761,4 @@ public:
 
 } // namespace PDX
 
-#endif //EMBEDDINGSEARCH_PDXEARCH_HPP
+#endif //PDX_PDXEARCH_HPP

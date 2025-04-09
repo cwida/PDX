@@ -1,5 +1,5 @@
-#ifndef EMBEDDINGSEARCH_UTILS_HPP
-#define EMBEDDINGSEARCH_UTILS_HPP
+#ifndef PDX_UTILS_HPP
+#define PDX_UTILS_HPP
 
 #include <cstdint>
 #include <fcntl.h>
@@ -63,4 +63,4 @@ uint8_t* MmapFile8(size_t& n_values, const std::string& filename) {
 }
 
 
-#endif //EMBEDDINGSEARCH_UTILS_HPP
+#endif //PDX_UTILS_HPP

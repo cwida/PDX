@@ -1,6 +1,6 @@
 #include <iostream>
 #include <string>
-#include "distance_computers.hpp"
+#include "standalone_distance_computers.hpp"
 
 void __attribute__((noinline)) work(const float *__restrict data, const float *__restrict query, size_t DIMENSION){
         PDXScanner<PDX::L2>::ResetDistances();

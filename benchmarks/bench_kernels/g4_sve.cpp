@@ -4,7 +4,7 @@
 
 #include <iostream>
 #include <string>
-#include "distance_computers.hpp"
+#include "standalone_distance_computers.hpp"
 
 
 void __attribute__((noinline)) work(const float *__restrict query, const float *__restrict data, size_t DIMENSION, float *__restrict distances, size_t vector_idx){

@@ -1,5 +1,5 @@
-#ifndef EMBEDDINGSEARCH_TICTOC_HPP
-#define EMBEDDINGSEARCH_TICTOC_HPP
+#ifndef PDX_TICTOC_HPP
+#define PDX_TICTOC_HPP
 
 
 #include <cstdint>
@@ -41,4 +41,4 @@ public:
     }
 };
 
-#endif // EMBEDDINGSEARCH_TICTOC_HPP
+#endif // PDX_TICTOC_HPP

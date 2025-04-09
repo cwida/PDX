@@ -31,7 +31,7 @@ int main(int argc, char *argv[]) {
     size_t NUM_QUERIES;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
 
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
+    PDX::DimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
     std::string ALGORITHM = "bsa-pdx";
 
     std::string RESULTS_PATH;
