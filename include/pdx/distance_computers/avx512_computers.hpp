@@ -36,6 +36,10 @@ public:
         __m512i vec2_u8;
         __m512i vec1_u8;
         __m512i diff_u8;
+        __m256i y_res;
+        __m256i y_vec2_u8;
+        __m256i y_vec1_u8;
+        __m256i y_diff_u8;
         uint32_t * query_grouped = (uint32_t *)query;
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
@@ -52,9 +56,17 @@ public:
                 for (; i <= n_vectors - 16; i+=16) {
                     // Read 64 bytes of data (64 values) with 4 dimensions of 16 vectors
                     res = _mm512_load_si512(&distances_p[i]);
-                    vec2_u8 = _mm512_loadu_si512(&data[offset_to_dimension_start + i * 64]);
+                    vec2_u8 = _mm512_loadu_si512(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
                     diff_u8 = _mm512_or_si512(_mm512_subs_epu8(vec1_u8, vec2_u8), _mm512_subs_epu8(vec2_u8, vec1_u8));
                     _mm512_store_epi32(&distances_p[i], _mm512_dpbusds_epi32(res, diff_u8, diff_u8));
+                }
+                y_vec1_u8 = _mm256_set1_epi32(query_value);
+                for (; i <= n_vectors - 8; i+=8) {
+                    // Read 32 bytes of data (32 values) with 4 dimensions of 8 vectors
+                    y_res = _mm256_load_epi32(&distances_p[i]);
+                    y_vec2_u8 = _mm256_loadu_epi8(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
+                    y_diff_u8 = _mm256_or_si256(_mm256_subs_epu8(y_vec1_u8, y_vec2_u8), _mm256_subs_epu8(y_vec2_u8, y_vec1_u8));
+                    _mm256_store_epi32(&distances_p[i], _mm256_dpbusds_epi32(y_res, y_diff_u8, y_diff_u8));
                 }
                 // TODO: I would actually like to do __mm256 version
             }
@@ -331,7 +343,7 @@ public:
         // A way to improve the performance by ~20% is using a GATHER intrinsic. However this only works on Intel microarchs.
         // In AMD (Zen 4, Zen 3) using a GATHER is shooting ourselves in the foot (~80 uops)
         // __AVX512FP16__ macro let us detect Intel architectures (from Sapphire Rapids onwards)
-#if defined(__AVX512FP16__)
+#if false && defined(__AVX512FP16__)
         if (n_vectors >= 8) {
             GatherBasedKernel<USE_DIMENSIONS_REORDER>(
                     query, data, n_vectors, total_vectors, start_dimension, end_dimension,
