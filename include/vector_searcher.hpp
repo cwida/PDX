@@ -41,6 +41,7 @@ public:
                                                                           vectorgroup_idx *
                                                                           data.num_dimensions,
                                                                           data.num_dimensions);
+            std::cout << distances_to_centroids[vectorgroup_idx] << "\n";
         }
         vectorgroups_indices.resize(data.num_vectorgroups);
         std::iota(vectorgroups_indices.begin(), vectorgroups_indices.end(), 0);
