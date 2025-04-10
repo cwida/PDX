@@ -1,6 +1,12 @@
 #ifndef PDX_QUANTIZERS_H
 #define PDX_QUANTIZERS_H
 
+#include <cstdint>
+#include <cstdio>
+#include <cmath>
+#include "pdx/common.hpp"
+#include "pdx/quantizers/bitpacker/unpacker_neon.h"
+
 #ifdef __ARM_NEON
 #include "arm_neon.h"
 #endif
@@ -8,12 +14,6 @@
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
-
-#include <cstdint>
-#include <cstdio>
-#include <cmath>
-#include "pdx/common.hpp"
-#include "pdx/quantizers/bitpacker/unpacker_neon.h"
 
 namespace PDX {
 
@@ -208,8 +208,8 @@ public:
 
             //__m512i zero = _mm512_setzero_si512();
             //__m512i max  = _mm512_set1_epi8(MAX_VALUE);
-            result = _mm512_max_epi8(result, zero);
-            result = _mm512_min_epi32(result, cur_max);
+//            result = _mm512_max_epi8(result, zero);
+//            result = _mm512_min_epi32(result, cur_max);
 
             // Store quantized query (64 values)
             _mm512_storeu_epi8(quantized_query + i, result);
