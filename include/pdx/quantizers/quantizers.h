@@ -159,7 +159,7 @@ public:
         }
 #elif defined(__AVX512F__)
         __m512i zero = _mm512_setzero_si512();
-        __m512i max  = _mm512_set1_epi8(MAX_VALUE);
+        __m512i cur_max  = _mm512_set1_epi8(MAX_VALUE);
         for (size_t i = 0; i < num_dimensions; i += 64) {
             // Load 64 int32 values in four AVX512 registers
             __m512i sub_a = _mm512_load_si512(scaled_query + i);
@@ -209,7 +209,7 @@ public:
             //__m512i zero = _mm512_setzero_si512();
             //__m512i max  = _mm512_set1_epi8(MAX_VALUE);
             result = _mm512_max_epi8(result, zero);
-            result = _mm512_min_epi32(result, max);
+            result = _mm512_min_epi32(result, cur_max);
 
             // Store quantized query (64 values)
             _mm512_storeu_epi8(quantized_query + i, result);
