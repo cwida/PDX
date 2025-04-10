@@ -43,8 +43,8 @@ int main(int argc, char *argv[]) {
             continue;
         }
         PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::Quantization::U8>();
-        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-u8x4-ivf");
-        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u8-matrix");
+        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-u7x4-ivf");
+        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u7-matrix");
         Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
         matrix = matrix.inverse();
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
