@@ -1,14 +1,6 @@
 #ifndef PDX_VECTOR_SEARCHER_HPP
 #define PDX_VECTOR_SEARCHER_HPP
 
-#ifdef __ARM_NEON
-#include "arm_neon.h"
-#endif
-
-#ifdef __AVX2__
-#include <immintrin.h>
-#endif
-
 #include <vector>
 #include <cinttypes>
 #include "pdx/common.hpp"
