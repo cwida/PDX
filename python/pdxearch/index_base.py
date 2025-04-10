@@ -76,7 +76,15 @@ class BaseIndexPDXIVF:
             if _type == 'pdx-4' and use_lep:
                 # TODO: Call to LEP class to determine exponent, FOR base, and bit-width
                 pre_data = data[partition.indices, :]
-                if lep_bw == 6:  # TODO: More smart min/max
+                if lep_bw == 7:
+                    pre_data = pre_data * 1000
+                    pre_data = pre_data * 0.5
+                    pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                    for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                    for_data = pre_data - for_bases
+                    lep_min = 0
+                    lep_max = 127
+                elif lep_bw == 6:  # TODO: More smart min/max
                     # Method 1, Clip means:
                     # pre_data = pre_data * 1000
                     # pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
@@ -108,7 +116,7 @@ class BaseIndexPDXIVF:
                     lep_min = 0
                     lep_max = 255
                 if np.any(for_data > lep_max) or np.any(for_data < lep_min):  # TODO: We are assuming data fits in 8-bits
-                    if lep_bw == 8:  # I am only interested of knowing this if we use 8-bits
+                    if lep_bw == 8 or lep_bw == 7:  # I am only interested of knowing this if we use 8-bits
                         print(f'LEP overflow when converting to uint8 in partition {list_id}')
                     exceptions_count += ((for_data > lep_max) | (for_data < lep_min)).sum()
                     # TODO: Support exceptions
@@ -156,7 +164,9 @@ class BaseIndexPDXIVF:
                         rows, _ = tmp_block.shape
                         pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
                         lep_bw = kwargs.get('lep_bw', 8)
-                        if lep_bw == 8:
+                        # For lep_bw = 7, we just store it as 8 bits
+                        # While we don't get smaller size we get faster kernels (potentially)
+                        if lep_bw == 8 or lep_bw == 7:
                             data.extend(pdx_4_block.tobytes("C"))
                         else:
                             total_values = len(pdx_4_block)

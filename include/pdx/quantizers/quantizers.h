@@ -5,6 +5,10 @@
 #include "arm_neon.h"
 #endif
 
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 #include <cstdint>
 #include <cstdio>
 #include <cmath>
@@ -52,8 +56,12 @@ public:
     LEPQuantizer(){
         lep_exponent = 1000;
         if constexpr (q == Quantization::U8){
-            lep_factor = 1.0;
-            MAX_VALUE = 255;
+//            lep_factor = 1.0;
+//            MAX_VALUE = 255;
+//            SKIP_DECOMP_FACTOR = 1.0;
+            // TODO: U7 needs to clamp to 127
+            lep_factor = 0.5;
+            MAX_VALUE = 127;
             SKIP_DECOMP_FACTOR = 1.0;
         } else if constexpr (q == Quantization::U4){
             lep_factor = 0.0625;
@@ -96,8 +104,10 @@ public:
         }
     }
 
-    // TODO: Separate the avx512 code to somewhere else
+    // TODO: Separate the neon/avx512 code to somewhere else
     void PrepareQuery(const int32_t *for_bases){
+        // TODO: Not multiple of 16/64 in dimensions
+#ifdef __ARM_NEON
         for (size_t i = 0; i < num_dimensions; i += 16) {
             // Load 8 int32 values in two NEON registers
             int32x4_t sub_a = vld1q_s32(scaled_query + i);
@@ -147,6 +157,54 @@ public:
             vst1_u8(quantized_query + i, result_1);
             vst1_u8(quantized_query + i + 8, result_2);
         }
+#elif defined(__AVX512F__)
+        for (size_t i = 0; i < num_dimensions; i += 64) {
+            // Load 64 int32 values in four AVX512 registers
+            __m512 sub_a = _mm512_load_si512(scaled_query + i);
+            __m512 sub_b = _mm512_load_si512(scaled_query + i + 16);
+            __m512 sub_c = _mm512_load_si512(scaled_query + i + 32);
+            __m512 sub_d = _mm512_load_si512(scaled_query + i + 48);
+            __m512 for_a = _mm512_load_si512(for_bases + i);
+            __m512 for_b = _mm512_load_si512(for_bases + i + 16);
+            __m512 for_c = _mm512_load_si512(for_bases + i + 32);
+            __m512 for_d = _mm512_load_si512(for_bases + i + 48);
+
+            // Subtract in 4 registers
+            __m512 input_low_1 = _mm512_sub_ps(sub_a, for_a);
+            __m512 input_high_1 = _mm512_sub_ps(sub_b, for_b);
+            __m512 input_low_2 = _mm512_sub_ps(sub_c, for_c);
+            __m512 input_high_2 = _mm512_sub_ps(sub_d, for_d);
+
+            // Store the result of the subtraction
+            _mm512_store_epi32(dim_clip_value + i, input_low_1);
+            _mm512_store_epi32(dim_clip_value + i + 16, input_high_1);
+            _mm512_store_epi32(dim_clip_value + i + 32, input_low_2);
+            _mm512_store_epi32(dim_clip_value + i + 48, input_high_2);
+
+            // Narrow from int32 to int8 (saturating, max value is set on overflow)
+            __m128i result_1 = _mm512_cvtusepi32_epi8(input_low_1);
+            __m128i result_2 = _mm512_cvtusepi32_epi8(input_high_1);
+            __m128i result_3 = _mm512_cvtusepi32_epi8(input_low_2);
+            __m128i result_4 = _mm512_cvtusepi32_epi8(input_high_2);
+
+            __m512i result = _mm512_undefined_epi32();  // start with an undefined 512-bit register
+
+            // TODO: Probably this would be the bottleneck of my function
+            result = _mm512_inserti64x2(result, result_1, 0); // insert into slot 0
+            result = _mm512_inserti64x2(result, result_2, 1); // insert into slot 1
+            result = _mm512_inserti64x2(result, result_3, 2); // insert into slot 2
+            result = _mm512_inserti64x2(result, result_4, 3); // insert into slot 3
+
+            // Mask out values that were clamped (set them to 0)
+            // First we check which values are NOT equal to MAX_VALUE, these are 1
+            __mmask64 mask = _mm512_cmpneq_epu8_mask(result, _mm512_set1_epi8(MAX_VALUE)); // Create mask where result == 255
+            // Then we mask out the values which were zero
+            result = _mm512_maskz_mov_epi8(mask, result);
+
+            // Store quantized query (64 values)
+            _mm512_storeu_epi8(quantized_query + i, result);
+        }
+#endif
     };
 
 };

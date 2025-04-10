@@ -12,6 +12,10 @@
 #include "arm_neon.h"
 #endif
 
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 namespace PDX {
 
 class Unpacker {
@@ -174,6 +178,7 @@ public:
         *pout += 32;  // Move the pointer forward by 32 bytes (we wrote 32 6-bit values)
     }
 
+#ifdef __ARM_NEON
     static void unpack_6bw_8ow_128crw_8uf(const uint8_t *__restrict a_in_p, uint8_t *__restrict a_out_p)
     {
         [[maybe_unused]] auto out = (a_out_p);
@@ -609,7 +614,14 @@ public:
             vst1q_u8(out + (i * 16) + (7 * 1 * 16) + (128 * 7), tmp_7);
         }
     }
-
+#else
+    static void unpack_6bw_8ow_128crw_8uf(const uint8_t *__restrict a_in_p, uint8_t *__restrict a_out_p){
+        // TODO
+    }
+    static void unpack_4bw_8ow_128crw_8uf(const uint8_t *__restrict a_in_p, uint8_t *__restrict a_out_p){
+        // TODO
+    }
+#endif
 };
 
 };
