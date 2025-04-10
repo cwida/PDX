@@ -1,6 +1,7 @@
 #ifndef PDX_COMMON_HPP
 #define PDX_COMMON_HPP
 
+#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 
