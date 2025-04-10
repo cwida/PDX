@@ -60,14 +60,14 @@ public:
                     diff_u8 = _mm512_or_si512(_mm512_subs_epu8(vec1_u8, vec2_u8), _mm512_subs_epu8(vec2_u8, vec1_u8));
                     _mm512_store_epi32(&distances_p[i], _mm512_dpbusds_epi32(res, diff_u8, diff_u8));
                 }
-                y_vec1_u8 = _mm256_set1_epi32(query_value);
-                for (; i <= n_vectors - 8; i+=8) {
-                    // Read 32 bytes of data (32 values) with 4 dimensions of 8 vectors
-                    y_res = _mm256_load_epi32(&distances_p[i]);
-                    y_vec2_u8 = _mm256_loadu_epi8(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
-                    y_diff_u8 = _mm256_or_si256(_mm256_subs_epu8(y_vec1_u8, y_vec2_u8), _mm256_subs_epu8(y_vec2_u8, y_vec1_u8));
-                    _mm256_store_epi32(&distances_p[i], _mm256_dpbusds_epi32(y_res, y_diff_u8, y_diff_u8));
-                }
+//                y_vec1_u8 = _mm256_set1_epi32(query_value);
+//                for (; i <= n_vectors - 8; i+=8) {
+//                    // Read 32 bytes of data (32 values) with 4 dimensions of 8 vectors
+//                    y_res = _mm256_load_epi32(&distances_p[i]);
+//                    y_vec2_u8 = _mm256_loadu_epi8(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
+//                    y_diff_u8 = _mm256_or_si256(_mm256_subs_epu8(y_vec1_u8, y_vec2_u8), _mm256_subs_epu8(y_vec2_u8, y_vec1_u8));
+//                    _mm256_store_epi32(&distances_p[i], _mm256_dpbusds_epi32(y_res, y_diff_u8, y_diff_u8));
+//                }
                 // TODO: I would actually like to do __mm256 version
             }
             // rest
