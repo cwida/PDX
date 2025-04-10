@@ -157,74 +157,75 @@ public:
             vst1_u8(quantized_query + i, result_1);
             vst1_u8(quantized_query + i + 8, result_2);
         }
-#elif defined(__AVX512F__)
-        __m512i zero = _mm512_setzero_si512();
-        __m512i cur_max  = _mm512_set1_epi8(MAX_VALUE);
-        for (size_t i = 0; i < num_dimensions; i += 64) {
-            // Load 64 int32 values in four AVX512 registers
-            __m512i sub_a = _mm512_load_si512(scaled_query + i);
-            __m512i sub_b = _mm512_load_si512(scaled_query + i + 16);
-            __m512i sub_c = _mm512_load_si512(scaled_query + i + 32);
-            __m512i sub_d = _mm512_load_si512(scaled_query + i + 48);
-            __m512i for_a = _mm512_load_si512(for_bases + i);
-            __m512i for_b = _mm512_load_si512(for_bases + i + 16);
-            __m512i for_c = _mm512_load_si512(for_bases + i + 32);
-            __m512i for_d = _mm512_load_si512(for_bases + i + 48);
-
-            // Subtract in 4 registers
-            __m512i input_low_1 = _mm512_sub_epi32(sub_a, for_a);
-            __m512i input_high_1 = _mm512_sub_epi32(sub_b, for_b);
-            __m512i input_low_2 = _mm512_sub_epi32(sub_c, for_c);
-            __m512i input_high_2 = _mm512_sub_epi32(sub_d, for_d);
-
-            // Store the result of the subtraction
-            _mm512_store_epi32(dim_clip_value + i, input_low_1);
-            _mm512_store_epi32(dim_clip_value + i + 16, input_high_1);
-            _mm512_store_epi32(dim_clip_value + i + 32, input_low_2);
-            _mm512_store_epi32(dim_clip_value + i + 48, input_high_2);
-
-            // Narrow from int32 to int8 (saturating, max value is set on overflow)
-            __m128i result_1 = _mm512_cvtsepi32_epi8(input_low_1);
-            __m128i result_2 = _mm512_cvtsepi32_epi8(input_high_1);
-            __m128i result_3 = _mm512_cvtsepi32_epi8(input_low_2);
-            __m128i result_4 = _mm512_cvtsepi32_epi8(input_high_2);
-
-            uint8_t first = _mm_extract_epi8(result_1, 0);
-            //std::cout << "first: " << +first << "\n";
-
-            __m512i result = _mm512_undefined_epi32();  // start with an undefined 512-bit register
-
-            // TODO: Probably this would be the bottleneck of my function
-            result = _mm512_inserti64x2(result, result_1, 0); // insert into slot 0
-            result = _mm512_inserti64x2(result, result_2, 1); // insert into slot 1
-            result = _mm512_inserti64x2(result, result_3, 2); // insert into slot 2
-            result = _mm512_inserti64x2(result, result_4, 3); // insert into slot 3
-
-            // Mask out values that were clamped (set them to 0)
-            // First we check which values are NOT equal to MAX_VALUE, these are 1
-            //__mmask64 mask = _mm512_cmpneq_epu8_mask(result, _mm512_set1_epi8(MAX_VALUE)); // Create mask where result == 255
-            // Then we mask out the values which were zero
-            //result = _mm512_maskz_mov_epi8(mask, result);
-
-            //__m512i zero = _mm512_setzero_si512();
-            //__m512i max  = _mm512_set1_epi8(MAX_VALUE);
-//            result = _mm512_max_epi8(result, zero);
-//            result = _mm512_min_epi32(result, cur_max);
-
-            // Store quantized query (64 values)
-            _mm512_storeu_epi8(quantized_query + i, result);
-#else
-        // Seems that in AVX512, this code is equally as performant as the explicit SIMD one
-        for (size_t i = 0; i < num_dimensions; ++i){
-                int rounded = (int)(scaled_query[i] - for_bases[i]);
-                dim_clip_value[i] = rounded;
-                if (rounded > MAX_VALUE || rounded < 0) {
-                        quantized_query[i] = 0;
-                }else {
-                        quantized_query[i] = static_cast<uint8_t>(rounded);
-                }
-        }
 #endif
+//#elif defined(__AVX512F__)
+//        __m512i zero = _mm512_setzero_si512();
+//        __m512i cur_max  = _mm512_set1_epi8(MAX_VALUE);
+//        for (size_t i = 0; i < num_dimensions; i += 64) {
+//            // Load 64 int32 values in four AVX512 registers
+//            __m512i sub_a = _mm512_load_si512(scaled_query + i);
+//            __m512i sub_b = _mm512_load_si512(scaled_query + i + 16);
+//            __m512i sub_c = _mm512_load_si512(scaled_query + i + 32);
+//            __m512i sub_d = _mm512_load_si512(scaled_query + i + 48);
+//            __m512i for_a = _mm512_load_si512(for_bases + i);
+//            __m512i for_b = _mm512_load_si512(for_bases + i + 16);
+//            __m512i for_c = _mm512_load_si512(for_bases + i + 32);
+//            __m512i for_d = _mm512_load_si512(for_bases + i + 48);
+//
+//            // Subtract in 4 registers
+//            __m512i input_low_1 = _mm512_sub_epi32(sub_a, for_a);
+//            __m512i input_high_1 = _mm512_sub_epi32(sub_b, for_b);
+//            __m512i input_low_2 = _mm512_sub_epi32(sub_c, for_c);
+//            __m512i input_high_2 = _mm512_sub_epi32(sub_d, for_d);
+//
+//            // Store the result of the subtraction
+//            _mm512_store_epi32(dim_clip_value + i, input_low_1);
+//            _mm512_store_epi32(dim_clip_value + i + 16, input_high_1);
+//            _mm512_store_epi32(dim_clip_value + i + 32, input_low_2);
+//            _mm512_store_epi32(dim_clip_value + i + 48, input_high_2);
+//
+//            // Narrow from int32 to int8 (saturating, max value is set on overflow)
+//            __m128i result_1 = _mm512_cvtsepi32_epi8(input_low_1);
+//            __m128i result_2 = _mm512_cvtsepi32_epi8(input_high_1);
+//            __m128i result_3 = _mm512_cvtsepi32_epi8(input_low_2);
+//            __m128i result_4 = _mm512_cvtsepi32_epi8(input_high_2);
+//
+//            uint8_t first = _mm_extract_epi8(result_1, 0);
+//            //std::cout << "first: " << +first << "\n";
+//
+//            __m512i result = _mm512_undefined_epi32();  // start with an undefined 512-bit register
+//
+//            // TODO: Probably this would be the bottleneck of my function
+//            result = _mm512_inserti64x2(result, result_1, 0); // insert into slot 0
+//            result = _mm512_inserti64x2(result, result_2, 1); // insert into slot 1
+//            result = _mm512_inserti64x2(result, result_3, 2); // insert into slot 2
+//            result = _mm512_inserti64x2(result, result_4, 3); // insert into slot 3
+//
+//            // Mask out values that were clamped (set them to 0)
+//            // First we check which values are NOT equal to MAX_VALUE, these are 1
+//            //__mmask64 mask = _mm512_cmpneq_epu8_mask(result, _mm512_set1_epi8(MAX_VALUE)); // Create mask where result == 255
+//            // Then we mask out the values which were zero
+//            //result = _mm512_maskz_mov_epi8(mask, result);
+//
+//            //__m512i zero = _mm512_setzero_si512();
+//            //__m512i max  = _mm512_set1_epi8(MAX_VALUE);
+////            result = _mm512_max_epi8(result, zero);
+////            result = _mm512_min_epi32(result, cur_max);
+//
+//            // Store quantized query (64 values)
+//            _mm512_storeu_epi8(quantized_query + i, result);
+//#else
+//        // Seems that in AVX512, this code is equally as performant as the explicit SIMD one
+//        for (size_t i = 0; i < num_dimensions; ++i){
+//                int rounded = (int)(scaled_query[i] - for_bases[i]);
+//                dim_clip_value[i] = rounded;
+//                if (rounded > MAX_VALUE || rounded < 0) {
+//                        quantized_query[i] = 0;
+//                }else {
+//                        quantized_query[i] = static_cast<uint8_t>(rounded);
+//                }
+//        }
+//#endif
     };
 
 };
