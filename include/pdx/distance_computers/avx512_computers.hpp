@@ -68,7 +68,6 @@ public:
                     y_diff_u8 = _mm256_or_si256(_mm256_subs_epu8(y_vec1_u8, y_vec2_u8), _mm256_subs_epu8(y_vec2_u8, y_vec1_u8));
                     _mm256_store_epi32(&distances_p[i], _mm256_dpbusds_epi32(y_res, y_diff_u8, y_diff_u8));
                 }
-                // TODO: I would actually like to do __mm256 version
             }
             // rest
             for (; i < n_vectors; ++i) {
@@ -85,6 +84,7 @@ public:
                                            (to_multiply_c * to_multiply_c) +
                                            (to_multiply_d * to_multiply_d);
             }
+            // TODO: I can prune here (?)
         }
         size_t group = start_dimension;
         size_t loop_c = 0;
@@ -178,7 +178,7 @@ simsimd_l2sq_u8_ice_cycle:
         d_u8_vec = _mm512_or_si512(_mm512_subs_epu8(a_u8_vec, b_u8_vec), _mm512_subs_epu8(b_u8_vec, a_u8_vec));
 
         // Multiply and accumulate at `int8` level which are actually uint7, accumulate at `int32` level:
-        d2_i32_vec = _mm512_dpbusds_epi32(d2_i32_low_vec, d_u8_vec, d_u8_vec);
+        d2_i32_vec = _mm512_dpbusds_epi32(d2_i32_vec, d_u8_vec, d_u8_vec);
         if (num_dimensions) goto simsimd_l2sq_u8_ice_cycle;
         return _mm512_reduce_add_epi32(d2_i32_vec);
     };
