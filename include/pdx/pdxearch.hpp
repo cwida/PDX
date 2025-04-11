@@ -76,6 +76,13 @@ protected:
     size_t cur_subgrouping_size_idx {0};
     size_t total_embeddings {0};
 
+    // Debugging
+    size_t warmup_bytes = 0;
+    size_t prune_bytes = 0;
+    size_t start_bytes = 0;
+    size_t processed_bytes = 0;
+    size_t total_bytes = 0;
+
     std::vector<uint32_t> indices_dimensions;
     std::vector<uint32_t> vectorgroups_indices;
 
@@ -227,6 +234,8 @@ protected:
 
     // On the first bucket, we do a full scan (we do not prune vectors)
     void Start(const QUANTIZED_VECTOR_TYPE *__restrict query, const DATA_TYPE * data, const size_t n_vectors, uint32_t k, const uint32_t * vector_indices) {
+        processed_bytes += n_vectors * pdx_data.num_dimensions;
+        start_bytes += n_vectors * pdx_data.num_dimensions;
         ResetPruningDistances(n_vectors);
         distance_computer::Vertical(query, data, n_vectors, n_vectors, 0, pdx_data.num_dimensions, pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
         size_t max_possible_k = std::min((size_t) k, n_vectors);
@@ -261,6 +270,8 @@ protected:
                 current_dimension_idx < pdx_data.num_dimensions) {
             size_t last_dimension_to_fetch = std::min(current_dimension_idx + DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx],
                                                       pdx_data.num_dimensions);
+            warmup_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
+            processed_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
             if (dimension_order == SEQUENTIAL){
                 distance_computer::Vertical(query, data, n_vectors, n_vectors, current_dimension_idx,
                                                                      last_dimension_to_fetch, pruning_distances,
@@ -289,6 +300,8 @@ protected:
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
             size_t last_dimension_to_test_idx = std::min(current_dimension_idx + DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx],
                                                          pdx_data.num_dimensions);
+            prune_bytes += (last_dimension_to_test_idx - current_dimension_idx) * cur_n_vectors_not_pruned;
+            processed_bytes += (last_dimension_to_test_idx - current_dimension_idx) * cur_n_vectors_not_pruned;
             if (dimension_order == SEQUENTIAL){
                 distance_computer::VerticalPruning(query, data, cur_n_vectors_not_pruned,
                                                                            n_vectors, current_dimension_idx,
@@ -475,14 +488,21 @@ public:
     // PDXearch: PDX + Pruning
     template<Quantization Q=q, std::enable_if_t<Q==U8, int> = 0>
     std::vector<KNNCandidate_t> Search(float *__restrict raw_query, uint32_t k) {
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
+        processed_bytes = 0;
+        total_bytes = 0;
+        start_bytes = 0;
+        prune_bytes = 0;
+        warmup_bytes = 0;
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
         quant.NormalizeQuery(raw_query);
         PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        // For now I will not take into account the preprocessing query time
+        // because RaBitQ cheats a bit by doing all the queries at once
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
         // TODO: This should probably not be evaluated here
         if (pdx_data.is_ivf) {
@@ -491,14 +511,14 @@ public:
             } else {
                 vectorgroups_to_visit = ivf_nprobe;
             }
-#ifdef BENCHMARK_TIME
-            this->end_to_end_clock.Toc();
-#endif
+//#ifdef BENCHMARK_TIME
+//            this->end_to_end_clock.Toc();
+//#endif
             //this->GetVectorgroupsAccessOrderIVFPDX(query, vectorgroups_to_visit, vectorgroups_indices);
             this->GetVectorgroupsAccessOrderIVF(quant.transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
-#ifdef BENCHMARK_TIME
-            this->end_to_end_clock.Tic();
-#endif
+//#ifdef BENCHMARK_TIME
+//            this->end_to_end_clock.Tic();
+//#endif
         } else {
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
@@ -510,16 +530,19 @@ public:
         quant.ScaleQuery(quant.transformed_raw_query);
         quant.PrepareQuery(first_vectorgroup.for_bases);
         Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
+        total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             quant.PrepareQuery(vectorgroup.for_bases);
+            total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;
             Warmup(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
+        std::cout << total_bytes << "," << processed_bytes << "," << start_bytes << "," << warmup_bytes << "," << prune_bytes << "\n";
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif
@@ -529,6 +552,11 @@ public:
 
     template<Quantization Q=q, std::enable_if_t<Q==F32, int> = 0>
     std::vector<KNNCandidate_t> Search(float *__restrict raw_query, uint32_t k) {
+        processed_bytes = 0;
+        total_bytes = 0;
+        start_bytes = 0;
+        prune_bytes = 0;
+        warmup_bytes = 0;
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
         this->end_to_end_clock.Tic();
@@ -571,15 +599,19 @@ public:
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         Start(query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
+        total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
+            total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;
             Warmup(query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
+        std::cout << total_bytes * 4 << "," << processed_bytes * 4 << "," << start_bytes * 4 << "," << warmup_bytes * 4 << "," << prune_bytes * 4 << "\n";
+
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif

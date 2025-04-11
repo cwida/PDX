@@ -5,7 +5,7 @@ from setup_settings import *
 from sklearn import preprocessing
 
 # Generates ground truth with SKLearn
-def generate_ground_truth(dataset, KNNS=(10, 100), normalize=True):
+def generate_ground_truth(dataset, KNNS=(10, 100), normalize=False):
     if not os.path.exists(GROUND_TRUTH_DATA):
         os.makedirs(GROUND_TRUTH_DATA)
     train, test = read_hdf5_data(dataset)
@@ -44,18 +44,20 @@ def generate_ground_truth(dataset, KNNS=(10, 100), normalize=True):
 
 
 if __name__ == "__main__":
-    ks = [10]
-    # generate_ground_truth('fashion-mnist-784-euclidean', ks)
-    # generate_ground_truth('msong-420', ks)
-    # generate_ground_truth('instructorxl-arxiv-768', ks)
-    # generate_ground_truth('openai-1536-angular', ks)
-    # generate_ground_truth('sift-128-euclidean', ks)
-    # generate_ground_truth('fashion-mnist-784-euclidean', ks)
-    # generate_ground_truth('nytimes-16-angular', ks)
-    # generate_ground_truth('deep-image-96-angular', ks)
-    # generate_ground_truth('contriever-768', ks)
-    # generate_ground_truth('mnist-784-euclidean', ks)
-    # generate_ground_truth('gist-960-euclidean', ks)
-    # generate_ground_truth('glove-50-angular', ks)
-    # generate_ground_truth('glove-200-angular', ks)
-    # generate_ground_truth('har-561', ks)
+    ks = [100]
+    generate_ground_truth('openai-1536-angular', ks)
+    generate_ground_truth('msong-420', ks)
+    generate_ground_truth('instructorxl-arxiv-768', ks)
+    generate_ground_truth('sift-128-euclidean', ks)
+    generate_ground_truth('gist-960-euclidean', ks)
+    generate_ground_truth('har-561', ks)
+
+    generate_ground_truth('fashion-mnist-784-euclidean', ks)
+    generate_ground_truth('mnist-784-euclidean', ks)
+    generate_ground_truth('nytimes-16-angular', ks)
+    generate_ground_truth('glove-50-angular', ks)
+    generate_ground_truth('glove-200-angular', ks)
+
+    generate_ground_truth('deep-image-96-angular', ks)
+    generate_ground_truth('contriever-768', ks)
+
