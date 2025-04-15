@@ -47,17 +47,17 @@ public:
             size_t offset_to_dimension_start = dimension_idx * total_vectors;
             size_t i = 0;
             // TODO: RE ADD
-//            if constexpr (!SKIP_PRUNED){
-//                uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
-//                uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
-//                for (; i <= n_vectors - 4; i+=4) {
-//                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
-//                    uint32x4_t res = vld1q_u32(&distances_p[i]);
-//                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
-//                    uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
-//                    vst1q_u32(&distances_p[i], vdotq_u32(res, diff_u8, diff_u8));
-//                }
-//            }
+            if constexpr (!SKIP_PRUNED){
+                uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+                uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
+                for (; i <= n_vectors - 4; i+=4) {
+                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+                    uint32x4_t res = vld1q_u32(&distances_p[i]);
+                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
+                    uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
+                    vst1q_u32(&distances_p[i], vdotq_u32(res, diff_u8, diff_u8));
+                }
+            }
             // n_vectors % 4 (rest)
 //#ifdef BENCHMARK_TIME
 //            end_to_end_clock.Tic();
@@ -148,7 +148,7 @@ public:
                 uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 16]);
                 uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
                 // TODO: RE ADD
-                //res[i] = vdotq_u32(res[i], diff_u8, diff_u8);
+                res[i] = vdotq_u32(res[i], diff_u8, diff_u8);
             }
         }
         // Store results back
@@ -212,12 +212,12 @@ public:
         float32x4_t sum_vec = vdupq_n_f32(0);
         size_t i = 0;
         size_t j = 0;
-//        for (; i + 16 <= num_dimensions; i += 16) {
-//            uint8x16_t a_vec = vld1q_u8(vector1 + i);
-//            uint8x16_t b_vec = vld1q_u8(vector2 + i);
-//            uint8x16_t d_vec = vabdq_u8(a_vec, b_vec);
-//            sum_vec = vdotq_u32(sum_vec, d_vec, d_vec);
-//        }
+        for (; i + 16 <= num_dimensions; i += 16) {
+            uint8x16_t a_vec = vld1q_u8(vector1 + i);
+            uint8x16_t b_vec = vld1q_u8(vector2 + i);
+            uint8x16_t d_vec = vabdq_u8(a_vec, b_vec);
+            sum_vec = vdotq_u32(sum_vec, d_vec, d_vec);
+        }
         DISTANCE_TYPE distance = vaddvq_u32(sum_vec);
         for (; i < num_dimensions; ++i) {
             int n = (int)vector1[i] - vector2[i];
