@@ -73,14 +73,14 @@ int main(int argc, char *argv[]) {
                     BenchmarkUtils::VerifyResult<true, PDX::F32>(recalls, result, KNN, int_ground_truth, l);
                 }
             }
-//            for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
-//                for (size_t l = 0; l < NUM_QUERIES; ++l) {
-//                    searcher.Search(query + l * pdx_data.num_dimensions, KNN);
-//                    runtimes[j + l * NUM_MEASURE_RUNS] = {
-//                            searcher.end_to_end_clock.accum_time
-//                    };
-//                }
-//            }
+            for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
+                for (size_t l = 0; l < NUM_QUERIES; ++l) {
+                    searcher.Search(query + l * pdx_data.num_dimensions, KNN);
+                    runtimes[j + l * NUM_MEASURE_RUNS] = {
+                            searcher.end_to_end_clock.accum_time
+                    };
+                }
+            }
             float real_selectivity = 1 - SELECTIVITY_THRESHOLD;
             BenchmarkMetadata results_metadata = {
                     dataset,

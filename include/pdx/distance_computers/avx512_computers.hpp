@@ -158,7 +158,7 @@ public:
         __m512i d2_i32_low_vec = _mm512_setzero_si512();
         __m512i d2_i32_high_vec = _mm512_setzero_si512();
         __m512i const zeros_vec = _mm512_setzero_si512();
-        __m512i d2_i32_vec;
+        __m512i d2_i32_vec = _mm512_setzero_si512();
         __m512i a_u8_vec, b_u8_vec, d_u8_vec;
 
 simsimd_l2sq_u8_ice_cycle:
