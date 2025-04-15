@@ -127,6 +127,7 @@ protected:
     };
 
     virtual void EvaluatePruningPredicateOnPositionsArray(size_t n_vectors){
+        //std::cout << "Pruning threshold at " << current_dimension_idx << ": " << pruning_threshold << "\n";
         n_vectors_not_pruned = 0;
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
             pruning_positions[n_vectors_not_pruned] = pruning_positions[vector_idx];
@@ -237,7 +238,34 @@ protected:
         processed_bytes += n_vectors * pdx_data.num_dimensions;
         start_bytes += n_vectors * pdx_data.num_dimensions;
         ResetPruningDistances(n_vectors);
-        distance_computer::Vertical(query, data, n_vectors, n_vectors, 0, pdx_data.num_dimensions, pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
+        // Vertical part
+        distance_computer::Vertical(query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions, pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
+        // Horizontal part
+        for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension+=64) {
+            for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
+                size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
+                                (horizontal_dimension * n_vectors) +
+                                  (vector_idx * 64);
+                pruning_distances[vector_idx] += distance_computer::Horizontal(
+                        query + pdx_data.num_vertical_dimensions + horizontal_dimension,
+                        data + data_pos,
+                        64
+                );
+            }
+        }
+        // Clipping (TODO: This looks horrible)
+        for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension++) {
+            if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
+                for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
+                    size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
+                                      ((horizontal_dimension / 64) * 64 * n_vectors) +
+                                      (vector_idx * 64) + (horizontal_dimension % 64);
+                    pruning_distances[vector_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+                    pruning_distances[vector_idx] += quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+                }
+            }
+        }
+        // end of horizontal part
         size_t max_possible_k = std::min((size_t) k, n_vectors);
         std::vector<size_t> indices_sorted;
         indices_sorted.resize(n_vectors);
@@ -267,9 +295,10 @@ protected:
 
         while (
                 1.0 * n_tuples_to_prune < tuples_needed_to_exit &&
-                current_dimension_idx < pdx_data.num_dimensions) {
+                current_dimension_idx < pdx_data.num_vertical_dimensions) {
             size_t last_dimension_to_fetch = std::min(current_dimension_idx + DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx],
-                                                      pdx_data.num_dimensions);
+                                                      pdx_data.num_vertical_dimensions);
+                                                      //pdx_data.num_dimensions);
             warmup_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
             processed_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
             if (dimension_order == SEQUENTIAL){
@@ -294,27 +323,81 @@ protected:
         GetPruningThreshold(k, heap);
         InitPositionsArray(n_vectors);
         size_t cur_n_vectors_not_pruned = 0;
-        while ( // We try to prune until the end
-                n_vectors_not_pruned
+        // To count all bytes that went to the PRUNE phase
+//        std::cout << "NOT PRUNED: " << n_vectors_not_pruned << " out of " << n_vectors << "\n";
+//        std::cout << "next to take:" << DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx] << "\n";
+//        std::cout << "at:" << current_dimension_idx << "\n";
+        // prune_bytes += (pdx_data.num_dimensions - current_dimension_idx) * n_vectors_not_pruned;
+        // GO THROUGH THE HORIZONTAL DIMENSIONS (possibly) AT THE MIDDLE OF THE VERTICAL ONES
+        size_t current_vertical_dimension = current_dimension_idx;
+        size_t current_horizontal_dimension = 0;
+        while (
+                pdx_data.num_horizontal_dimensions &&
+                n_vectors_not_pruned &&
+                        current_horizontal_dimension < pdx_data.num_horizontal_dimensions
+        ) {
+            cur_n_vectors_not_pruned = n_vectors_not_pruned;
+            //prune_bytes += 64 * cur_n_vectors_not_pruned;
+            //processed_bytes += 64 * cur_n_vectors_not_pruned;
+            for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+                size_t v_idx = pruning_positions[vector_idx];
+                size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
+                                  (current_horizontal_dimension * n_vectors) +
+                                  (v_idx * 64);
+                pruning_distances[v_idx] += distance_computer::Horizontal(
+                        query + pdx_data.num_vertical_dimensions + current_horizontal_dimension,
+                        data + data_pos,
+                        64
+                );
+            }
+            // Clipping (TODO: This looks horrible)
+            for (size_t horizontal_dimension = current_horizontal_dimension; horizontal_dimension < current_horizontal_dimension + 64; horizontal_dimension++) {
+                if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
+                    for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+                        size_t v_idx = pruning_positions[vector_idx];
+                        size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
+                                          (current_horizontal_dimension * n_vectors) +
+                                          (v_idx * 64) + (horizontal_dimension % 64);
+                        pruning_distances[v_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+                        pruning_distances[v_idx] += quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+                    }
+                }
+            }
+            // end of clipping
+            current_horizontal_dimension += 64;
+            current_dimension_idx += 64;
+            if (is_positional_pruning) GetPruningThreshold(k, heap);
+            assert(current_dimension_idx == current_vertical_dimension + current_horizontal_dimension);
+            //std::cout << current_dimension_idx << " -> " << current_vertical_dimension + current_horizontal_dimension << "\n";
+            EvaluatePruningPredicateOnPositionsArray(cur_n_vectors_not_pruned);
+        }
+        // GO THROUGH THE REST IN THE VERTICAL
+        while (
+                n_vectors_not_pruned &&
+                current_vertical_dimension < pdx_data.num_vertical_dimensions
                 ) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
-            size_t last_dimension_to_test_idx = std::min(current_dimension_idx + DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx],
-                                                         pdx_data.num_dimensions);
-            prune_bytes += (last_dimension_to_test_idx - current_dimension_idx) * cur_n_vectors_not_pruned;
-            processed_bytes += (last_dimension_to_test_idx - current_dimension_idx) * cur_n_vectors_not_pruned;
+            // TODO: ADD variable fetching size back in
+            size_t last_dimension_to_test_idx = std::min(current_vertical_dimension + 64,
+                                                         (size_t)pdx_data.num_vertical_dimensions);
+//            size_t last_dimension_to_test_idx = std::min(current_dimension_idx + 4, pdx_data.num_dimensions);
+            prune_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
+            //processed_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
             if (dimension_order == SEQUENTIAL){
                 distance_computer::VerticalPruning(query, data, cur_n_vectors_not_pruned,
-                                                                           n_vectors, current_dimension_idx,
+                                                                           n_vectors, current_vertical_dimension,
                                                                            last_dimension_to_test_idx, pruning_distances,
                                                                            pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
             } else {
                 distance_computer::VerticalReorderedPruning(query, data, cur_n_vectors_not_pruned,
-                                                                          n_vectors, current_dimension_idx,
+                                                                          n_vectors, current_vertical_dimension,
                                                                           last_dimension_to_test_idx, pruning_distances,
                                                                           pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
             }
-
-            current_dimension_idx = last_dimension_to_test_idx;
+            current_dimension_idx = std::min(current_dimension_idx+64, pdx_data.num_dimensions);
+            current_vertical_dimension = std::min((uint32_t)current_vertical_dimension+64, pdx_data.num_vertical_dimensions);
+            //std::cout << current_dimension_idx << " -> " << current_vertical_dimension + current_horizontal_dimension << "\n";
+            assert(current_dimension_idx == current_vertical_dimension + current_horizontal_dimension);
             if (is_positional_pruning) GetPruningThreshold(k, heap);
             EvaluatePruningPredicateOnPositionsArray(cur_n_vectors_not_pruned);
             if (current_dimension_idx == pdx_data.num_dimensions) break;
@@ -344,29 +427,6 @@ protected:
             }
         }
     }
-
-//    template <bool IS_PRUNING=false>
-//    void MergeIntoHeap2(const uint32_t * vector_indices, size_t n_vectors, uint32_t k, std::priority_queue<KNNCandidate<F32>, std::vector<KNNCandidate<F32>>, VectorComparator<F32>> &heap) {
-//        for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
-//            size_t index = position_idx;
-//            float current_distance;
-//            if constexpr (IS_PRUNING){
-//                index = pruning_positions[position_idx];
-//                current_distance = pruning_distances[index];
-//            } else {
-//                current_distance = distances[index];
-//            }
-//            if (heap.size() < k || current_distance < heap.top().distance) {
-//                KNNCandidate_t embedding{};
-//                embedding.distance = current_distance;
-//                embedding.index = vector_indices[index];
-//                if (heap.size() >= k) {
-//                    heap.pop();
-//                }
-//                heap.push(embedding);
-//            }
-//        }
-//    }
 
     std::vector<KNNCandidate_t> BuildResultSet(uint32_t k){
         std::vector<KNNCandidate_t> result;
@@ -496,13 +556,13 @@ public:
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
         quant.NormalizeQuery(raw_query);
-        PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
-        // For now I will not take into account the preprocessing query time
-        // because RaBitQ cheats a bit by doing all the queries at once
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
         this->end_to_end_clock.Tic();
 #endif
+        PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        // For now I will not take into account the preprocessing query time
+        // because RaBitQ cheats a bit by doing all the queries at once
         GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
         // TODO: This should probably not be evaluated here
         if (pdx_data.is_ivf) {
@@ -542,7 +602,7 @@ public:
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
-        std::cout << total_bytes << "," << processed_bytes << "," << start_bytes << "," << warmup_bytes << "," << prune_bytes << "\n";
+        //std::cout << total_bytes << "," << processed_bytes << "," << start_bytes << "," << warmup_bytes << "," << prune_bytes << "\n";
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif
@@ -610,7 +670,7 @@ public:
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
-        std::cout << total_bytes * 4 << "," << processed_bytes * 4 << "," << start_bytes * 4 << "," << warmup_bytes * 4 << "," << prune_bytes * 4 << "\n";
+        //std::cout << total_bytes * 4 << "," << processed_bytes * 4 << "," << start_bytes * 4 << "," << warmup_bytes * 4 << "," << prune_bytes * 4 << "\n";
 
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();

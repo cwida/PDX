@@ -59,7 +59,7 @@ public:
 
 private:
     float epsilon0 = 2.1;
-    Eigen::MatrixXf matrix;
+    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> matrix;
 
     inline float GetRatio(const size_t &visited_dimensions) {
         if(visited_dimensions == (int) this->pdx_data.num_dimensions) {
@@ -71,12 +71,9 @@ private:
 
     // Improved transformation (2x - 100x faster than the original one, depending on D)
     void Multiply(float *raw_query, float *query, uint32_t num_dimensions) {
-        Eigen::MatrixXf query_matrix = Eigen::Map<Eigen::MatrixXf>(raw_query, 1, num_dimensions);
-        Eigen::MatrixXf mul_result(1, num_dimensions);
-        mul_result = query_matrix * matrix;
-        for (size_t i = 0; i < num_dimensions; ++i){
-            query[i] = mul_result(0, i);
-        }
+        Eigen::Map<const Eigen::RowVectorXf> query_matrix(raw_query, num_dimensions);
+        Eigen::Map<Eigen::RowVectorXf> output(query, num_dimensions);
+        output.noalias() = query_matrix * matrix;
     }
 
 };

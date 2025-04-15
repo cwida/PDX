@@ -157,23 +157,79 @@ public:
         }
     }
 
+    static DISTANCE_TYPE HorizontalPruning(
+            const QUERY_TYPE *__restrict query,
+            const DATA_TYPE *__restrict data,
+            size_t n_vectors,
+            size_t total_vectors,
+            size_t start_dimension,
+            size_t end_dimension,
+            DISTANCE_TYPE * distances_p,
+            const uint32_t * pruning_positions = nullptr,
+            const uint32_t * indices_dimensions = nullptr,
+            const int32_t * dim_clip_value = nullptr
+    ){
+//        for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
+//            size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
+//                              (horizontal_dimension * n_vectors) +
+//                              (vector_idx * 64);
+//            pruning_distances[vector_idx] += Horizontal(
+//                    query + pdx_data.num_vertical_dimensions + horizontal_dimension,
+//                    data + data_pos,
+//                    64,
+//                    quant.dim_clip_value + pdx_data.num_vertical_dimensions + horizontal_dimension
+//            );
+//        }
+//        float32x4_t sum_vec = vdupq_n_f32(0);
+//        size_t i = 0;
+//        size_t j = 0;
+////        for (; i + 16 <= num_dimensions; i += 16) {
+////            uint8x16_t a_vec = vld1q_u8(vector1 + i);
+////            uint8x16_t b_vec = vld1q_u8(vector2 + i);
+////            uint8x16_t d_vec = vabdq_u8(a_vec, b_vec);
+////            sum_vec = vdotq_u32(sum_vec, d_vec, d_vec);
+////        }
+//        DISTANCE_TYPE distance = vaddvq_u32(sum_vec);
+//        for (; i < num_dimensions; ++i) {
+//            int n = (int)query[i] - data[i];
+//            distance += n * n;
+//        }
+//        // Clipping TODO: Move to another function
+////        for (; j < num_dimensions; ++j) {
+////            if (dim_clip_value[j] < 0) {
+////                distance -= 2 * (int)data[j] * dim_clip_value[j];
+////                distance += dim_clip_value[j] * dim_clip_value[j];
+////            }
+////        }
+//        return distance;
+    };
+
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
-            size_t num_dimensions){
+            size_t num_dimensions
+    ){
         float32x4_t sum_vec = vdupq_n_f32(0);
         size_t i = 0;
-        for (; i + 16 <= num_dimensions; i += 16) {
-            uint8x16_t a_vec = vld1q_u8(vector1 + i);
-            uint8x16_t b_vec = vld1q_u8(vector2 + i);
-            uint8x16_t d_vec = vabdq_u8(a_vec, b_vec);
-            //sum_vec = vdotq_u32(sum_vec, d_vec, d_vec);
-        }
+        size_t j = 0;
+//        for (; i + 16 <= num_dimensions; i += 16) {
+//            uint8x16_t a_vec = vld1q_u8(vector1 + i);
+//            uint8x16_t b_vec = vld1q_u8(vector2 + i);
+//            uint8x16_t d_vec = vabdq_u8(a_vec, b_vec);
+//            sum_vec = vdotq_u32(sum_vec, d_vec, d_vec);
+//        }
         DISTANCE_TYPE distance = vaddvq_u32(sum_vec);
         for (; i < num_dimensions; ++i) {
             int n = (int)vector1[i] - vector2[i];
             distance += n * n;
         }
+        // Clipping TODO: Move to another function
+//        for (; j < num_dimensions; ++j) {
+//            if (dim_clip_value[j] < 0) {
+//                distance -= 2 * (int)data[j] * dim_clip_value[j];
+//                distance += dim_clip_value[j] * dim_clip_value[j];
+//            }
+//        }
         return distance;
     };
 };

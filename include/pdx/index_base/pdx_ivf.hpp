@@ -29,6 +29,8 @@ public:
 
     uint32_t num_dimensions{};
     uint32_t num_vectorgroups{};
+    uint32_t num_horizontal_dimensions{};
+    uint32_t num_vertical_dimensions{};
     std::vector<VECTORGROUP_TYPE> vectorgroups;
     float *means{};
     bool is_ivf{};
@@ -44,6 +46,8 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
+        num_vertical_dimensions = num_dimensions;
+        num_horizontal_dimensions = 0;
         next_value += sizeof(uint32_t);
         num_vectorgroups = ((uint32_t *) next_value)[0];
         next_value += sizeof(uint32_t);
@@ -81,6 +85,8 @@ public:
 
     uint32_t num_dimensions{};
     uint32_t num_vectorgroups{};
+    uint32_t num_horizontal_dimensions{};
+    uint32_t num_vertical_dimensions{};
     std::vector<Vectorgroup<U8>> vectorgroups;
     float *means{};
     bool is_ivf{};
@@ -96,6 +102,12 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
+        num_horizontal_dimensions = (uint32_t)(num_dimensions * 0.75);
+        num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
+//        num_vertical_dimensions = num_dimensions;
+//        num_horizontal_dimensions = 0;
+        std::cout << "Vertical dims: " << num_vertical_dimensions << "\n";
+        std::cout << "Horizontal dims: " << num_horizontal_dimensions << "\n";
         next_value += sizeof(uint32_t);
         num_vectorgroups = ((uint32_t *) next_value)[0];
         next_value += sizeof(uint32_t);

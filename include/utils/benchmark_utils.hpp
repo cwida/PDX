@@ -132,7 +132,7 @@ public:
 
 
     inline static size_t NUM_MEASURE_RUNS = 1;
-    inline static float EPSILON0 = 2.1;//2.1;
+    inline static float EPSILON0 = 2.1; //2.1;
     inline static float SELECTIVITY_THRESHOLD = 0.80; // more than 20% pruned to pass
     inline static bool VERIFY_RESULTS = true;
     inline static uint8_t KNN = 10;
