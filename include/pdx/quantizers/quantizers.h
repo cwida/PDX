@@ -52,7 +52,9 @@ public:
     using QUANTIZED_QUERY_TYPE = QuantizedVectorType_t<q>;
     alignas(64) inline static int32_t scaled_query[4096];
     alignas(64) inline static int32_t dim_clip_value[4096];
+    //alignas(64) inline static int32_t dim_clip_positions[4096];
     alignas(64) inline static QUANTIZED_QUERY_TYPE quantized_query[4096];
+
     LEPQuantizer(){
         lep_exponent = 1000;
         if constexpr (q == Quantization::U8){

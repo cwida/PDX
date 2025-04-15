@@ -73,7 +73,7 @@ class BaseIndexPDXIVF:
             #     if left_to_write != 0:
             #         partition.blocks.append(data[partition.indices[already_written:], :])
             # else:  # Variable block size
-            if _type == 'pdx-4' and use_lep:
+            if (_type == 'pdx-4' or _type == 'pdx-v4-h') and use_lep:
                 # TODO: Call to LEP class to determine exponent, FOR base, and bit-width
                 pre_data = data[partition.indices, :]
                 if lep_bw == 7:
@@ -159,6 +159,23 @@ class BaseIndexPDXIVF:
                 for p in range(len(self.partitions[i].blocks)):
                     if _type == 'pdx':
                         data.extend(self.partitions[i].blocks[p].tobytes("F"))  # PDX
+                    elif _type == 'pdx-v4-h':
+                        h_dims = int(self.ndim * 0.75)
+                        v_dims = self.ndim - h_dims
+                        assert h_dims % 4 == 0
+                        assert v_dims % 4 == 0
+                        assert h_dims > v_dims
+                        assert v_dims % 64 == 0
+                        assert v_dims % 128 == 0
+                        tmp_block = self.partitions[i].blocks[p][:, :v_dims]
+                        rows, _ = tmp_block.shape
+                        pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
+                        lep_bw = kwargs.get('lep_bw', 8)
+                        if lep_bw == 8 or lep_bw == 7:  # Vertical Dimensions
+                            data.extend(pdx_4_block.tobytes("C"))
+                        # Horizontal block (rest)
+                        pdx_64_block = self.partitions[i].blocks[p][:, v_dims:].reshape(rows, -1, 64).transpose(1, 0, 2).reshape(-1)
+                        data.extend(pdx_64_block.tobytes("C"))
                     elif _type == 'pdx-4':
                         tmp_block = self.partitions[i].blocks[p]
                         rows, _ = tmp_block.shape
@@ -199,7 +216,7 @@ class BaseIndexPDXIVF:
                         data.extend(self.partitions[i].blocks[p][:, delta_d:].tobytes("C"))
         for i in range(self.num_partitions):
             data.extend(self.partitions[i].indices.tobytes("C"))
-        if _type == 'pdx-4' and kwargs.get('lep', False):
+        if (_type == 'pdx-4' or _type == 'pdx-v4-h') and kwargs.get('lep', False):
             for i in range(self.num_partitions):
                 data.extend(self.partitions[i].for_bases.tobytes("C"))
         data.extend(self.means.tobytes("C"))

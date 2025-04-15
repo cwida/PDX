@@ -46,8 +46,7 @@ int main(int argc, char *argv[]) {
         PDX::IndexPDXIVF<PDX::F32> pdx_data = PDX::IndexPDXIVF<PDX::F32>();
         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf");
         float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-matrix");
-        Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
-        matrix = matrix.inverse();
+        Eigen::MatrixXf matrix = Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
         NUM_QUERIES = 1000; //((uint32_t *)query)[0];
         float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN) + "_norm");
@@ -74,14 +73,14 @@ int main(int argc, char *argv[]) {
                     BenchmarkUtils::VerifyResult<true, PDX::F32>(recalls, result, KNN, int_ground_truth, l);
                 }
             }
-            for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
-                for (size_t l = 0; l < NUM_QUERIES; ++l) {
-                    searcher.Search(query + l * pdx_data.num_dimensions, KNN);
-                    runtimes[j + l * NUM_MEASURE_RUNS] = {
-                            searcher.end_to_end_clock.accum_time
-                    };
-                }
-            }
+//            for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
+//                for (size_t l = 0; l < NUM_QUERIES; ++l) {
+//                    searcher.Search(query + l * pdx_data.num_dimensions, KNN);
+//                    runtimes[j + l * NUM_MEASURE_RUNS] = {
+//                            searcher.end_to_end_clock.accum_time
+//                    };
+//                }
+//            }
             float real_selectivity = 1 - SELECTIVITY_THRESHOLD;
             BenchmarkMetadata results_metadata = {
                     dataset,
