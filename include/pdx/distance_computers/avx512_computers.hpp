@@ -155,9 +155,6 @@ public:
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
             size_t num_dimensions){
-        __m512i d2_i32_low_vec = _mm512_setzero_si512();
-        __m512i d2_i32_high_vec = _mm512_setzero_si512();
-        __m512i const zeros_vec = _mm512_setzero_si512();
         __m512i d2_i32_vec = _mm512_setzero_si512();
         __m512i a_u8_vec, b_u8_vec, d_u8_vec;
 

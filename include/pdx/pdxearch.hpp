@@ -5,6 +5,7 @@
 #include <cassert>
 #include <algorithm>
 #include <array>
+#include <xmmintrin.h>
 #include "pdx/common.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/quantizers/quantizers.h"
@@ -235,8 +236,8 @@ protected:
 
     // On the first bucket, we do a full scan (we do not prune vectors)
     void Start(const QUANTIZED_VECTOR_TYPE *__restrict query, const DATA_TYPE * data, const size_t n_vectors, uint32_t k, const uint32_t * vector_indices) {
-        //processed_bytes += n_vectors * pdx_data.num_dimensions;
-        //start_bytes += n_vectors * pdx_data.num_dimensions;
+        processed_bytes += n_vectors * pdx_data.num_dimensions;
+        start_bytes += n_vectors * pdx_data.num_dimensions;
         ResetPruningDistances(n_vectors);
         // Vertical part
         distance_computer::Vertical(query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions, pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
@@ -299,8 +300,8 @@ protected:
             size_t last_dimension_to_fetch = std::min(current_dimension_idx + DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx],
                                                       pdx_data.num_vertical_dimensions);
                                                       //pdx_data.num_dimensions);
-            //warmup_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
-            //processed_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
+            warmup_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
+            processed_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
             if (dimension_order == SEQUENTIAL){
                 distance_computer::Vertical(query, data, n_vectors, n_vectors, current_dimension_idx,
                                                                      last_dimension_to_fetch, pruning_distances,
@@ -337,15 +338,21 @@ protected:
                         current_horizontal_dimension < pdx_data.num_horizontal_dimensions
         ) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
-            //prune_bytes += 64 * cur_n_vectors_not_pruned;
-            //processed_bytes += 64 * cur_n_vectors_not_pruned;
+            prune_bytes += 64 * cur_n_vectors_not_pruned;
+            processed_bytes += 64 * cur_n_vectors_not_pruned;
+            size_t offset_data = (pdx_data.num_vertical_dimensions * n_vectors) +
+                                 (current_horizontal_dimension * n_vectors);
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
-                size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
-                                  (current_horizontal_dimension * n_vectors) +
-                                  (v_idx * 64);
+                size_t data_pos = offset_data + (v_idx * 64);
+                __builtin_prefetch(data + data_pos, 0, 3);
+            }
+            size_t offset_query = pdx_data.num_vertical_dimensions + current_horizontal_dimension;
+            for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+                size_t v_idx = pruning_positions[vector_idx];
+                size_t data_pos = offset_data + (v_idx * 64);
                 pruning_distances[v_idx] += distance_computer::Horizontal(
-                        query + pdx_data.num_vertical_dimensions + current_horizontal_dimension,
+                        query + offset_query,
                         data + data_pos,
                         64
                 );
@@ -381,8 +388,8 @@ protected:
             size_t last_dimension_to_test_idx = std::min(current_vertical_dimension + 64,
                                                          (size_t)pdx_data.num_vertical_dimensions);
 //            size_t last_dimension_to_test_idx = std::min(current_dimension_idx + 4, pdx_data.num_dimensions);
-            //prune_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
-            //processed_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
+            prune_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
+            processed_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
             if (dimension_order == SEQUENTIAL){
                 distance_computer::VerticalPruning(query, data, cur_n_vectors_not_pruned,
                                                                            n_vectors, current_vertical_dimension,
@@ -590,19 +597,19 @@ public:
         quant.ScaleQuery(quant.transformed_raw_query);
         quant.PrepareQuery(first_vectorgroup.for_bases);
         Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
-        //total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
+        total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             quant.PrepareQuery(vectorgroup.for_bases);
-            //total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;
+            total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;
             Warmup(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
-        //std::cout << total_bytes << "," << processed_bytes << "," << start_bytes << "," << warmup_bytes << "," << prune_bytes << "\n";
+        std::cout << total_bytes << "," << processed_bytes << "," << start_bytes << "," << warmup_bytes << "," << prune_bytes << "\n";
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif
