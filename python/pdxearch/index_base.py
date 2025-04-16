@@ -126,7 +126,18 @@ class BaseIndexPDXIVF:
                 # Always using np.uint8
                 for_data = for_data.astype(dtype=np.uint8)
                 partition.for_bases = for_bases
-                partition.blocks.append(for_data)
+                # Tight blocks of 64, reintroducing them for uint8
+                if kwargs.get('blockify', False):
+                    left_to_write = partition.num_embeddings
+                    already_written = 0
+                    while left_to_write > PDXConstants.PDX_VECTOR_SIZE:
+                        partition.blocks.append(for_data[already_written: already_written + PDXConstants.PDX_VECTOR_SIZE, :])
+                        already_written += PDXConstants.PDX_VECTOR_SIZE
+                        left_to_write -= PDXConstants.PDX_VECTOR_SIZE
+                    if left_to_write != 0:
+                        partition.blocks.append(for_data[already_written:, :])
+                else:
+                    partition.blocks.append(for_data)
             else:
                 partition.blocks.append(data[partition.indices, :])
             if not use_original_centroids:
