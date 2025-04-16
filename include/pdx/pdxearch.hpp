@@ -73,6 +73,8 @@ protected:
             256, 512, 1024, 2048, 4096
     };
 
+    size_t H_DIM_SIZE = 128;
+
     size_t cur_subgrouping_size_idx {0};
     size_t total_embeddings {0};
 
@@ -241,15 +243,15 @@ protected:
         // Vertical part
         distance_computer::Vertical(query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions, pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
         // Horizontal part
-        for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension+=64) {
+        for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension+=H_DIM_SIZE) {
             for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
                 size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
                                 (horizontal_dimension * n_vectors) +
-                                  (vector_idx * 64);
+                                  (vector_idx * H_DIM_SIZE);
                 pruning_distances[vector_idx] += distance_computer::Horizontal(
                         query + pdx_data.num_vertical_dimensions + horizontal_dimension,
                         data + data_pos,
-                        64
+                        H_DIM_SIZE
                 );
             }
         }
@@ -258,8 +260,8 @@ protected:
             if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
                 for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
                     size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
-                                      ((horizontal_dimension / 64) * 64 * n_vectors) +
-                                      (vector_idx * 64) + (horizontal_dimension % 64);
+                                      ((horizontal_dimension / H_DIM_SIZE) * H_DIM_SIZE * n_vectors) +
+                                      (vector_idx * H_DIM_SIZE) + (horizontal_dimension % H_DIM_SIZE);
                     pruning_distances[vector_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
                     pruning_distances[vector_idx] += quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
                 }
@@ -337,41 +339,41 @@ protected:
                         current_horizontal_dimension < pdx_data.num_horizontal_dimensions
         ) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
-            //prune_bytes += 64 * cur_n_vectors_not_pruned;
-            //processed_bytes += 64 * cur_n_vectors_not_pruned;
+            //prune_bytes += H_DIM_SIZE * cur_n_vectors_not_pruned;
+            //processed_bytes += H_DIM_SIZE * cur_n_vectors_not_pruned;
             size_t offset_data = (pdx_data.num_vertical_dimensions * n_vectors) +
                                  (current_horizontal_dimension * n_vectors);
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
-                size_t data_pos = offset_data + (v_idx * 64);
+                size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
                 __builtin_prefetch(data + data_pos, 0, 3);
             }
             size_t offset_query = pdx_data.num_vertical_dimensions + current_horizontal_dimension;
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
-                size_t data_pos = offset_data + (v_idx * 64);
+                size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
                 pruning_distances[v_idx] += distance_computer::Horizontal(
                         query + offset_query,
                         data + data_pos,
-                        64
+                        H_DIM_SIZE
                 );
             }
             // Clipping (TODO: This looks horrible)
-            for (size_t horizontal_dimension = current_horizontal_dimension; horizontal_dimension < current_horizontal_dimension + 64; horizontal_dimension++) {
+            for (size_t horizontal_dimension = current_horizontal_dimension; horizontal_dimension < current_horizontal_dimension + H_DIM_SIZE; horizontal_dimension++) {
                 if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
                     for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                         size_t v_idx = pruning_positions[vector_idx];
                         size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
                                           (current_horizontal_dimension * n_vectors) +
-                                          (v_idx * 64) + (horizontal_dimension % 64);
+                                          (v_idx * H_DIM_SIZE) + (horizontal_dimension % H_DIM_SIZE);
                         pruning_distances[v_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
                         pruning_distances[v_idx] += quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
                     }
                 }
             }
             // end of clipping
-            current_horizontal_dimension += 64;
-            current_dimension_idx += 64;
+            current_horizontal_dimension += H_DIM_SIZE;
+            current_dimension_idx += H_DIM_SIZE;
             if (is_positional_pruning) GetPruningThreshold(k, heap);
             assert(current_dimension_idx == current_vertical_dimension + current_horizontal_dimension);
             //std::cout << current_dimension_idx << " -> " << current_vertical_dimension + current_horizontal_dimension << "\n";
@@ -384,7 +386,7 @@ protected:
                 ) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
             // TODO: ADD variable fetching size back in
-            size_t last_dimension_to_test_idx = std::min(current_vertical_dimension + 64,
+            size_t last_dimension_to_test_idx = std::min(current_vertical_dimension + H_DIM_SIZE,
                                                          (size_t)pdx_data.num_vertical_dimensions);
 //            size_t last_dimension_to_test_idx = std::min(current_dimension_idx + 4, pdx_data.num_dimensions);
             //prune_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
@@ -400,8 +402,8 @@ protected:
                                                                           last_dimension_to_test_idx, pruning_distances,
                                                                           pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
             }
-            current_dimension_idx = std::min(current_dimension_idx+64, pdx_data.num_dimensions);
-            current_vertical_dimension = std::min((uint32_t)current_vertical_dimension+64, pdx_data.num_vertical_dimensions);
+            current_dimension_idx = std::min(current_dimension_idx+H_DIM_SIZE, (size_t)pdx_data.num_dimensions);
+            current_vertical_dimension = std::min((uint32_t)(current_vertical_dimension+H_DIM_SIZE), pdx_data.num_vertical_dimensions);
             //std::cout << current_dimension_idx << " -> " << current_vertical_dimension + current_horizontal_dimension << "\n";
             assert(current_dimension_idx == current_vertical_dimension + current_horizontal_dimension);
             if (is_positional_pruning) GetPruningThreshold(k, heap);

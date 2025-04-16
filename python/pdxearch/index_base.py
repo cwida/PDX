@@ -171,10 +171,12 @@ class BaseIndexPDXIVF:
                         rows, _ = tmp_block.shape
                         pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
                         lep_bw = kwargs.get('lep_bw', 8)
+                        h_dims_block = kwargs.get('h_dims_block', 64)
+                        assert h_dims % h_dims_block == 0
                         if lep_bw == 8 or lep_bw == 7:  # Vertical Dimensions
                             data.extend(pdx_4_block.tobytes("C"))
                         # Horizontal block (rest)
-                        pdx_64_block = self.partitions[i].blocks[p][:, v_dims:].reshape(rows, -1, 64).transpose(1, 0, 2).reshape(-1)
+                        pdx_64_block = self.partitions[i].blocks[p][:, v_dims:].reshape(rows, -1, h_dims_block).transpose(1, 0, 2).reshape(-1)
                         data.extend(pdx_64_block.tobytes("C"))
                     elif _type == 'pdx-4':
                         tmp_block = self.partitions[i].blocks[p]
