@@ -43,8 +43,8 @@ int main(int argc, char *argv[]) {
             continue;
         }
         PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::Quantization::U8>();
-        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-u7-v4-h64-ivf");
-        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u7-v4-h64-matrix");
+        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-u7-v4-h128-ivf");
+        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u7-v4-h128-matrix");
 //         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-u7x4-ivf");
 //         float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-u7-matrix");
         Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> matrix = Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
