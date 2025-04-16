@@ -5,6 +5,8 @@
 #include <cassert>
 #include <algorithm>
 #include <array>
+#include <unordered_map>
+#include <unordered_set>
 #include "pdx/common.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/quantizers/quantizers.h"
@@ -68,15 +70,17 @@ protected:
     // Evaluating the pruning threshold is so fast that we can allow smaller fetching sizes
     // to avoid more data access. Super useful in architectures with low bandwidth at L3/DRAM like Intel SPR
     static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[24] = {
-            4, 8, 8, 12, 16, 16, 32, 32, 32, 32,
+            4, 4, 8, 8, 8, 16, 16, 32, 32, 32, 32,
             64, 64, 64, 64, 128, 128, 128, 128, 256,
-            256, 512, 1024, 2048, 4096
+            256, 512, 1024, 2048
     };
 
-    size_t H_DIM_SIZE = 128;
+    size_t H_DIM_SIZE = 64;
 
     size_t cur_subgrouping_size_idx {0};
     size_t total_embeddings {0};
+    //inline static std::unordered_map<size_t, size_t> when_is_pruned{};
+    //inline static std::unordered_set<size_t> when_is_pruned_exist{};
 
     // Debugging
     size_t warmup_bytes = 0;
@@ -129,11 +133,14 @@ protected:
     };
 
     virtual void EvaluatePruningPredicateOnPositionsArray(size_t n_vectors){
-        //std::cout << "Pruning threshold at " << current_dimension_idx << ": " << pruning_threshold << "\n";
         n_vectors_not_pruned = 0;
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
             pruning_positions[n_vectors_not_pruned] = pruning_positions[vector_idx];
             n_vectors_not_pruned += pruning_distances[pruning_positions[vector_idx]] < pruning_threshold;
+            //if (pruning_distances[pruning_positions[vector_idx]] >= pruning_threshold && (when_is_pruned_exist.find(pruning_positions[vector_idx]) == when_is_pruned_exist.end())){
+            //    when_is_pruned[current_dimension_idx]++;
+            //    when_is_pruned_exist.insert(pruning_positions[vector_idx]);
+            //}
         }
     };
 
@@ -148,6 +155,10 @@ protected:
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
             pruning_positions[n_vectors_not_pruned] = vector_idx;
             n_vectors_not_pruned += pruning_distances[vector_idx] < pruning_threshold;
+            //if (pruning_distances[vector_idx] >= pruning_threshold && (when_is_pruned_exist.find(vector_idx) == when_is_pruned_exist.end())){
+            //    when_is_pruned[current_dimension_idx]++;
+            //    when_is_pruned_exist.insert(vector_idx);
+            //}
         }
     };
 
@@ -322,13 +333,11 @@ protected:
 
     // We scan only the not-yet pruned vectors
     void Prune(const QUANTIZED_VECTOR_TYPE *__restrict query, const DATA_TYPE *__restrict data, const size_t n_vectors, uint32_t k, std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t> &heap) {
+        //when_is_pruned_exist.clear();
         GetPruningThreshold(k, heap);
         InitPositionsArray(n_vectors);
         size_t cur_n_vectors_not_pruned = 0;
         // To count all bytes that went to the PRUNE phase
-//        std::cout << "NOT PRUNED: " << n_vectors_not_pruned << " out of " << n_vectors << "\n";
-//        std::cout << "next to take:" << DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx] << "\n";
-//        std::cout << "at:" << current_dimension_idx << "\n";
         // prune_bytes += (pdx_data.num_dimensions - current_dimension_idx) * n_vectors_not_pruned;
         // GO THROUGH THE HORIZONTAL DIMENSIONS (possibly) AT THE MIDDLE OF THE VERTICAL ONES
         size_t current_vertical_dimension = current_dimension_idx;
@@ -376,7 +385,6 @@ protected:
             current_dimension_idx += H_DIM_SIZE;
             if (is_positional_pruning) GetPruningThreshold(k, heap);
             assert(current_dimension_idx == current_vertical_dimension + current_horizontal_dimension);
-            //std::cout << current_dimension_idx << " -> " << current_vertical_dimension + current_horizontal_dimension << "\n";
             EvaluatePruningPredicateOnPositionsArray(cur_n_vectors_not_pruned);
         }
         // GO THROUGH THE REST IN THE VERTICAL
@@ -385,7 +393,7 @@ protected:
                 current_vertical_dimension < pdx_data.num_vertical_dimensions
                 ) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
-            // TODO: ADD variable fetching size back in
+            // TODO: ADD variable fetching size back in instead of H_DIM_SIZE
             size_t last_dimension_to_test_idx = std::min(current_vertical_dimension + H_DIM_SIZE,
                                                          (size_t)pdx_data.num_vertical_dimensions);
 //            size_t last_dimension_to_test_idx = std::min(current_dimension_idx + 4, pdx_data.num_dimensions);
@@ -404,7 +412,6 @@ protected:
             }
             current_dimension_idx = std::min(current_dimension_idx+H_DIM_SIZE, (size_t)pdx_data.num_dimensions);
             current_vertical_dimension = std::min((uint32_t)(current_vertical_dimension+H_DIM_SIZE), pdx_data.num_vertical_dimensions);
-            //std::cout << current_dimension_idx << " -> " << current_vertical_dimension + current_horizontal_dimension << "\n";
             assert(current_dimension_idx == current_vertical_dimension + current_horizontal_dimension);
             if (is_positional_pruning) GetPruningThreshold(k, heap);
             EvaluatePruningPredicateOnPositionsArray(cur_n_vectors_not_pruned);
@@ -424,6 +431,7 @@ protected:
             } else {
                 current_distance = distances[index];
             }
+            //when_is_pruned[current_dimension_idx]++;
             if (heap.size() < k || current_distance < heap.top().distance) {
                 KNNCandidate_t embedding{};
                 embedding.distance = current_distance;
@@ -614,6 +622,10 @@ public:
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif
+        //std::ofstream outfile("./pruning-histogram-u8-k10.txt");
+        //for (const auto& [key, value] : when_is_pruned) {
+        //    outfile << key << "," << value << "\n";
+        //}
         return BuildResultSet(k);
     }
 
@@ -625,15 +637,15 @@ public:
         start_bytes = 0;
         prune_bytes = 0;
         warmup_bytes = 0;
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
         alignas(64) float query[pdx_data.num_dimensions];
         // TODO: The query transformer should be given somewhere
         // Here I am doing this to support BSA, and now I am ignoring PDX bond actually
         // But this depends on the dataset and query. So it should be a parameter
         // This would also be the case in other calls of Search
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         if constexpr (std::is_same_v<distance_computer, DistanceComputer<NEGATIVE_L2, F32>>){
             PreprocessQuery(raw_query, query);
         } else {
