@@ -104,6 +104,7 @@ public:
         num_dimensions = ((uint32_t *) input)[0];
         num_horizontal_dimensions = (uint32_t)(num_dimensions * 0.75);
         num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
+        // TODO: UNCOMMENT WHEN GOING BACK TO FULL VERTICAL
 //        num_vertical_dimensions = num_dimensions;
 //        num_horizontal_dimensions = 0;
         std::cout << "Vertical dims: " << num_vertical_dimensions << "\n";
