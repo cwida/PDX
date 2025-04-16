@@ -131,30 +131,55 @@ public:
             size_t end_dimension,
             DISTANCE_TYPE * distances_p
     ){
-        uint32x4_t res[16];
-        // Load initial values
-        for (size_t i = 0; i < 16; ++i) {
-            res[i] = vdupq_n_u32(0);
-        }
-        // Compute L2
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
-            uint8x8_t vals = vld1_u8(&query[dimension_idx]);
-            uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
-            uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
             size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
-            for (int i = 0; i < 16; ++i) { // total: 64 vectors * 4 dimensions each (at 1 byte per value = 2048-bits)
-                // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
-                uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 16]);
-                uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
-                // TODO: RE ADD
-                //res[i] = vdotq_u32(res[i], diff_u8, diff_u8);
+            for (size_t vector_idx = 0; vector_idx < 64; ++vector_idx) {
+                /*
+                uint32x2_t res = vdup_n_s32(0);
+                // Not needed
+                //result = vld1_lane_s32(&distances_p[vector_idx], result, 0);
+                uint8x8_t vec2_u8 = vld1_u8(&data[offset_to_dimension_start + (vector_idx * 4)]);
+                uint8x8_t diff_u8 = vabd_u8(vec1_u8, vec2_u8);
+                res = vdot_u32(res, diff_u8, diff_u8);
+                distances_p[vector_idx] += vget_lane_u32(res, 0);
+                */
+                // I am sure I will have 4 dims
+                // L2
+                int to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
+                int to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
+                int to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
+                int to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
+                distances_p[vector_idx] += (to_multiply_a * to_multiply_a) +
+                                           (to_multiply_b * to_multiply_b) +
+                                           (to_multiply_c * to_multiply_c) +
+                                           (to_multiply_d * to_multiply_d);
+
             }
         }
-        // Store results back
-        for (int i = 0; i < 16; ++i) {
-            vst1q_u32(&distances_p[i * 4], res[i]);
-        }
+//        uint32x4_t res[16];
+//        // Load initial values
+//        for (size_t i = 0; i < 16; ++i) {
+//            res[i] = vdupq_n_u32(0);
+//        }
+//        // Compute L2
+//        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
+//            uint32_t dimension_idx = dim_idx;
+//            uint8x8_t vals = vld1_u8(&query[dimension_idx]);
+//            uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+//            uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
+//            size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
+//            for (int i = 0; i < 16; ++i) { // total: 64 vectors * 4 dimensions each (at 1 byte per value = 2048-bits)
+//                // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+//                uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 16]);
+//                uint8x16_t diff_u8 = vabdq_u8(vec1_u8, vec2_u8);
+//                res[i] = vdotq_u32(res[i], diff_u8, diff_u8);
+//            }
+//        }
+//        // Store results back
+//        for (int i = 0; i < 16; ++i) {
+//            vst1q_u32(&distances_p[i * 4], res[i]);
+//        }
     }
 
     static DISTANCE_TYPE HorizontalPruning(

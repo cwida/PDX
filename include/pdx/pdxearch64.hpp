@@ -1,5 +1,5 @@
-#ifndef PDX_PDXEARCH_HPP
-#define PDX_PDXEARCH_HPP
+#ifndef PDX_PDXEARCH64_HPP
+#define PDX_PDXEARCH64_HPP
 
 #include <queue>
 #include <cassert>
@@ -21,7 +21,7 @@ namespace PDX {
  * Implements our algorithm for vertical pruning
  ******************************************************************/
 template<Quantization q=F32, class quantizer=LEPQuantizer<q>, class distance_computer=DistanceComputer<L2, q>>
-class PDXearch: public ::VectorSearcher<q> {
+class PDXearch64: public ::VectorSearcher<q> {
 public:
     using DISTANCES_TYPE = DistanceType_t<q>;
     using QUANTIZED_VECTOR_TYPE = QuantizedVectorType_t<q>;
@@ -33,7 +33,7 @@ public:
 
     quantizer quant;
 
-    PDXearch(
+    PDXearch64(
             INDEX_TYPE &data_index,
             size_t ivf_nprobe,
             int position_prune_distance,
@@ -101,9 +101,9 @@ protected:
     // slightly reduces the performance of PDXearch. We are still investigating why.
     static constexpr uint16_t PDX_VECTOR_SIZE = 64;
     alignas(64) inline static DISTANCES_TYPE distances[PDX_VECTOR_SIZE]; // Used in full scans (no pruning)
-    alignas(64) inline static DISTANCES_TYPE pruning_distances[10240]; // TODO: Use dynamic arrays. Buckets with more than 10k vectors (rare) overflow
+    alignas(64) inline static DISTANCES_TYPE pruning_distances[64]; // TODO: Use dynamic arrays. Buckets with more than 10k vectors (rare) overflow
 
-    alignas(64) inline static uint32_t pruning_positions[10240];
+    alignas(64) inline static uint32_t pruning_positions[64];
 
     std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t> best_k_centroids{};
 
@@ -247,12 +247,18 @@ protected:
     }
 
     // On the first bucket, we do a full scan (we do not prune vectors)
-    void Start(const QUANTIZED_VECTOR_TYPE *__restrict query, const DATA_TYPE * data, const size_t n_vectors, uint32_t k, const uint32_t * vector_indices) {
+    template<bool FULL_BLOCK=false>
+    void Start(const QUANTIZED_VECTOR_TYPE *__restrict query, const DATA_TYPE * data, size_t n_vectors, uint32_t k, const uint32_t * vector_indices) {
         //processed_bytes += n_vectors * pdx_data.num_dimensions;
         //start_bytes += n_vectors * pdx_data.num_dimensions;
         ResetPruningDistances(n_vectors);
         // Vertical part
-        distance_computer::Vertical(query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions, pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
+        if constexpr (FULL_BLOCK){
+            n_vectors = PDX_VECTOR_SIZE;
+            distance_computer::VerticalBlock(query, data, 0, pdx_data.num_vertical_dimensions, pruning_distances);
+        } else {
+            distance_computer::Vertical(query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions, pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
+        }
         // Horizontal part
         for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension+=H_DIM_SIZE) {
             for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
@@ -293,12 +299,22 @@ protected:
             size_t index = indices_sorted[idx];
             embedding.index = vector_indices[index];
             embedding.distance = pruning_distances[index];
-            this->best_k.push(embedding);
+            if (this->best_k.size() < k || embedding.distance < this->best_k.top().distance) {
+                if (this->best_k.size() >= k) {
+                    this->best_k.pop();
+                }
+                this->best_k.push(embedding);
+            }
+            // this->best_k.push(embedding);
         }
     }
 
     // On the warmup phase, we keep scanning dimensions until the amount of not-yet pruned vectors is low
-    void Warmup(const QUANTIZED_VECTOR_TYPE *__restrict query, const DATA_TYPE * data, const size_t n_vectors, uint32_t k, float tuples_threshold, std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t> &heap) {
+    template<bool FULL_BLOCK=false>
+    void Warmup(const QUANTIZED_VECTOR_TYPE *__restrict query, const DATA_TYPE * data, size_t n_vectors, uint32_t k, float tuples_threshold, std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t> &heap) {
+        if constexpr(FULL_BLOCK){
+            n_vectors = PDX_VECTOR_SIZE;
+        }
         current_dimension_idx = 0;
         cur_subgrouping_size_idx = 0;
         size_t tuples_needed_to_exit = std::ceil(1.0 * tuples_threshold * n_vectors);
@@ -315,9 +331,14 @@ protected:
             //warmup_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
             //processed_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
             if (dimension_order == SEQUENTIAL){
-                distance_computer::Vertical(query, data, n_vectors, n_vectors, current_dimension_idx,
-                                                                     last_dimension_to_fetch, pruning_distances,
-                                                                     pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
+                if constexpr (FULL_BLOCK){
+                    distance_computer::VerticalBlock(query, data, current_dimension_idx,
+                                                last_dimension_to_fetch, pruning_distances);
+                } else {
+                    distance_computer::Vertical(query, data, n_vectors, n_vectors, current_dimension_idx,
+                                                last_dimension_to_fetch, pruning_distances,
+                                                pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
+                }
             } else {
                 distance_computer::VerticalReordered(query, data, n_vectors, n_vectors, current_dimension_idx,
                                                                     last_dimension_to_fetch, pruning_distances,
@@ -595,27 +616,55 @@ public:
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
         }
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
         // PDXearch core
         current_dimension_idx = 0;
+        size_t skip_block_size = PDX_VECTOR_SIZE * pdx_data.num_dimensions;
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         quant.ScaleQuery(quant.transformed_raw_query);
         quant.PrepareQuery(first_vectorgroup.for_bases);
-        Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
-        //total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
+        // START
+        size_t fv_num_complete_blocks = std::floor(1.0 * first_vectorgroup.num_embeddings / PDX_VECTOR_SIZE);
+        size_t fv_remainder = first_vectorgroup.num_embeddings % PDX_VECTOR_SIZE;
+        uint8_t * fv_vg_data_p = first_vectorgroup.data;
+        uint32_t * fv_vg_indices_p = first_vectorgroup.indices;
+        for (size_t block_id = 0; block_id < fv_num_complete_blocks; block_id++){
+            Start<true>(quant.quantized_query, fv_vg_data_p, PDX_VECTOR_SIZE, k, fv_vg_indices_p);
+            fv_vg_data_p += skip_block_size;
+            fv_vg_indices_p += PDX_VECTOR_SIZE;
+        }
+        if (fv_remainder){
+            Start<false>(quant.quantized_query, fv_vg_data_p, fv_remainder, k, fv_vg_indices_p);
+        }
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
+        total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
+            total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;
             quant.PrepareQuery(vectorgroup.for_bases);
-            //total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;
-            Warmup(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
-            Prune(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
-            if (n_vectors_not_pruned){
-                MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
+            size_t num_complete_blocks = std::floor(1.0 * vectorgroup.num_embeddings / PDX_VECTOR_SIZE);
+            size_t remainder = vectorgroup.num_embeddings % PDX_VECTOR_SIZE;
+            uint8_t * vg_data_p = vectorgroup.data;
+            uint32_t * vg_indices_p = vectorgroup.indices;
+            for (size_t block_id = 0; block_id < num_complete_blocks; block_id++){
+                Warmup<true>(quant.quantized_query, vg_data_p, PDX_VECTOR_SIZE, k, selectivity_threshold, this->best_k);
+                Prune(quant.quantized_query, vg_data_p, PDX_VECTOR_SIZE, k, this->best_k);
+                if (n_vectors_not_pruned){
+                    MergeIntoHeap<true>(vg_indices_p, n_vectors_not_pruned, k, this->best_k);
+                }
+                vg_data_p += skip_block_size;
+                vg_indices_p += PDX_VECTOR_SIZE;
+            }
+            if (remainder){
+                Warmup(quant.quantized_query, vg_data_p, remainder, k, selectivity_threshold, this->best_k);
+                Prune(quant.quantized_query, vg_data_p, remainder, k, this->best_k);
+                if (n_vectors_not_pruned){
+                    MergeIntoHeap<true>(vg_indices_p, n_vectors_not_pruned, k, this->best_k);
+                }
             }
         }
         //std::cout << total_bytes << "," << processed_bytes << "," << start_bytes << "," << warmup_bytes << "," << prune_bytes << "\n";
