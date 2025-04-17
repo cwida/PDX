@@ -582,11 +582,11 @@ public:
         // For now I will not take into account the preprocessing query time
         // because RaBitQ cheats a bit by doing all the queries at once
         GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
-        // TODO: This should probably not be evaluated here
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
         this->end_to_end_clock.Tic();
 #endif
+        // TODO: This should probably not be evaluated here
         if (pdx_data.is_ivf) {
             if (ivf_nprobe == 0){
                 vectorgroups_to_visit = pdx_data.num_vectorgroups;
