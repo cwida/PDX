@@ -41,17 +41,6 @@ public:
         __m256i y_vec1_u8;
         __m256i y_diff_u8;
         uint32_t * query_grouped = (uint32_t *)query;
-       // if constexpr (!SKIP_PRUNED){
-        __m512i opt_res[256];
-        size_t complete_groups_of_16 = n_vectors / 16;
-        size_t complete_index_of_16 = 16 * complete_groups_of_16;
-        size_t cur_group_of_16 = 0;
-        //}
-        if constexpr (!SKIP_PRUNED){
-            for (size_t z = 0; z < complete_groups_of_16; ++z) {
-                opt_res[z] = _mm512_load_si512(&distances_p[z * 16]);
-            }
-        }
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -64,20 +53,12 @@ public:
                 uint32_t query_value = query_grouped[dimension_idx / 4];
                 // And then broadcast it to the register
                 vec1_u8 = _mm512_set1_epi32(query_value);
-                cur_group_of_16 = 0;
-                for (; i + 16 <= complete_index_of_16; i+=16) {
-                    // WORKING CODE
+                for (; i + 16 <= n_vectors; i+=16) {
                     // Read 64 bytes of data (64 values) with 4 dimensions of 16 vectors
-//                    res = _mm512_load_si512(&distances_p[i]);
-//                    vec2_u8 = _mm512_loadu_si512(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
-//                    diff_u8 = _mm512_or_si512(_mm512_subs_epu8(vec1_u8, vec2_u8), _mm512_subs_epu8(vec2_u8, vec1_u8));
-//                    _mm512_store_epi32(&distances_p[i], _mm512_dpbusds_epi32(res, diff_u8, diff_u8));
-
-                    // NEW CODE WITH "OPTIMIZED" LOADS
+                    res = _mm512_load_si512(&distances_p[i]);
                     vec2_u8 = _mm512_loadu_si512(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
                     diff_u8 = _mm512_or_si512(_mm512_subs_epu8(vec1_u8, vec2_u8), _mm512_subs_epu8(vec2_u8, vec1_u8));
-                    opt_res[cur_group_of_16] = _mm512_dpbusds_epi32(opt_res[cur_group_of_16], diff_u8, diff_u8);
-                    cur_group_of_16++;
+                    _mm512_store_epi32(&distances_p[i], _mm512_dpbusds_epi32(res, diff_u8, diff_u8));
                 }
                 y_vec1_u8 = _mm256_set1_epi32(query_value);
                 for (; i + 8 <= n_vectors; i+=8) {
@@ -104,11 +85,6 @@ public:
                                            (to_multiply_d * to_multiply_d);
             }
             // TODO: I can prune here (?)
-        }
-        if constexpr (!SKIP_PRUNED){
-            for (int z = 0; z < complete_groups_of_16; ++z) {
-                _mm512_store_epi32(&distances_p[z * 16], opt_res[z]);
-            }
         }
         size_t group = start_dimension;
         size_t loop_c = 0;
