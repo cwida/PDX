@@ -253,18 +253,18 @@ protected:
         //start_bytes += n_vectors * pdx_data.num_dimensions;
         ResetPruningDistances(n_vectors);
         // Vertical part
-#ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Tic();
-#endif
+//#ifdef BENCHMARK_TIME
+//        this->end_to_end_clock.Tic();
+//#endif
         if constexpr (FULL_BLOCK){
             n_vectors = PDX_VECTOR_SIZE;
             distance_computer::VerticalBlock(query, data, 0, pdx_data.num_vertical_dimensions, pruning_distances);
         } else {
             distance_computer::Vertical(query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions, pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
         }
-#ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Toc();
-#endif
+//#ifdef BENCHMARK_TIME
+//        this->end_to_end_clock.Toc();
+//#endif
         // Horizontal part
         for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension+=H_DIM_SIZE) {
             for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
