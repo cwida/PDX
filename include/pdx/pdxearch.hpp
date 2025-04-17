@@ -252,6 +252,9 @@ protected:
         //start_bytes += n_vectors * pdx_data.num_dimensions;
         ResetPruningDistances(n_vectors);
         // Vertical part
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Tic();
+#endif
         distance_computer::Vertical(query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions, pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value);
         // Horizontal part
         for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension+=H_DIM_SIZE) {
@@ -278,6 +281,9 @@ protected:
                 }
             }
         }
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
         // end of horizontal part
         size_t max_possible_k = std::min((size_t) k, n_vectors);
         std::vector<size_t> indices_sorted;
@@ -604,11 +610,11 @@ public:
         quant.PrepareQuery(first_vectorgroup.for_bases);
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
-        this->end_to_end_clock.Tic();
+        //this->end_to_end_clock.Tic();
 #endif
         Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
 #ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Toc();
+        //this->end_to_end_clock.Toc();
 #endif
         //total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {

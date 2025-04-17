@@ -253,6 +253,9 @@ protected:
         //start_bytes += n_vectors * pdx_data.num_dimensions;
         ResetPruningDistances(n_vectors);
         // Vertical part
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Tic();
+#endif
         if constexpr (FULL_BLOCK){
             n_vectors = PDX_VECTOR_SIZE;
             distance_computer::VerticalBlock(query, data, 0, pdx_data.num_vertical_dimensions, pruning_distances);
@@ -284,6 +287,9 @@ protected:
                 }
             }
         }
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
         // end of horizontal part
         size_t max_possible_k = std::min((size_t) k, n_vectors);
         std::vector<size_t> indices_sorted;
@@ -630,7 +636,7 @@ public:
         uint32_t * fv_vg_indices_p = first_vectorgroup.indices;
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
-        this->end_to_end_clock.Tic();
+        //this->end_to_end_clock.Tic();
 #endif
         for (size_t block_id = 0; block_id < fv_num_complete_blocks; block_id++){
             Start<true>(quant.quantized_query, fv_vg_data_p, PDX_VECTOR_SIZE, k, fv_vg_indices_p);
@@ -641,7 +647,7 @@ public:
             Start<false>(quant.quantized_query, fv_vg_data_p, fv_remainder, k, fv_vg_indices_p);
         }
 #ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Toc();
+        //this->end_to_end_clock.Toc();
 #endif
         total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
