@@ -54,8 +54,8 @@ public:
     }
 
     void PreprocessQuery(float *raw_query, float * query) override {
-        memcpy((void *) query, (void *) raw_query, this->pdx_data.num_dimensions * sizeof(QUANTIZED_VECTOR_TYPE));
-        //Multiply(raw_query, query, this->pdx_data.num_dimensions);
+        //memcpy((void *) query, (void *) raw_query, this->pdx_data.num_dimensions * sizeof(QUANTIZED_VECTOR_TYPE));
+        Multiply(raw_query, query, this->pdx_data.num_dimensions);
     }
 
 private:
