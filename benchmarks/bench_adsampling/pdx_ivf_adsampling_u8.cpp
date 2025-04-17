@@ -54,6 +54,14 @@ int main(int argc, char *argv[]) {
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
+
+        Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> q_matrix = Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(query, 1000, pdx_data.num_dimensions);
+        TicToc tt = TicToc();
+        tt.Tic();
+        Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> t_queries = q_matrix * matrix;
+        tt.Toc();
+        std::cout << 1.0 * tt.accum_time / 1000 << "microseconds\n";
+
         uint8_t lep_exponent_idx = BenchmarkUtils::PDX_EXPONENTS[dataset];
         int lep_exponent = BenchmarkUtils::POW_10[lep_exponent_idx];
 
@@ -74,13 +82,13 @@ int main(int argc, char *argv[]) {
             float recalls = 0;
             if (VERIFY_RESULTS) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
-                    auto result = searcher.Search(query + l * pdx_data.num_dimensions, KNN);
+                    auto result = searcher.Search(t_queries.data() + l * pdx_data.num_dimensions, KNN);
                     BenchmarkUtils::VerifyResult<true, PDX::U8>(recalls, result, KNN, int_ground_truth, l);
                 }
             }
             for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
-                    searcher.Search(query + l * pdx_data.num_dimensions, KNN);
+                    searcher.Search(t_queries.data() + l * pdx_data.num_dimensions, KNN);
                     runtimes[j + l * NUM_MEASURE_RUNS] = {
                             searcher.end_to_end_clock.accum_time
                     };
