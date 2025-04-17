@@ -53,7 +53,7 @@ public:
                 uint32_t query_value = query_grouped[dimension_idx / 4];
                 // And then broadcast it to the register
                 vec1_u8 = _mm512_set1_epi32(query_value);
-                for (; i <= n_vectors - 16; i+=16) {
+                for (; i + 16 <= n_vectors; i+=16) {
                     // Read 64 bytes of data (64 values) with 4 dimensions of 16 vectors
                     res = _mm512_load_si512(&distances_p[i]);
                     vec2_u8 = _mm512_loadu_si512(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
@@ -61,7 +61,7 @@ public:
                     _mm512_store_epi32(&distances_p[i], _mm512_dpbusds_epi32(res, diff_u8, diff_u8));
                 }
                 y_vec1_u8 = _mm256_set1_epi32(query_value);
-                for (; i <= n_vectors - 8; i+=8) {
+                for (; i + 8 <= n_vectors; i+=8) {
                     // Read 32 bytes of data (32 values) with 4 dimensions of 8 vectors
                     y_res = _mm256_load_epi32(&distances_p[i]);
                     y_vec2_u8 = _mm256_loadu_epi8(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
