@@ -142,7 +142,7 @@ public:
                 // Hence, the [sign] properties of the second operand is ignored
                 // As results will never be negative, it can be stored on res[i] without issues
                 // and it saturates to MAX_INT
-                _mm512_dpbusds_epi32(res[i], diff_u8, diff_u8);
+                res[i] = _mm512_dpbusds_epi32(res[i], diff_u8, diff_u8);
             }
         }
         // Store results back

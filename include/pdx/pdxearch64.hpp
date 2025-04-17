@@ -616,6 +616,10 @@ public:
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
         }
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         // PDXearch core
         current_dimension_idx = 0;
         size_t skip_block_size = PDX_VECTOR_SIZE * pdx_data.num_dimensions;
@@ -636,10 +640,6 @@ public:
         if (fv_remainder){
             Start<false>(quant.quantized_query, fv_vg_data_p, fv_remainder, k, fv_vg_indices_p);
         }
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
         total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
