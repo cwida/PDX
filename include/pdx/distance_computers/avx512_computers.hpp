@@ -124,7 +124,7 @@ public:
         uint32_t * query_grouped = (uint32_t *)query;
         // Load 64 initial values
         for (size_t i = 0; i < 4; ++i) {
-            res[i] = _mm512_load_epi32(&distances_p[i * 16]);
+            res[i] = _mm512_load_si512(&distances_p[i * 16]);
         }
         // Compute L2
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
