@@ -1,8 +1,8 @@
 #ifndef PDX_ADSAMPLING_U8_64_HPP
 #define PDX_ADSAMPLING_U8_64_HPP
 
-#include "pdx/pdxearch64.hpp"
-#include <Eigen/Eigen/Dense>
+#include "pdx/prototopyes/pdxearch64.hpp"
+#include "Eigen/Eigen/Dense"
 #include <utility>
 
 namespace PDX {
