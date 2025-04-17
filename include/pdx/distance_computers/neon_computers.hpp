@@ -50,7 +50,7 @@ public:
 //            if constexpr (!SKIP_PRUNED){
 //                uint8x16_t idx = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
 //                uint8x16_t vec1_u8 = vqtbl1q_u8(vcombine_u8(vals, vals), idx);
-//                for (; i <= n_vectors - 4; i+=4) {
+//                for (; i + 4 <= n_vectors; i+=4) {
 //                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
 //                    uint32x4_t res = vld1q_u32(&distances_p[i]);
 //                    uint8x16_t vec2_u8 = vld1q_u8(&data[offset_to_dimension_start + i * 4]); // This 4 is because everytime I read 4 dimensions
