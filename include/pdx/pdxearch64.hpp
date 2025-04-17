@@ -616,10 +616,6 @@ public:
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
         }
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
         // PDXearch core
         current_dimension_idx = 0;
         size_t skip_block_size = PDX_VECTOR_SIZE * pdx_data.num_dimensions;
@@ -632,6 +628,10 @@ public:
         size_t fv_remainder = first_vectorgroup.num_embeddings % PDX_VECTOR_SIZE;
         uint8_t * fv_vg_data_p = first_vectorgroup.data;
         uint32_t * fv_vg_indices_p = first_vectorgroup.indices;
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         for (size_t block_id = 0; block_id < fv_num_complete_blocks; block_id++){
             Start<true>(quant.quantized_query, fv_vg_data_p, PDX_VECTOR_SIZE, k, fv_vg_indices_p);
             fv_vg_data_p += skip_block_size;
@@ -640,6 +640,9 @@ public:
         if (fv_remainder){
             Start<false>(quant.quantized_query, fv_vg_data_p, fv_remainder, k, fv_vg_indices_p);
         }
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
         total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
@@ -668,9 +671,6 @@ public:
             }
         }
         //std::cout << total_bytes << "," << processed_bytes << "," << start_bytes << "," << warmup_bytes << "," << prune_bytes << "\n";
-#ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Toc();
-#endif
         //std::ofstream outfile("./pruning-histogram-u8-k10.txt");
         //for (const auto& [key, value] : when_is_pruned) {
         //    outfile << key << "," << value << "\n";

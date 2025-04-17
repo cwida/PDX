@@ -595,17 +595,21 @@ public:
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
         }
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
+
         // PDXearch core
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         quant.ScaleQuery(quant.transformed_raw_query);
         quant.PrepareQuery(first_vectorgroup.for_bases);
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
         //total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
@@ -619,9 +623,6 @@ public:
             }
         }
         //std::cout << total_bytes << "," << processed_bytes << "," << start_bytes << "," << warmup_bytes << "," << prune_bytes << "\n";
-#ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Toc();
-#endif
         //std::ofstream outfile("./pruning-histogram-u8-k10.txt");
         //for (const auto& [key, value] : when_is_pruned) {
         //    outfile << key << "," << value << "\n";
