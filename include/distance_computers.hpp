@@ -397,7 +397,7 @@ simsimd_ip_f32_skylake_cycle:
     }
     if constexpr(ALPHA == PDX::L1){
         float res = 0;
-        for (size_t dimension_idx = 0; i < num_dimensions; ++dimension_idx) {
+        for (size_t dimension_idx = 0; dimension_idx < num_dimensions; ++dimension_idx) {
             float tmp = vector1[dimension_idx] - vector2[dimension_idx];
             res += std::fabs(tmp);
         }
