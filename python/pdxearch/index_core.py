@@ -1,6 +1,9 @@
 import faiss
 import numpy as np
 
+from multiprocessing import cpu_count
+faiss.omp_set_num_threads(cpu_count() // 2)
+
 #
 # Wrapper of FAISS FlatIVF index
 # TODO: Support more distance metrics
