@@ -577,15 +577,14 @@ public:
         warmup_bytes = 0;
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
-        quant.NormalizeQuery(raw_query);
-        PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        if (!pdx_data.is_normalized) {
+            PreprocessQuery(raw_query, quant.transformed_raw_query);
+        } else {
+            quant.NormalizeQuery(raw_query);
+            PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        }
         // For now I will not take into account the preprocessing query time
-        // because RaBitQ cheats a bit by doing all the queries at once
         GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
         // TODO: This should probably not be evaluated here
         if (pdx_data.is_ivf) {
             if (ivf_nprobe == 0){
@@ -605,7 +604,10 @@ public:
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
         }
-
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         // PDXearch core
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];
@@ -645,15 +647,7 @@ public:
         prune_bytes = 0;
         warmup_bytes = 0;
         alignas(64) float query[pdx_data.num_dimensions];
-        // TODO: The query transformer should be given somewhere
-        // Here I am doing this to support BSA, and now I am ignoring PDX bond actually
-        // But this depends on the dataset and query. So it should be a parameter
-        // This would also be the case in other calls of Search
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
-        if constexpr (std::is_same_v<distance_computer, DistanceComputer<NEGATIVE_L2, F32>>){
+        if (!pdx_data.is_normalized) {
             PreprocessQuery(raw_query, query);
         } else {
             quant.NormalizeQuery(raw_query);
@@ -681,6 +675,10 @@ public:
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
         }
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         // PDXearch core
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];
@@ -714,8 +712,12 @@ public:
         this->end_to_end_clock.Tic();
 #endif
         // TODO: Not all queries will need this step. What if raw data is uint8?
-        quant.NormalizeQuery(raw_query);
-        quant.ScaleQuery(quant.normalized_query);
+        if (!pdx_data.is_normalized) {
+            quant.ScaleQuery(raw_query);
+        } else {
+            quant.NormalizeQuery(raw_query);
+            quant.ScaleQuery(quant.normalized_query);
+        }
         quant.PrepareQuery(dummy_for_bases.data());
         // TODO: How to quantize query?
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
@@ -783,8 +785,12 @@ public:
 #endif
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
-        quant.NormalizeQuery(raw_query);
-        PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        if (!pdx_data.is_normalized) {
+            PreprocessQuery(raw_query, quant.transformed_raw_query);
+        } else {
+            quant.NormalizeQuery(raw_query);
+            PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        }
         GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
         // TODO: This should probably not be evaluated here
         if (pdx_data.is_ivf) {
@@ -844,8 +850,12 @@ public:
 #endif
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
-        quant.NormalizeQuery(raw_query);
-        PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        if (!pdx_data.is_normalized) {
+            PreprocessQuery(raw_query, quant.transformed_raw_query);
+        } else {
+            quant.NormalizeQuery(raw_query);
+            PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        }
         GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
         if (pdx_data.is_ivf) {
             if (ivf_nprobe == 0){

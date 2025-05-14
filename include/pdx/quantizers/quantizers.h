@@ -58,13 +58,14 @@ public:
     LEPQuantizer(){
         lep_exponent = 1000;
         if constexpr (q == Quantization::U8){
-//            lep_factor = 1.0;
-//            MAX_VALUE = 255;
-//            SKIP_DECOMP_FACTOR = 1.0;
-            // TODO: U7 needs to clamp to 127
-            lep_factor = 0.5;
-            MAX_VALUE = 127;
+            //lep_factor = 1.0;
+            lep_factor = 1.5;
+            MAX_VALUE = 255;
             SKIP_DECOMP_FACTOR = 1.0;
+            // TODO: U7 needs to clamp to 127
+            // lep_factor = 0.5;
+            // MAX_VALUE = 127;
+            // SKIP_DECOMP_FACTOR = 1.0;
         } else if constexpr (q == Quantization::U4){
             lep_factor = 0.0625;
             MAX_VALUE = 15;

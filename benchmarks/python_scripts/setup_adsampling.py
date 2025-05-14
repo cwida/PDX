@@ -7,7 +7,6 @@ from sklearn import preprocessing
 from sklearn.preprocessing import MinMaxScaler
 
 
-
 def generate_adsampling_ivf(dataset_name: str, _types=('pdx', 'dual'), normalize=True):
     base_idx = BaseIndexPDXIVF(DIMENSIONALITIES[dataset_name], 'l2sq')
     # Core index IVF must exist
@@ -15,7 +14,6 @@ def generate_adsampling_ivf(dataset_name: str, _types=('pdx', 'dual'), normalize
     # Reads the core index created by faiss to generate the PDX index
     base_idx.core_index.index = faiss.read_index(index_path)
     data = read_hdf5_train_data(dataset_name)
-    # if dataset_name == 'msong-420':
     print('Normalizing')
     if normalize:
         data = preprocessing.normalize(data, axis=1, norm='l2')
@@ -37,8 +35,8 @@ def generate_adsampling_ivf(dataset_name: str, _types=('pdx', 'dual'), normalize
 
 if __name__ == "__main__":
     # generate_adsampling_ivf('sift-128-euclidean')
-    generate_adsampling_ivf('openai-1536-angular')
+    # generate_adsampling_ivf('openai-1536-angular')
     # generate_adsampling_ivf('instructorxl-arxiv-768')
     # generate_adsampling_ivf('msong-420')
-    generate_adsampling_ivf('contriever-768')
-    # generate_adsampling_ivf('gist-960-euclidean')
+    # generate_adsampling_ivf('contriever-768')
+    generate_adsampling_ivf('instructorxl-arxiv-768')

@@ -24,9 +24,11 @@ class BaseIndexPDXIVF:
             self,
             ndim: int,
             metric: str,
-            nbuckets: int = 16
+            nbuckets: int = 16,
+            normalize: bool = True
     ):
         self.ndim = ndim
+        self.normalize = normalize
         self.dtype = np.float32
         self.nbuckets = nbuckets
         self.core_index = IVF(ndim, metric, nbuckets)
@@ -110,6 +112,7 @@ class BaseIndexPDXIVF:
                     lep_max = 16
                 else:  # LEP-8
                     pre_data = pre_data * 1000
+                    pre_data = pre_data * 1.5 # TODO: Fix
                     pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
                     for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
                     for_data = pre_data - for_bases
@@ -145,7 +148,7 @@ class BaseIndexPDXIVF:
                 self.centroids = np.append(self.centroids, partition_centroids)
             self.partitions.append(partition)
         self.num_partitions = len(self.partitions)
-        # print(f'LEP-{lep_bw} Compression finished. Found: {exceptions_count} exceptions')
+        print(f'LEP-{lep_bw} Compression finished. Found: {exceptions_count} exceptions')
         self._materialize_index(_type, **kwargs)
 
     # Materialize the index with the given layout
@@ -177,7 +180,6 @@ class BaseIndexPDXIVF:
                         assert v_dims % 4 == 0
                         assert h_dims > v_dims
                         assert v_dims % 64 == 0
-                        assert v_dims % 128 == 0
                         tmp_block = self.partitions[i].blocks[p][:, :v_dims]
                         rows, _ = tmp_block.shape
                         pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
@@ -234,6 +236,7 @@ class BaseIndexPDXIVF:
                 data.extend(self.partitions[i].for_bases.tobytes("C"))
         data.extend(self.means.tobytes("C"))
         is_ivf = True
+        data.extend(self.normalize.to_bytes(1, sys.byteorder))
         data.extend(is_ivf.to_bytes(1, sys.byteorder))
         # Since centroids not many, we store them twice to have a dual layout
         # This is part of our EXPERIMENTAL feature in which we want to do Centroids pruning
@@ -271,9 +274,11 @@ class BaseIndexPDXFlat:
             self,
             ndim: int,
             metric: str,
+            normalize: bool = True,
     ):
         self.ndim = ndim
         self.dtype = np.float32
+        self.normalize = normalize
         self.means: np.array = None
         self.partitions: List[Partition] = []
         self.num_partitions: int = 0
@@ -338,6 +343,7 @@ class BaseIndexPDXFlat:
             data.extend(self.partitions[i].indices.tobytes("C"))
         data.extend(self.means.tobytes("C"))
         is_ivf = False
+        data.extend(self.normalize.to_bytes(1, sys.byteorder))
         data.extend(is_ivf.to_bytes(1, sys.byteorder))
         self.materialized_index = bytes(data)
 

@@ -34,6 +34,7 @@ public:
     std::vector<VECTORGROUP_TYPE> vectorgroups;
     float *means{};
     bool is_ivf{};
+    bool is_normalized{};
     float *centroids{};
     float *centroids_pdx{};
 
@@ -67,6 +68,8 @@ public:
         }
         means = (float *) next_value;
         next_value += sizeof(float) * num_dimensions;
+        is_normalized = ((char *) next_value)[0];
+        next_value += sizeof(char);
         is_ivf = ((char *) next_value)[0];
         next_value += sizeof(char);
         if (is_ivf) {
@@ -90,6 +93,7 @@ public:
     std::vector<Vectorgroup<U8>> vectorgroups;
     float *means{};
     bool is_ivf{};
+    bool is_normalized{};
     float *centroids{};
     float *centroids_pdx{};
 
@@ -134,6 +138,8 @@ public:
         }
         means = (float *) next_value;
         next_value += sizeof(float) * num_dimensions;
+        is_normalized = ((char *) next_value)[0];
+        next_value += sizeof(char);
         is_ivf = ((char *) next_value)[0];
         next_value += sizeof(char);
         if (is_ivf) {
@@ -155,6 +161,7 @@ public:
     std::vector<Vectorgroup<U6>> vectorgroups;
     float *means{};
     bool is_ivf{};
+    bool is_normalized{};
     float *centroids{};
     float *centroids_pdx{};
     size_t BW=6; // in bits
@@ -216,6 +223,8 @@ public:
 //        }
         means = (float *) next_value;
         next_value += sizeof(float) * num_dimensions;
+        is_normalized = ((char *) next_value)[0];
+        next_value += sizeof(char);
         is_ivf = ((char *) next_value)[0];
         next_value += sizeof(char);
         if (is_ivf) {
@@ -238,6 +247,7 @@ public:
     std::vector<VECTORGROUP_TYPE> vectorgroups;
     float *means{};
     bool is_ivf{};
+    bool is_normalized{};
     float *centroids{};
     float *centroids_pdx{};
     size_t BW=4; // in bits
@@ -304,6 +314,8 @@ public:
 //        }
         means = (float *) next_value;
         next_value += sizeof(float) * num_dimensions;
+        is_normalized = ((char *) next_value)[0];
+        next_value += sizeof(char);
         is_ivf = ((char *) next_value)[0];
         next_value += sizeof(char);
         if (is_ivf) {
