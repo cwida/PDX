@@ -66,6 +66,19 @@ public:
 };
 
 template<>
+class DistanceComputer<L2, Quantization::ASYMMETRIC_U8> {
+    using computer = SIMDComputer<L2, ASYMMETRIC_U8>;
+public:
+    constexpr static auto VerticalReorderedPruning = computer::VerticalPruning<true, true>;
+    constexpr static auto VerticalPruning = computer::VerticalPruning<false, true>;
+    constexpr static auto VerticalReordered = computer::VerticalPruning<true, false>;
+    constexpr static auto Vertical = computer::VerticalPruning<false, false>;
+
+    constexpr static auto VerticalBlock = computer::Vertical;
+    constexpr static auto Horizontal = computer::Horizontal;
+};
+
+template<>
 class DistanceComputer<L2, Quantization::U6> {
     using computer = SIMDComputer<L2, U8>; // TODO: Use a proper computer for U6 that fuse decomp and distance calc
 public:

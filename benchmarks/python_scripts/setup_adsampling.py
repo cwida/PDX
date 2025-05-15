@@ -36,7 +36,7 @@ def generate_adsampling_ivf(dataset_name: str, _types=('pdx', 'dual'), normalize
 if __name__ == "__main__":
     # generate_adsampling_ivf('sift-128-euclidean')
     # generate_adsampling_ivf('openai-1536-angular')
-    # generate_adsampling_ivf('instructorxl-arxiv-768')
+    generate_adsampling_ivf('instructorxl-arxiv-768')
     # generate_adsampling_ivf('msong-420')
     # generate_adsampling_ivf('contriever-768')
-    generate_adsampling_ivf('instructorxl-arxiv-768')
+    # generate_adsampling_ivf('instructorxl-arxiv-768')

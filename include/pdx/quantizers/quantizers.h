@@ -41,7 +41,7 @@ public:
     }
 
     virtual void ScaleQuery(const float * src, int32_t * dst) {};
-    virtual void PrepareQuery(const int32_t * scaled_query, uint8_t *query, const int32_t *for_bases){
+    virtual void PrepareQuery(const int32_t * scaled_query, uint8_t *query, const float *for_bases, const float *scale_factors){
 
     };
 };
@@ -51,13 +51,16 @@ class LEPQuantizer : public Quantizer {
 public:
     using QUANTIZED_QUERY_TYPE = QuantizedVectorType_t<q>;
     alignas(64) inline static int32_t scaled_query[4096];
+    alignas(64) inline static float pre_scaled_query[4096];
     alignas(64) inline static int32_t dim_clip_value[4096];
     //alignas(64) inline static int32_t dim_clip_positions[4096];
     alignas(64) inline static QUANTIZED_QUERY_TYPE quantized_query[4096];
+    alignas(64) inline static float asymmetric_query[4096];
+    alignas(64) inline static float asymmetric_scaled_query[4096];
 
     LEPQuantizer(){
         lep_exponent = 1000;
-        if constexpr (q == Quantization::U8){
+        if constexpr (q == Quantization::U8 || q == Quantization::ASYMMETRIC_U8){
             //lep_factor = 1.0;
             lep_factor = 1.5;
             MAX_VALUE = 255;
@@ -70,9 +73,10 @@ public:
             lep_factor = 0.0625;
             MAX_VALUE = 15;
             SKIP_DECOMP_FACTOR = 0.5;
+        // todo: Since computations happen in the U8 domain, I should just let the query overflow until 255
         } else if constexpr (q == Quantization::U6){
             lep_factor = 0.25;
-            MAX_VALUE = 63;
+            MAX_VALUE = 63; // todo: here
             SKIP_DECOMP_FACTOR = 0.75;
         }
     }
@@ -88,7 +92,9 @@ public:
 
     void ScaleQuery(const float * src) {
         for (size_t i = 0; i < num_dimensions; ++i) {
-            scaled_query[i] = static_cast<int>(std::round(src[i] * lep_exponent * lep_factor));
+            scaled_query[i] = static_cast<int>(std::round(src[i]));
+            pre_scaled_query[i] = src[i];
+            asymmetric_scaled_query[i] = src[i]; // * lep_exponent;// * lep_factor;
         }
     }
 
@@ -108,9 +114,18 @@ public:
     }
 
     // TODO: Separate the neon/avx512 code to somewhere else
-    void PrepareQuery(const int32_t *for_bases){
+    void PrepareQuery(const float *for_bases, const float scale_factor){
+        if constexpr (q == Quantization::ASYMMETRIC_U8) {
+            for (size_t i = 0; i < num_dimensions; ++i) {
+                asymmetric_query[i] = (asymmetric_scaled_query[i] - for_bases[i]) * scale_factor;
+                // if (asymmetric_query[i] < 0) {
+                //     asymmetric_query[i] = 0;
+                // }
+            }
+            return;
+        }
         // TODO: Not multiple of 16/64 in dimensions
-#ifdef __ARM_NEON
+#ifdef __ARM_NEON_DELETELATER
         for (size_t i = 0; i < num_dimensions; i += 16) {
             // Load 8 int32 values in two NEON registers
             int32x4_t sub_a = vld1q_s32(scaled_query + i);
@@ -220,7 +235,7 @@ public:
 #else
         // Seems that in AVX512, this code is equally as performant as the explicit SIMD one
         for (size_t i = 0; i < num_dimensions; ++i){
-                int rounded = (int)(scaled_query[i] - for_bases[i]);
+                int rounded = std::round(((pre_scaled_query[i] - for_bases[i]) * scale_factor));
                 dim_clip_value[i] = rounded;
                 if (rounded > MAX_VALUE || rounded < 0) {
                         quantized_query[i] = 0;

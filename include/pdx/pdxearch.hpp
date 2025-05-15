@@ -92,6 +92,8 @@ protected:
     std::vector<uint32_t> indices_dimensions;
     std::vector<uint32_t> vectorgroups_indices;
 
+    float current_scaling_factor {1.0f};
+
     size_t n_vectors_not_pruned = 0;
 
     DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
@@ -272,15 +274,17 @@ protected:
                 );
             }
         }
-        // Clipping (TODO: This looks horrible)
-        for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension++) {
-            if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
-                for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
-                    size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
-                                      ((horizontal_dimension / H_DIM_SIZE) * H_DIM_SIZE * n_vectors) +
-                                      (vector_idx * H_DIM_SIZE) + (horizontal_dimension % H_DIM_SIZE);
-                    pruning_distances[vector_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
-                    pruning_distances[vector_idx] += quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+        if constexpr (q != Quantization::ASYMMETRIC_U8) {
+            // Clipping (TODO: This looks horrible)
+            for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension++) {
+                if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
+                    for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
+                        size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
+                                          ((horizontal_dimension / H_DIM_SIZE) * H_DIM_SIZE * n_vectors) +
+                                          (vector_idx * H_DIM_SIZE) + (horizontal_dimension % H_DIM_SIZE);
+                        pruning_distances[vector_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+                        pruning_distances[vector_idx] += quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+                    }
                 }
             }
         }
@@ -298,7 +302,10 @@ protected:
             auto embedding = KNNCandidate_t{};
             size_t index = indices_sorted[idx];
             embedding.index = vector_indices[index];
-            embedding.distance = pruning_distances[index];
+            embedding.distance = pruning_distances[index] / current_scaling_factor;
+            //std::cout << pruning_distances[index] << std::endl;
+            //std::cout << current_scaling_factor << std::endl;
+            // std::cout << embedding.distance << std::endl;
             this->best_k.push(embedding);
         }
     }
@@ -373,16 +380,18 @@ protected:
                         H_DIM_SIZE
                 );
             }
-            // Clipping (TODO: This looks horrible)
-            for (size_t horizontal_dimension = current_horizontal_dimension; horizontal_dimension < current_horizontal_dimension + H_DIM_SIZE; horizontal_dimension++) {
-                if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
-                    for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
-                        size_t v_idx = pruning_positions[vector_idx];
-                        size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
-                                          (current_horizontal_dimension * n_vectors) +
-                                          (v_idx * H_DIM_SIZE) + (horizontal_dimension % H_DIM_SIZE);
-                        pruning_distances[v_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
-                        pruning_distances[v_idx] += quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+            if constexpr (q != Quantization::ASYMMETRIC_U8) {
+                // Clipping (TODO: This looks horrible)
+                for (size_t horizontal_dimension = current_horizontal_dimension; horizontal_dimension < current_horizontal_dimension + H_DIM_SIZE; horizontal_dimension++) {
+                    if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
+                        for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+                            size_t v_idx = pruning_positions[vector_idx];
+                            size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
+                                              (current_horizontal_dimension * n_vectors) +
+                                              (v_idx * H_DIM_SIZE) + (horizontal_dimension % H_DIM_SIZE);
+                            pruning_distances[v_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+                            pruning_distances[v_idx] += quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension];
+                        }
                     }
                 }
             }
@@ -430,12 +439,13 @@ protected:
     void MergeIntoHeap(const uint32_t * vector_indices, size_t n_vectors, uint32_t k, std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t> &heap) {
         for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
             size_t index = position_idx;
-            DISTANCES_TYPE current_distance;
+            // DISTANCES_TYPE current_distance;
+            float current_distance;
             if constexpr (IS_PRUNING){
                 index = pruning_positions[position_idx];
-                current_distance = pruning_distances[index];
+                current_distance = pruning_distances[index] / current_scaling_factor;
             } else {
-                current_distance = distances[index];
+                current_distance = distances[index] / current_scaling_factor;
             }
             //when_is_pruned[current_dimension_idx]++;
             if (heap.size() < k || current_distance < heap.top().distance) {
@@ -613,13 +623,15 @@ public:
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         quant.ScaleQuery(quant.transformed_raw_query);
-        quant.PrepareQuery(first_vectorgroup.for_bases);
+        current_scaling_factor = first_vectorgroup.scale_factors[0] * first_vectorgroup.scale_factors[0];
+        quant.PrepareQuery(first_vectorgroup.for_bases, first_vectorgroup.scale_factors[0]);
         Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         //total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
-            quant.PrepareQuery(vectorgroup.for_bases);
+            current_scaling_factor = vectorgroup.scale_factors[0] * vectorgroup.scale_factors[0];
+            quant.PrepareQuery(vectorgroup.for_bases, vectorgroup.scale_factors[0]);
             //total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;
             Warmup(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
@@ -638,6 +650,53 @@ public:
         return BuildResultSet(k);
     }
 
+    // PDXearch: PDX + Pruning
+    template<Quantization Q=q, std::enable_if_t<Q==ASYMMETRIC_U8, int> = 0>
+    std::vector<KNNCandidate_t> Search(float *__restrict raw_query, uint32_t k) {
+        this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
+        size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
+        if (!pdx_data.is_normalized) {
+            PreprocessQuery(raw_query, quant.transformed_raw_query);
+        } else {
+            quant.NormalizeQuery(raw_query);
+            PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        }
+        GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
+        // TODO: This should probably not be evaluated here
+        if (ivf_nprobe == 0){
+            vectorgroups_to_visit = pdx_data.num_vectorgroups;
+        } else {
+            vectorgroups_to_visit = ivf_nprobe;
+        }
+        this->GetVectorgroupsAccessOrderIVF(quant.transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
+
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
+        current_dimension_idx = 0;
+        current_vectorgroup = vectorgroups_indices[0];
+        VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
+        quant.ScaleQuery(quant.transformed_raw_query);
+        current_scaling_factor = first_vectorgroup.scale_factors[0] * first_vectorgroup.scale_factors[0];
+        quant.PrepareQuery(first_vectorgroup.for_bases, first_vectorgroup.scale_factors[0]);
+        Start(quant.asymmetric_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
+        for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
+            current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
+            VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
+            current_scaling_factor = vectorgroup.scale_factors[0] * vectorgroup.scale_factors[0];
+            quant.PrepareQuery(vectorgroup.for_bases, vectorgroup.scale_factors[0]);
+            Warmup(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
+            Prune(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
+            if (n_vectors_not_pruned){
+                MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
+            }
+        }
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
+        return BuildResultSet(k);
+    }
 
     template<Quantization Q=q, std::enable_if_t<Q==F32, int> = 0>
     std::vector<KNNCandidate_t> Search(float *__restrict raw_query, uint32_t k) {
@@ -706,7 +765,8 @@ public:
 
     template<Quantization Q=q, std::enable_if_t<Q==U8, int> = 0>
     std::vector<KNNCandidate_t> LinearScan(float *__restrict raw_query, uint32_t k) {
-        std::vector<int> dummy_for_bases(4096, 0);
+        std::vector<float> dummy_for_bases(4096, 0);
+        std::vector<float> dummy_scale_factors(4096, 0);
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
         this->end_to_end_clock.Tic();
@@ -718,7 +778,7 @@ public:
             quant.NormalizeQuery(raw_query);
             quant.ScaleQuery(quant.normalized_query);
         }
-        quant.PrepareQuery(dummy_for_bases.data());
+        quant.PrepareQuery(dummy_for_bases.data(), dummy_scale_factors);
         // TODO: How to quantize query?
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
@@ -818,7 +878,7 @@ public:
         VECTORGROUP_TYPE & first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
 
         quant.ScaleQuery(quant.transformed_raw_query);
-        quant.PrepareQuery(first_vectorgroup.for_bases);
+        quant.PrepareQuery(first_vectorgroup.for_bases, first_vectorgroup.scale_factors);
         size_t length = first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         quant.Decompress(first_vectorgroup.data, out, length);
         Start(quant.quantized_query, out, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
@@ -827,7 +887,7 @@ public:
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             length = vectorgroup.num_embeddings * pdx_data.num_dimensions;
             quant.Decompress(vectorgroup.data, out, length);
-            quant.PrepareQuery(vectorgroup.for_bases);
+            quant.PrepareQuery(vectorgroup.for_bases, vectorgroup.scale_factors);
             Warmup(quant.quantized_query, out, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.quantized_query, out, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){
@@ -880,12 +940,12 @@ public:
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         quant.ScaleQuery(quant.transformed_raw_query);
-        quant.PrepareQuery(first_vectorgroup.for_bases);
+        quant.PrepareQuery(first_vectorgroup.for_bases, first_vectorgroup.scale_factors);
         Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
-            quant.PrepareQuery(vectorgroup.for_bases);
+            quant.PrepareQuery(vectorgroup.for_bases, vectorgroup.scale_factors);
             Warmup(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){

@@ -14,6 +14,7 @@ class Partition:
         self.num_embeddings = 0
         self.indices = np.array([])
         self.for_bases = np.array([])
+        self.scale_factors = np.array([])
         self.blocks = []
 
 #
@@ -111,11 +112,48 @@ class BaseIndexPDXIVF:
                     lep_min = 0
                     lep_max = 16
                 else:  # LEP-8
-                    pre_data = pre_data * 1000
-                    pre_data = pre_data * 1.5 # TODO: Fix
-                    pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
-                    for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                    # Global scaling
+                    # pre_data = pre_data * 1000
+                    # if (list_id == 0):
+                    #     print(pre_data)
+                    # pre_data = pre_data * 1.5 # TODO: Fix
+                    # pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                    # for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                    # for_data = pre_data - for_bases
+
+                    # Scaling per dimension which mathematically doesnt work
+                    # col_max = pre_data.max(axis=0)
+                    # col_min = pre_data.min(axis=0)
+                    # col_range = col_max - col_min
+                    # scale_factors = np.where(col_range != 0, 255 / col_range, 0)
+                    # for_data = ((pre_data - col_min) * scale_factors).round(decimals=0).astype(dtype=np.int32)
+                    # for_bases = col_min.astype(dtype=np.float32)# .astype(dtype=np.int32)
+
+                    # Scaling per partition which could work
+                    for_bases = np.min(pre_data, axis=0).astype(dtype=np.float32)
                     for_data = pre_data - for_bases
+                    global_min = for_data.min()
+                    global_max = for_data.max()
+                    global_range = global_max - global_min
+                    if global_range == 0:
+                        scale = 0
+                        # print(pre_data)
+                        # print(for_data)
+                        # print(for_bases)
+                        print(f'Only 1 vector in partition {list_id}')
+                    else:
+                        # scale = 255 / global_range
+                        scale = 255 / global_range # 6-bit
+                    for_data = (for_data * scale).round(decimals=0).astype(dtype=np.int32)
+                    scale_factors = np.full(self.ndim, scale, dtype=np.float32)
+                    print(f'Scale for partition {list_id}', scale)
+
+                    # if (list_id == 0):
+                    #     print(for_bases)
+                    #     print(scale_factors)
+                    #     print(col_range)
+                    #     print(for_data)
+                    # for_data = pre_data - for_bases
                     lep_min = 0
                     lep_max = 255
                 if np.any(for_data > lep_max) or np.any(for_data < lep_min):  # TODO: We are assuming data fits in 8-bits
@@ -128,7 +166,8 @@ class BaseIndexPDXIVF:
                     # for_data = np.clip(for_data, None, 255)
                 # Always using np.uint8
                 for_data = for_data.astype(dtype=np.uint8)
-                partition.for_bases = for_bases
+                partition.for_bases = for_bases.astype(dtype=np.float32)
+                partition.scale_factors = scale_factors.astype(dtype=np.float32)
                 # Tight blocks of 64, reintroducing them for uint8
                 if kwargs.get('blockify', False):
                     left_to_write = partition.num_embeddings
@@ -174,12 +213,18 @@ class BaseIndexPDXIVF:
                     if _type == 'pdx':
                         data.extend(self.partitions[i].blocks[p].tobytes("F"))  # PDX
                     elif _type == 'pdx-v4-h':
+                        assert self.ndim % 64 == 0
                         h_dims = int(self.ndim * 0.75)
                         v_dims = self.ndim - h_dims
+                        if v_dims % 64 != 0:
+                            v_dims = round(v_dims / 64) * 64
+                            h_dims = self.ndim - v_dims
                         assert h_dims % 4 == 0
                         assert v_dims % 4 == 0
+                        assert h_dims + v_dims == self.ndim
                         assert h_dims > v_dims
                         assert v_dims % 64 == 0
+                        assert h_dims % 64 == 0
                         tmp_block = self.partitions[i].blocks[p][:, :v_dims]
                         rows, _ = tmp_block.shape
                         pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
@@ -234,6 +279,7 @@ class BaseIndexPDXIVF:
         if (_type == 'pdx-4' or _type == 'pdx-v4-h') and kwargs.get('lep', False):
             for i in range(self.num_partitions):
                 data.extend(self.partitions[i].for_bases.tobytes("C"))
+                data.extend(self.partitions[i].scale_factors.tobytes("C"))
         data.extend(self.means.tobytes("C"))
         is_ivf = True
         data.extend(self.normalize.to_bytes(1, sys.byteorder))

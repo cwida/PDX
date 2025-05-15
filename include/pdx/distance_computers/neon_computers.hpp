@@ -181,53 +181,6 @@ public:
 //        }
     }
 
-    static DISTANCE_TYPE HorizontalPruning(
-            const QUERY_TYPE *__restrict query,
-            const DATA_TYPE *__restrict data,
-            size_t n_vectors,
-            size_t total_vectors,
-            size_t start_dimension,
-            size_t end_dimension,
-            DISTANCE_TYPE * distances_p,
-            const uint32_t * pruning_positions = nullptr,
-            const uint32_t * indices_dimensions = nullptr,
-            const int32_t * dim_clip_value = nullptr
-    ){
-//        for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
-//            size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
-//                              (horizontal_dimension * n_vectors) +
-//                              (vector_idx * 64);
-//            pruning_distances[vector_idx] += Horizontal(
-//                    query + pdx_data.num_vertical_dimensions + horizontal_dimension,
-//                    data + data_pos,
-//                    64,
-//                    quant.dim_clip_value + pdx_data.num_vertical_dimensions + horizontal_dimension
-//            );
-//        }
-//        float32x4_t sum_vec = vdupq_n_f32(0);
-//        size_t i = 0;
-//        size_t j = 0;
-////        for (; i + 16 <= num_dimensions; i += 16) {
-////            uint8x16_t a_vec = vld1q_u8(vector1 + i);
-////            uint8x16_t b_vec = vld1q_u8(vector2 + i);
-////            uint8x16_t d_vec = vabdq_u8(a_vec, b_vec);
-////            sum_vec = vdotq_u32(sum_vec, d_vec, d_vec);
-////        }
-//        DISTANCE_TYPE distance = vaddvq_u32(sum_vec);
-//        for (; i < num_dimensions; ++i) {
-//            int n = (int)query[i] - data[i];
-//            distance += n * n;
-//        }
-//        // Clipping TODO: Move to another function
-////        for (; j < num_dimensions; ++j) {
-////            if (dim_clip_value[j] < 0) {
-////                distance -= 2 * (int)data[j] * dim_clip_value[j];
-////                distance += dim_clip_value[j] * dim_clip_value[j];
-////            }
-////        }
-//        return distance;
-    };
-
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
@@ -473,6 +426,135 @@ public:
         return distance;
     };
 };
+
+template <>
+class SIMDComputer<L2, Quantization::ASYMMETRIC_U8>{
+public:
+    using DISTANCE_TYPE = DistanceType_t<ASYMMETRIC_U8>;
+    using QUERY_TYPE = QuantizedVectorType_t<ASYMMETRIC_U8>;
+    using DATA_TYPE = DataType_t<ASYMMETRIC_U8>;
+
+    // Defer to the scalar kernel
+    template<bool USE_DIMENSIONS_REORDER, bool SKIP_PRUNED>
+    static void VerticalPruning(
+            const QUERY_TYPE *__restrict query,
+            const DATA_TYPE *__restrict data,
+            size_t n_vectors,
+            size_t total_vectors,
+            size_t start_dimension,
+            size_t end_dimension,
+            DISTANCE_TYPE * distances_p,
+            const uint32_t * pruning_positions,
+            const uint32_t * indices_dimensions,
+            const int32_t * dim_clip_value
+    ){
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
+            uint32_t dimension_idx = dim_idx;
+            if constexpr (USE_DIMENSIONS_REORDER){
+                dimension_idx = indices_dimensions[dim_idx];
+            }
+            size_t offset_to_dimension_start = dimension_idx * total_vectors;
+            size_t i = 0;
+            for (; i < n_vectors; ++i) {
+                size_t vector_idx = i;
+                if constexpr (SKIP_PRUNED){
+                    vector_idx = pruning_positions[vector_idx];
+                }
+                // L2
+                float to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
+                float to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
+                float to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
+                float to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
+                distances_p[vector_idx] += (to_multiply_a * to_multiply_a) +
+                                           (to_multiply_b * to_multiply_b) +
+                                           (to_multiply_c * to_multiply_c) +
+                                           (to_multiply_d * to_multiply_d);
+
+            }
+        }
+    }
+
+    // Defer to the scalar kernel
+    static void Vertical(
+            const QUERY_TYPE *__restrict query,
+            const DATA_TYPE *__restrict data,
+            size_t start_dimension,
+            size_t end_dimension,
+            DISTANCE_TYPE * distances_p
+    ){
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
+            size_t dimension_idx = dim_idx;
+            size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
+            for (size_t vector_idx = 0; vector_idx < PDX_VECTOR_SIZE; ++vector_idx) {
+                float to_multiply = query[dimension_idx] - (float)data[offset_to_dimension_start + vector_idx];
+                distances_p[vector_idx] += to_multiply * to_multiply;
+            }
+        }
+    }
+
+    static DISTANCE_TYPE Horizontal(
+            const QUERY_TYPE *__restrict vector1,
+            const DATA_TYPE *__restrict vector2,
+            size_t num_dimensions
+    ){
+        size_t i = 0;
+        DISTANCE_TYPE distance = 0.0;
+        #pragma clang loop vectorize(enable)
+        for (; i < num_dimensions; ++i) {
+            float diff = vector1[i] - (float)vector2[i];
+            distance += diff * diff;
+        }
+        return distance;
+        //
+        // float32x4_t acc0 = vdupq_n_f32(0.0f);
+        // float32x4_t acc1 = vdupq_n_f32(0.0f);
+        // float32x4_t acc2 = vdupq_n_f32(0.0f);
+        // float32x4_t acc3 = vdupq_n_f32(0.0f);
+        //
+        // for (int i = 0; i < num_dimensions; i += 16) {
+        //     // Load 16 floats from vector1
+        //     float32x4_t v1_0 = vld1q_f32(&vector1[i]);
+        //     float32x4_t v1_1 = vld1q_f32(&vector1[i + 4]);
+        //     float32x4_t v1_2 = vld1q_f32(&vector1[i + 8]);
+        //     float32x4_t v1_3 = vld1q_f32(&vector1[i + 12]);
+        //
+        //     // Load 16 uint8_t from vector2 and convert to float32
+        //     uint8x16_t v2_u8 = vld1q_u8(&vector2[i]);
+        //     uint16x8_t v2_u16_low = vmovl_u8(vget_low_u8(v2_u8));
+        //     uint16x8_t v2_u16_high = vmovl_u8(vget_high_u8(v2_u8));
+        //
+        //     uint32x4_t v2_u32_0 = vmovl_u16(vget_low_u16(v2_u16_low));
+        //     uint32x4_t v2_u32_1 = vmovl_u16(vget_high_u16(v2_u16_low));
+        //     uint32x4_t v2_u32_2 = vmovl_u16(vget_low_u16(v2_u16_high));
+        //     uint32x4_t v2_u32_3 = vmovl_u16(vget_high_u16(v2_u16_high));
+        //
+        //     float32x4_t v2_f32_0 = vcvtq_f32_u32(v2_u32_0);
+        //     float32x4_t v2_f32_1 = vcvtq_f32_u32(v2_u32_1);
+        //     float32x4_t v2_f32_2 = vcvtq_f32_u32(v2_u32_2);
+        //     float32x4_t v2_f32_3 = vcvtq_f32_u32(v2_u32_3);
+        //
+        //     // Compute differences
+        //     float32x4_t diff0 = vsubq_f32(v1_0, v2_f32_0);
+        //     float32x4_t diff1 = vsubq_f32(v1_1, v2_f32_1);
+        //     float32x4_t diff2 = vsubq_f32(v1_2, v2_f32_2);
+        //     float32x4_t diff3 = vsubq_f32(v1_3, v2_f32_3);
+        //
+        //     // Accumulate squared differences
+        //     acc0 = vmlaq_f32(acc0, diff0, diff0);
+        //     acc1 = vmlaq_f32(acc1, diff1, diff1);
+        //     acc2 = vmlaq_f32(acc2, diff2, diff2);
+        //     acc3 = vmlaq_f32(acc3, diff3, diff3);
+        // }
+        //
+        // // Sum all accumulators
+        // float32x4_t sum0 = vaddq_f32(acc0, acc1);
+        // float32x4_t sum1 = vaddq_f32(acc2, acc3);
+        // float32x4_t total = vaddq_f32(sum0, sum1);
+        //
+        // return vaddvq_f32(total);
+    };
+};
+
 
 template <>
 class SIMDComputer<NEGATIVE_L2, Quantization::F32>{

@@ -50,7 +50,7 @@ public:
 
     inline void GetPruningThreshold(uint32_t k, std::priority_queue<KNNCandidate_t , std::vector<KNNCandidate_t>, VectorComparator_t> &heap) override {
         float ratio = this->current_dimension_idx == this->pdx_data.num_dimensions ? 1 : ratios[this->current_dimension_idx];
-        this->pruning_threshold = heap.top().distance * ratio;
+        this->pruning_threshold = heap.top().distance * ratio * this->current_scaling_factor;
     }
 
     void PreprocessQuery(float *raw_query, float * query) override {

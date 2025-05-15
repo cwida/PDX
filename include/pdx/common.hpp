@@ -35,7 +35,8 @@ namespace PDX {
         BF,
         U8,
         U6,
-        U4
+        U4,
+        ASYMMETRIC_U8
     };
 
     static constexpr size_t PDX_VECTOR_SIZE = 64;
@@ -44,6 +45,10 @@ namespace PDX {
     template<Quantization q>
     struct DistanceType {
         using type = uint32_t; // default for U8, U6, U4
+    };
+    template<>
+    struct DistanceType<ASYMMETRIC_U8> {
+        using type = float;
     };
     template<>
     struct DistanceType<F32> {
@@ -70,6 +75,10 @@ namespace PDX {
         using type = uint8_t; // default for U8, U6, U4
     };
     template<>
+    struct QuantizedVectorType<ASYMMETRIC_U8> {
+        using type = float;
+    };
+    template<>
     struct QuantizedVectorType<F32> {
         using type = float;
     };
@@ -80,7 +89,8 @@ namespace PDX {
     template<PDX::Quantization q>
     struct KNNCandidate {
         uint32_t index;
-        PDX::DistanceType_t<q> distance;
+        // PDX::DistanceType_t<q> distance;
+        float distance;
     };
 
     template<PDX::Quantization q>
@@ -95,7 +105,8 @@ namespace PDX {
         uint32_t num_embeddings{};
         uint32_t *indices = nullptr;
         uint8_t *data = nullptr;
-        int32_t *for_bases{};
+        float *for_bases{};
+        float *scale_factors{};
     };
 
     template<>
