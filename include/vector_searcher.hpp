@@ -31,7 +31,8 @@ public:
                                                                           data.centroids +
                                                                           vectorgroup_idx *
                                                                           data.num_dimensions,
-                                                                          data.num_dimensions);
+                                                                          data.num_dimensions,
+                                                                          nullptr);
         }
         vectorgroups_indices.resize(data.num_vectorgroups);
         std::iota(vectorgroups_indices.begin(), vectorgroups_indices.end(), 0);

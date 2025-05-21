@@ -36,7 +36,8 @@ namespace PDX {
         U8,
         U6,
         U4,
-        ASYMMETRIC_U8
+        ASYMMETRIC_U8,
+        ASYMMETRIC_LEP_U8
     };
 
     static constexpr size_t PDX_VECTOR_SIZE = 64;
@@ -48,6 +49,10 @@ namespace PDX {
     };
     template<>
     struct DistanceType<ASYMMETRIC_U8> {
+        using type = float;
+    };
+    template<>
+    struct DistanceType<ASYMMETRIC_LEP_U8> {
         using type = float;
     };
     template<>
@@ -76,6 +81,10 @@ namespace PDX {
     };
     template<>
     struct QuantizedVectorType<ASYMMETRIC_U8> {
+        using type = float;
+    };
+    template<>
+    struct QuantizedVectorType<ASYMMETRIC_LEP_U8> {
         using type = float;
     };
     template<>

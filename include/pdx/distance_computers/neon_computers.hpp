@@ -367,7 +367,8 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions,
             const uint32_t * indices_dimensions,
-            const int32_t * dim_clip_value
+            const int32_t * dim_clip_value,
+            const float * scaling_factors
     ){
         size_t dimensions_jump_factor = total_vectors;
         for (size_t dimension_idx = start_dimension; dimension_idx < end_dimension; ++dimension_idx) {
@@ -393,7 +394,8 @@ public:
             const DATA_TYPE *__restrict data,
             size_t start_dimension,
             size_t end_dimension,
-            DISTANCE_TYPE * distances_p
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors
     ){
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
             size_t dimension_idx = dim_idx;
@@ -408,7 +410,8 @@ public:
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
-            size_t num_dimensions
+            size_t num_dimensions,
+            const float * scaling_factors
     ){
         float32x4_t sum_vec = vdupq_n_f32(0);
         size_t i = 0;
@@ -446,7 +449,8 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions,
             const uint32_t * indices_dimensions,
-            const int32_t * dim_clip_value
+            const int32_t * dim_clip_value,
+            const float * scaling_factors
     ){
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
@@ -465,10 +469,10 @@ public:
                 float to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
                 float to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
                 float to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
-                distances_p[vector_idx] += (to_multiply_a * to_multiply_a) +
-                                           (to_multiply_b * to_multiply_b) +
-                                           (to_multiply_c * to_multiply_c) +
-                                           (to_multiply_d * to_multiply_d);
+                distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scaling_factors[dimension_idx]) +
+                                           (to_multiply_b * to_multiply_b * scaling_factors[dimension_idx + 1]) +
+                                           (to_multiply_c * to_multiply_c * scaling_factors[dimension_idx + 2]) +
+                                           (to_multiply_d * to_multiply_d * scaling_factors[dimension_idx + 3]);
 
             }
         }
@@ -480,14 +484,15 @@ public:
             const DATA_TYPE *__restrict data,
             size_t start_dimension,
             size_t end_dimension,
-            DISTANCE_TYPE * distances_p
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors
     ){
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
             size_t dimension_idx = dim_idx;
             size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
             for (size_t vector_idx = 0; vector_idx < PDX_VECTOR_SIZE; ++vector_idx) {
                 float to_multiply = query[dimension_idx] - (float)data[offset_to_dimension_start + vector_idx];
-                distances_p[vector_idx] += to_multiply * to_multiply;
+                distances_p[vector_idx] += to_multiply * to_multiply * scaling_factors[dimension_idx];
             }
         }
     }
@@ -495,14 +500,15 @@ public:
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
-            size_t num_dimensions
+            size_t num_dimensions,
+            const float * scaling_factors
     ){
         size_t i = 0;
         DISTANCE_TYPE distance = 0.0;
         #pragma clang loop vectorize(enable)
         for (; i < num_dimensions; ++i) {
             float diff = vector1[i] - (float)vector2[i];
-            distance += diff * diff;
+            distance += diff * diff * scaling_factors[i];
         }
         return distance;
         //

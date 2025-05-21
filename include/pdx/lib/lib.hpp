@@ -229,19 +229,19 @@ class IndexPDXFlat {
             searcher = std::make_unique<PDXBondSearcher>(index, 0, 0, SEQUENTIAL);
         }
 
-        std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
-            return searcher->LinearScan(q, k);
-        }
+        // std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
+        //     return searcher->LinearScan(q, k);
+        // }
 
         // Serialize return value
-        std::vector<KNNCandidate> _py_Search(const py::array_t<float>& q, uint32_t k) const {
-            auto buf = q.request();  // Get buffer info
-            if (buf.ndim != 1) {
-                throw std::runtime_error("Input should be a 1-D NumPy array");
-            }
-            auto query = static_cast<float*>(buf.ptr);
-            return searcher->LinearScan(query, k);
-        }
+        // std::vector<KNNCandidate> _py_Search(const py::array_t<float>& q, uint32_t k) const {
+        //     auto buf = q.request();  // Get buffer info
+        //     if (buf.ndim != 1) {
+        //         throw std::runtime_error("Input should be a 1-D NumPy array");
+        //     }
+        //     auto query = static_cast<float*>(buf.ptr);
+        //     return searcher->LinearScan(query, k);
+        // }
     };
 
 } // namespace PDX

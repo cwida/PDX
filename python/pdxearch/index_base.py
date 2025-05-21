@@ -14,8 +14,13 @@ class Partition:
         self.num_embeddings = 0
         self.indices = np.array([])
         self.for_bases = np.array([])
+        self.for_bases_exceptions = np.array([])
         self.scale_factors = np.array([])
+        self.scale_factors_exceptions = np.array([])
         self.blocks = []
+        self.exceptions_data = np.array([])
+        self.exceptions_n = 0
+        self.exceptions_pos = np.array([])
 
 #
 # Transformer of the IVFFlat index to the different layouts (Nary, Dual Nary Block, or PDX)
@@ -121,39 +126,84 @@ class BaseIndexPDXIVF:
                     # for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
                     # for_data = pre_data - for_bases
 
-                    # Scaling per dimension which mathematically doesnt work
+                    # Scaling per dimension which needs adjustments on the L2 calculation
                     # col_max = pre_data.max(axis=0)
                     # col_min = pre_data.min(axis=0)
                     # col_range = col_max - col_min
-                    # scale_factors = np.where(col_range != 0, 255 / col_range, 0)
+                    # scale_factors = np.where(col_range != 0, 255 / col_range, 0).astype(dtype=np.float32)
                     # for_data = ((pre_data - col_min) * scale_factors).round(decimals=0).astype(dtype=np.int32)
-                    # for_bases = col_min.astype(dtype=np.float32)# .astype(dtype=np.int32)
-
-                    # Scaling per partition which could work
-                    for_bases = np.min(pre_data, axis=0).astype(dtype=np.float32)
-                    for_data = pre_data - for_bases
-                    global_min = for_data.min()
-                    global_max = for_data.max()
-                    global_range = global_max - global_min
-                    if global_range == 0:
-                        scale = 0
-                        # print(pre_data)
-                        # print(for_data)
-                        # print(for_bases)
-                        print(f'Only 1 vector in partition {list_id}')
-                    else:
-                        # scale = 255 / global_range
-                        scale = 255 / global_range # 6-bit
-                    for_data = (for_data * scale).round(decimals=0).astype(dtype=np.int32)
-                    scale_factors = np.full(self.ndim, scale, dtype=np.float32)
-                    print(f'Scale for partition {list_id}', scale)
-
+                    # for_bases = col_min.astype(dtype=np.float32) # .astype(dtype=np.int32)
                     # if (list_id == 0):
-                    #     print(for_bases)
                     #     print(scale_factors)
-                    #     print(col_range)
-                    #     print(for_data)
+
+                    # Exceptions
+                    col_max = pre_data.max(axis=0)
+                    col_min = pre_data.min(axis=0)
+                    col_range = col_max - col_min
+                    scale_factors_exceptions = np.where(col_range != 0, 255 / col_range, 0).astype(dtype=np.float32)
+                    for_data = ((pre_data - col_min) * scale_factors_exceptions).round(decimals=0).astype(dtype=np.int32)
+                    for_bases_exceptions = col_min.astype(dtype=np.float32) # .astype(dtype=np.int32)
+
+                    exceptions_n = math.ceil(num_list_embeddings * 0.10)
+                    rows, cols = for_data.shape
+                    low_idx = np.argpartition(for_data, exceptions_n, axis=0)[:exceptions_n, :]
+                    high_idx = np.argpartition(for_data, -exceptions_n, axis=0)[-exceptions_n:, :]
+                    low_col_idx = np.arange(cols)[None, :].repeat(exceptions_n, axis=0)
+                    high_col_idx = np.arange(cols)[None, :].repeat(exceptions_n, axis=0)
+
+                    """
+                    exception_indices = 
+                            array([[ 4,  7, 19,  5,  5],
+                                   [ 5,  5,  5, 13,  4],
+                                   [14, 10, 12,  2,  6],
+                                   [ 9,  2, 16, 17, 15],
+                                   [11,  0,  2, 18, 16],
+                                   [19, 15, 17,  7, 18],
+                                   [15,  9,  4,  4,  1],
+                                   [10, 14,  1, 15,  3],
+                                   [ 2, 18,  6, 16, 10],
+                                   [ 7,  8,  7,  9, 11]])
+                    """
+                    exception_indices = np.vstack([low_idx, high_idx])
+                    column_indices = np.tile(np.arange(cols), (exceptions_n + exceptions_n, 1))
+                    """
+                        Matrix indexes at exception_indices
+                    """
+                    for_data_exceptions = for_data[exception_indices, column_indices].copy()
+
+                    # Zero'ing exceptions
+                    for_data[low_idx.ravel(), low_col_idx.ravel()] = 0
+                    for_data[high_idx.ravel(), high_col_idx.ravel()] = 0
+
+                    # Getting new for_bases for data
+                    masked_exceptions = np.where(for_data == 0, np.inf, for_data)
+                    for_bases = np.min(masked_exceptions, axis=0)
+                    rows_masked, cols_masked = np.nonzero(for_data)
+                    for_data[rows_masked, cols_masked] -= for_bases[cols_masked]
+
+                    # Getting new scale factor for n-bits (0-15 -> 4 bits, 0-63 -> 6 bits)
+                    scale_factors_data = np.where(col_range != 0, 15 / col_range, 0).astype(dtype=np.float32)
+                    for_data = (for_data * scale_factors_data).round(decimals=0).astype(dtype=np.int32)
+
+                    # Scaling per partition which is just slightly better than FAISS and ours (global) SQ
+                    # for_bases = np.min(pre_data, axis=0).astype(dtype=np.float32)
                     # for_data = pre_data - for_bases
+                    # global_min = for_data.min()
+                    # global_max = for_data.max()
+                    # global_range = global_max - global_min
+                    # if global_range == 0:
+                    #     scale = 0
+                    #     # print(pre_data)
+                    #     # print(for_data)
+                    #     # print(for_bases)
+                    #     print(f'Only 1 vector in partition {list_id}')
+                    # else:
+                    #     # scale = 255 / global_range
+                    #     scale = 255 / global_range # 6-bit
+                    # for_data = (for_data * scale).round(decimals=0).astype(dtype=np.int32)
+                    # scale_factors = np.full(self.ndim, scale, dtype=np.float32)
+                    # print(f'Scale for partition {list_id}', scale)
+
                     lep_min = 0
                     lep_max = 255
                 if np.any(for_data > lep_max) or np.any(for_data < lep_min):  # TODO: We are assuming data fits in 8-bits
@@ -166,8 +216,16 @@ class BaseIndexPDXIVF:
                     # for_data = np.clip(for_data, None, 255)
                 # Always using np.uint8
                 for_data = for_data.astype(dtype=np.uint8)
+
                 partition.for_bases = for_bases.astype(dtype=np.float32)
-                partition.scale_factors = scale_factors.astype(dtype=np.float32)
+                partition.for_bases_exceptions = for_bases_exceptions.astype(dtype=np.float32)
+
+                partition.scale_factors = scale_factors_data.astype(dtype=np.float32)
+                partition.scale_factors_exceptions = scale_factors_exceptions.astype(dtype=np.float32)
+
+                partition.exceptions_data = for_data_exceptions.astype(dtype=np.uint8)
+                partition.exceptions_n = int(exceptions_n)
+                partition.exceptions_pos = exception_indices.astype(dtype=np.int32)
                 # Tight blocks of 64, reintroducing them for uint8
                 if kwargs.get('blockify', False):
                     left_to_write = partition.num_embeddings
@@ -280,6 +338,14 @@ class BaseIndexPDXIVF:
             for i in range(self.num_partitions):
                 data.extend(self.partitions[i].for_bases.tobytes("C"))
                 data.extend(self.partitions[i].scale_factors.tobytes("C"))
+                if True: # If ENCODE_EXCEPTIONS
+                    data.extend(self.partitions[i].exceptions_n.to_bytes(4, sys.byteorder))
+                    data.extend(self.partitions[i].for_bases_exceptions.tobytes("C"))
+                    data.extend(self.partitions[i].scale_factors_exceptions.tobytes("C"))
+                    # Exceptions data
+                    # TODO: Probably I would need to divide in v and h, and change the layout accordingly
+                    data.extend(self.partitions[i].exceptions_pos.tobytes("F"))
+                    data.extend(self.partitions[i].exceptions_data.tobytes("F"))
         data.extend(self.means.tobytes("C"))
         is_ivf = True
         data.extend(self.normalize.to_bytes(1, sys.byteorder))
