@@ -161,7 +161,7 @@ public:
                 float distance = PDX::DistanceComputer<PDX::DistanceFunction::L2, PDX::Quantization::F32>::Horizontal(
                         partition.data + (vector_idx * delta_d),
                         query.data(),
-                        delta_d);
+                        delta_d, nullptr);
                 distances[cur_point] = distance;
                 cur_point++;
             }

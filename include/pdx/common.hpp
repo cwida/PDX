@@ -125,16 +125,19 @@ namespace PDX {
         float *data = nullptr;
     };
 
-    //template<>
-    //struct VectorgroupLEPX {
-    //    uint32_t num_embeddings{};
-    //    uint32_t *indices = nullptr;
-    //    alignas(8) uint8_t *data = nullptr;
-    //    uint8_t *exceptions{};
-    //    int32_t *for_bases{};
-    //    uint32_t exceptions_n{};
-    //    uint16_t * exceptions_per_dimension{};
-    //};
+    template<>
+    struct Vectorgroup<ASYMMETRIC_LEP_U8> {
+        uint32_t num_embeddings{};
+        uint32_t num_exceptions{};
+        uint32_t *indices = nullptr;
+        uint8_t *data = nullptr;
+        float *for_bases{};
+        float *scale_factors{};
+        float *for_bases_exceptions{};
+        float *scale_factors_exceptions{};
+        uint8_t *data_exceptions = nullptr;
+        uint32_t *exceptions_positions = nullptr;
+    };
 
 };
 

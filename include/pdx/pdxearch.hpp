@@ -257,7 +257,27 @@ protected:
 //#ifdef BENCHMARK_TIME
 //        this->end_to_end_clock.Tic();
 //#endif
-        if constexpr (q != Quantization::ASYMMETRIC_U8) {
+        if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+            distance_computer::Vertical(
+                query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions,
+                pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value,
+                quant.cur_scaling_factors);
+            distance_computer::PatchVertical(
+                query,
+                quant.asymmetric_exceptions_query,
+                pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                0,
+                pdx_data.num_vertical_dimensions,
+                pruning_distances,
+                pruning_positions,
+                indices_dimensions.data(),
+                quant.dim_clip_value,
+                quant.cur_scaling_factors,
+                quant.cur_exceptions_scaling_factors
+            );
+        } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
             distance_computer::Vertical(
                 query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions,
                 pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value,
@@ -274,11 +294,36 @@ protected:
 //#endif
         // Horizontal part
         for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension+=H_DIM_SIZE) {
+            // I don't need to go vector by vector, just patch everything in one go!
+            if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+                distance_computer::PatchVertical(
+                    query,
+                    quant.asymmetric_exceptions_query,
+                    pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                    pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                    pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                    pdx_data.num_vertical_dimensions + horizontal_dimension, // start
+                    pdx_data.num_vertical_dimensions + horizontal_dimension + H_DIM_SIZE, // end
+                    pruning_distances,
+                    pruning_positions,
+                    indices_dimensions.data(),
+                    quant.dim_clip_value,
+                    quant.cur_scaling_factors,
+                    quant.cur_exceptions_scaling_factors
+                );
+            }
             for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
                 size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
                                 (horizontal_dimension * n_vectors) +
                                   (vector_idx * H_DIM_SIZE);
-                if constexpr (q != Quantization::ASYMMETRIC_U8) {
+                if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+                    pruning_distances[vector_idx] += distance_computer::Horizontal(
+                            query + pdx_data.num_vertical_dimensions + horizontal_dimension,
+                            data + data_pos,
+                            H_DIM_SIZE,
+                            quant.cur_scaling_factors + pdx_data.num_vertical_dimensions + horizontal_dimension
+                    );
+                } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
                     pruning_distances[vector_idx] += distance_computer::Horizontal(
                             query + pdx_data.num_vertical_dimensions + horizontal_dimension,
                             data + data_pos,
@@ -296,6 +341,7 @@ protected:
 
             }
         }
+        /*
         if constexpr (q != Quantization::ASYMMETRIC_U8) {
             // Clipping (TODO: This looks horrible)
             for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension++) {
@@ -310,6 +356,7 @@ protected:
                 }
             }
         }
+        */
         // end of horizontal part
         size_t max_possible_k = std::min((size_t) k, n_vectors);
         std::vector<size_t> indices_sorted;
@@ -341,7 +388,6 @@ protected:
         ResetPruningDistances(n_vectors);
         uint32_t n_tuples_to_prune = 0;
         if (!is_positional_pruning) GetPruningThreshold(k, heap);
-
         while (
                 1.0 * n_tuples_to_prune < tuples_needed_to_exit &&
                 current_dimension_idx < pdx_data.num_vertical_dimensions) {
@@ -351,7 +397,27 @@ protected:
             //warmup_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
             //processed_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
             if (dimension_order == SEQUENTIAL){
-                if constexpr (q != Quantization::ASYMMETRIC_U8) {
+                if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+                    distance_computer::Vertical(query, data, n_vectors, n_vectors, current_dimension_idx,
+                                                     last_dimension_to_fetch, pruning_distances,
+                                                     pruning_positions, indices_dimensions.data(), quant.dim_clip_value,
+                                                     quant.cur_scaling_factors);
+                    distance_computer::PatchVertical(
+                        query,
+                        quant.asymmetric_exceptions_query,
+                        pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                        pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                        pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                        current_dimension_idx, // start
+                        last_dimension_to_fetch, // end
+                        pruning_distances,
+                        pruning_positions,
+                        indices_dimensions.data(),
+                        quant.dim_clip_value,
+                        quant.cur_scaling_factors,
+                        quant.cur_exceptions_scaling_factors
+                    );
+                } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
                     distance_computer::Vertical(query, data, n_vectors, n_vectors, current_dimension_idx,
                                                      last_dimension_to_fetch, pruning_distances,
                                                      pruning_positions, indices_dimensions.data(), quant.dim_clip_value,
@@ -403,10 +469,34 @@ protected:
                 __builtin_prefetch(data + data_pos, 0, 3);
             }
             size_t offset_query = pdx_data.num_vertical_dimensions + current_horizontal_dimension;
+            if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+                distance_computer::PatchVertical( // TODO: Patch only on proper positions
+                    query,
+                    quant.asymmetric_exceptions_query,
+                    pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                    pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                    pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                    pdx_data.num_vertical_dimensions + current_horizontal_dimension, // start
+                    pdx_data.num_vertical_dimensions + current_horizontal_dimension + H_DIM_SIZE, // end
+                    pruning_distances,
+                    pruning_positions,
+                    indices_dimensions.data(),
+                    quant.dim_clip_value,
+                    quant.cur_scaling_factors,
+                    quant.cur_exceptions_scaling_factors
+                );
+            }
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
-                if constexpr (q != Quantization::ASYMMETRIC_U8) {
+                if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+                    pruning_distances[v_idx] += distance_computer::Horizontal(
+                            query + offset_query,
+                            data + data_pos,
+                            H_DIM_SIZE,
+                            quant.cur_scaling_factors + offset_query
+                    );
+                } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
                     pruning_distances[v_idx] += distance_computer::Horizontal(
                             query + offset_query,
                             data + data_pos,
@@ -423,6 +513,7 @@ protected:
                 }
 
             }
+            /*
             if constexpr (q != Quantization::ASYMMETRIC_U8) {
                 // Clipping (TODO: This looks horrible)
                 for (size_t horizontal_dimension = current_horizontal_dimension; horizontal_dimension < current_horizontal_dimension + H_DIM_SIZE; horizontal_dimension++) {
@@ -438,6 +529,7 @@ protected:
                     }
                 }
             }
+            */
             // end of clipping
             current_horizontal_dimension += H_DIM_SIZE;
             current_dimension_idx += H_DIM_SIZE;
@@ -458,7 +550,29 @@ protected:
             //prune_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
             //processed_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
             if (dimension_order == SEQUENTIAL){
-                if constexpr (q != Quantization::ASYMMETRIC_U8) {
+                if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+                    distance_computer::VerticalPruning(
+                        query, data, cur_n_vectors_not_pruned,
+                        n_vectors, current_vertical_dimension,
+                        last_dimension_to_test_idx, pruning_distances,
+                        pruning_positions, indices_dimensions.data(), quant.dim_clip_value,
+                        quant.cur_scaling_factors);
+                    distance_computer::PatchVertical( // TODO: Patch only on proper positions
+                        query,
+                        quant.asymmetric_exceptions_query,
+                        pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                        pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                        pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                        current_vertical_dimension, // start
+                        last_dimension_to_test_idx, // end
+                        pruning_distances,
+                        pruning_positions,
+                        indices_dimensions.data(),
+                        quant.dim_clip_value,
+                        quant.cur_scaling_factors,
+                        quant.cur_exceptions_scaling_factors
+                    );
+                } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
                     distance_computer::VerticalPruning(
                         query, data, cur_n_vectors_not_pruned,
                         n_vectors, current_vertical_dimension,
@@ -688,14 +802,20 @@ public:
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         quant.ScaleQuery(quant.transformed_raw_query);
         current_scaling_factor = 1.0f / (first_vectorgroup.scale_factors[0] * first_vectorgroup.scale_factors[0]);
-        quant.PrepareQuery(first_vectorgroup.for_bases, first_vectorgroup.scale_factors[0]);
+        quant.PrepareQuery(
+            first_vectorgroup.for_bases, first_vectorgroup.scale_factors[0],
+            nullptr, nullptr
+        );
         Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         //total_bytes += first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             current_scaling_factor = 1.0f / (vectorgroup.scale_factors[0] * vectorgroup.scale_factors[0]);
-            quant.PrepareQuery(vectorgroup.for_bases, vectorgroup.scale_factors[0]);
+            quant.PrepareQuery(
+                vectorgroup.for_bases, vectorgroup.scale_factors[0],
+                nullptr, nullptr
+                );
             //total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;
             Warmup(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
@@ -708,6 +828,60 @@ public:
         //for (const auto& [key, value] : when_is_pruned) {
         //    outfile << key << "," << value << "\n";
         //}
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
+        return BuildResultSet(k);
+    }
+
+    // PDXearch: PDX + Pruning
+    template<Quantization Q=q, std::enable_if_t<Q==ASYMMETRIC_LEP_U8, int> = 0>
+    std::vector<KNNCandidate_t> Search(float *__restrict raw_query, uint32_t k) {
+        this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
+        size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
+        if (!pdx_data.is_normalized) {
+            PreprocessQuery(raw_query, quant.transformed_raw_query);
+        } else {
+            quant.NormalizeQuery(raw_query);
+            PreprocessQuery(quant.normalized_query, quant.transformed_raw_query);
+        }
+        GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
+        // TODO: This should probably not be evaluated here
+        if (ivf_nprobe == 0){
+            vectorgroups_to_visit = pdx_data.num_vectorgroups;
+        } else {
+            vectorgroups_to_visit = ivf_nprobe;
+        }
+        this->GetVectorgroupsAccessOrderIVF(quant.transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
+
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
+        current_dimension_idx = 0;
+        current_vectorgroup = vectorgroups_indices[0];
+        VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
+        quant.ScaleQuery(quant.transformed_raw_query);
+        current_scaling_factor = 1.0f / first_vectorgroup.scale_factors[0] * first_vectorgroup.scale_factors[0];
+        quant.PrepareQuery(
+            first_vectorgroup.for_bases, first_vectorgroup.scale_factors,
+            first_vectorgroup.for_bases_exceptions, first_vectorgroup.scale_factors_exceptions
+        );
+        Start(quant.asymmetric_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
+        for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
+            current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
+            VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
+            current_scaling_factor = 1.0f / vectorgroup.scale_factors[0] * vectorgroup.scale_factors[0];
+            quant.PrepareQuery(
+                vectorgroup.for_bases, vectorgroup.scale_factors,
+                vectorgroup.for_bases_exceptions, vectorgroup.scale_factors_exceptions
+            );
+            Warmup(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
+            Prune(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
+            if (n_vectors_not_pruned){
+                MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
+            }
+        }
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif
@@ -743,13 +917,19 @@ public:
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         quant.ScaleQuery(quant.transformed_raw_query);
         current_scaling_factor = 1.0f / first_vectorgroup.scale_factors[0] * first_vectorgroup.scale_factors[0];
-        quant.PrepareQuery(first_vectorgroup.for_bases, first_vectorgroup.scale_factors);
+        quant.PrepareQuery(
+            first_vectorgroup.for_bases, first_vectorgroup.scale_factors,
+            nullptr, nullptr
+        );
         Start(quant.asymmetric_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             current_scaling_factor = 1.0f / vectorgroup.scale_factors[0] * vectorgroup.scale_factors[0];
-            quant.PrepareQuery(vectorgroup.for_bases, vectorgroup.scale_factors);
+            quant.PrepareQuery(
+                vectorgroup.for_bases, vectorgroup.scale_factors,
+                nullptr, nullptr
+            );
             Warmup(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){
@@ -842,7 +1022,10 @@ public:
             quant.NormalizeQuery(raw_query);
             quant.ScaleQuery(quant.normalized_query);
         }
-        quant.PrepareQuery(dummy_for_bases.data(), dummy_scale_factors);
+        quant.PrepareQuery(
+            dummy_for_bases.data(), dummy_scale_factors,
+            nullptr, nullptr
+        );
         // TODO: How to quantize query?
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
@@ -942,7 +1125,10 @@ public:
         VECTORGROUP_TYPE & first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
 
         quant.ScaleQuery(quant.transformed_raw_query);
-        quant.PrepareQuery(first_vectorgroup.for_bases, first_vectorgroup.scale_factors);
+        quant.PrepareQuery(
+            first_vectorgroup.for_bases, first_vectorgroup.scale_factors,
+            nullptr, nullptr
+        );
         size_t length = first_vectorgroup.num_embeddings * pdx_data.num_dimensions;
         quant.Decompress(first_vectorgroup.data, out, length);
         Start(quant.quantized_query, out, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
@@ -951,7 +1137,10 @@ public:
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             length = vectorgroup.num_embeddings * pdx_data.num_dimensions;
             quant.Decompress(vectorgroup.data, out, length);
-            quant.PrepareQuery(vectorgroup.for_bases, vectorgroup.scale_factors);
+            quant.PrepareQuery(
+                vectorgroup.for_bases, vectorgroup.scale_factors,
+                nullptr, nullptr
+            );
             Warmup(quant.quantized_query, out, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.quantized_query, out, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){
@@ -1004,12 +1193,18 @@ public:
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         quant.ScaleQuery(quant.transformed_raw_query);
-        quant.PrepareQuery(first_vectorgroup.for_bases, first_vectorgroup.scale_factors);
+        quant.PrepareQuery(
+            first_vectorgroup.for_bases, first_vectorgroup.scale_factors,
+            nullptr, nullptr
+        );
         Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
-            quant.PrepareQuery(vectorgroup.for_bases, vectorgroup.scale_factors);
+            quant.PrepareQuery(
+                vectorgroup.for_bases, vectorgroup.scale_factors,
+                nullptr, nullptr
+            );
             Warmup(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){

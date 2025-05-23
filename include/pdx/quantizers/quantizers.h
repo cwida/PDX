@@ -23,6 +23,7 @@ public:
     alignas(64) float transformed_raw_query[4096]{};
     alignas(64) float normalized_query[4096]{};
     alignas(64) float cur_scaling_factors[4096]{};
+    alignas(64) float cur_exceptions_scaling_factors[4096]{};
 
 public:
     void NormalizeQuery(const float * src) {
@@ -57,6 +58,7 @@ public:
     //alignas(64) inline static int32_t dim_clip_positions[4096];
     alignas(64) inline static QUANTIZED_QUERY_TYPE quantized_query[4096];
     alignas(64) inline static float asymmetric_query[4096];
+    alignas(64) inline static float asymmetric_exceptions_query[4096];
     alignas(64) inline static float asymmetric_scaled_query[4096];
 
     LEPQuantizer(){
@@ -118,14 +120,30 @@ public:
     }
 
     // TODO: Separate the neon/avx512 code to somewhere else
-    void PrepareQuery(const float *for_bases, const float * scale_factors){
+    void PrepareQuery(
+        const float *for_bases,
+        const float *scale_factors,
+        const float *for_bases_exceptions,
+        const float *scale_factors_exceptions
+    ){
         if constexpr (q == Quantization::ASYMMETRIC_U8) {
             for (size_t i = 0; i < num_dimensions; ++i) {
                 cur_scaling_factors[i] = 1 / (scale_factors[i] * scale_factors[i]);
                 asymmetric_query[i] = (asymmetric_scaled_query[i] - for_bases[i]) * scale_factors[i];
-                // if (asymmetric_query[i] < 0) {
-                //     asymmetric_query[i] = 0;
-                // }
+            }
+            return;
+        } else if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+            for (size_t i = 0; i < num_dimensions; ++i) {
+                // Shift1 is from exceptions, shift2 is from data
+                // Scale1 is from exceptions, scale2 is from data
+                float alpha = scale_factors[i] * scale_factors_exceptions[i];
+                float beta = (for_bases_exceptions[i] * alpha) + (for_bases[i] * scale_factors[i]);
+                // For data
+                cur_scaling_factors[i] = 1 / (alpha * alpha);
+                asymmetric_query[i] = (asymmetric_scaled_query[i] * alpha) - beta;
+                // For exceptions
+                cur_exceptions_scaling_factors[i] = 1 / (scale_factors_exceptions[i] * scale_factors_exceptions[i]);
+                asymmetric_exceptions_query[i] = (asymmetric_scaled_query[i] - for_bases_exceptions[i]) * scale_factors_exceptions[i];
             }
             return;
         }

@@ -233,6 +233,102 @@ public:
     }
 };
 
+
+template <>
+class IndexPDXIVF<ASYMMETRIC_LEP_U8> {
+public:
+
+    using VECTORGROUP_TYPE = Vectorgroup<ASYMMETRIC_LEP_U8>;
+
+    uint32_t num_dimensions{};
+    uint32_t num_vectorgroups{};
+    uint32_t num_horizontal_dimensions{};
+    uint32_t num_vertical_dimensions{};
+    std::vector<Vectorgroup<ASYMMETRIC_LEP_U8>> vectorgroups;
+    float *means{};
+    bool is_ivf{};
+    bool is_normalized{};
+    float *centroids{};
+    float *centroids_pdx{};
+
+    void Restore(const std::string &filename) {
+        size_t num_tuples;
+        char *input = (char *) MmapFile8(num_tuples, filename);
+        Load(input);
+    }
+
+    void Load(char *input) {
+        char *next_value = input;
+        num_dimensions = ((uint32_t *) input)[0];
+        num_horizontal_dimensions = (uint32_t)(num_dimensions * 0.75);
+        num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
+        if (num_vertical_dimensions % 64 != 0) {
+            num_vertical_dimensions = static_cast<int>(std::round(num_vertical_dimensions / 64.0)) * 64;
+            num_horizontal_dimensions = num_dimensions - num_vertical_dimensions;
+        }
+        // TODO: UNCOMMENT WHEN GOING BACK TO FULL VERTICAL
+//        num_vertical_dimensions = num_dimensions;
+//        num_horizontal_dimensions = 0;
+        std::cout << "Vertical dims: " << num_vertical_dimensions << "\n";
+        std::cout << "Horizontal dims: " << num_horizontal_dimensions << "\n";
+        next_value += sizeof(uint32_t);
+        num_vectorgroups = ((uint32_t *) next_value)[0];
+        next_value += sizeof(uint32_t);
+        auto *nums_embeddings = (uint32_t *) next_value;
+        next_value += num_vectorgroups * sizeof(uint32_t);
+        vectorgroups.resize(num_vectorgroups);
+        for (size_t i = 0; i < num_vectorgroups; ++i) {
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
+            vectorgroup.num_embeddings = nums_embeddings[i];
+            vectorgroup.data = (uint8_t *) next_value;
+            next_value += sizeof(uint8_t) * vectorgroup.num_embeddings * num_dimensions;
+        }
+        for (size_t i = 0; i < num_vectorgroups; ++i) {
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
+            vectorgroup.indices = (uint32_t *) next_value;
+            next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
+        }
+        // TODO: Should not always load!
+        for (size_t i = 0; i < num_vectorgroups; ++i) {
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
+            vectorgroup.for_bases = (float *) next_value;
+            next_value += sizeof(uint32_t) * num_dimensions;
+            vectorgroup.scale_factors = (float *) next_value;
+            next_value += sizeof(uint32_t) * num_dimensions;
+
+            vectorgroup.num_exceptions = ((uint32_t *) next_value)[0];
+            next_value += sizeof(uint32_t);
+
+            vectorgroup.for_bases_exceptions = (float *) next_value;
+            next_value += sizeof(uint32_t) * num_dimensions;
+
+            vectorgroup.scale_factors_exceptions = (float *) next_value;
+            next_value += sizeof(uint32_t) * num_dimensions;
+
+            if (vectorgroup.num_exceptions == 0) continue;
+
+            vectorgroup.exceptions_positions = (uint32_t *) next_value;
+            next_value += sizeof(uint32_t) * (vectorgroup.num_exceptions * num_dimensions);
+
+            vectorgroup.data_exceptions = (uint8_t *) next_value;
+            next_value += sizeof(uint8_t) * (vectorgroup.num_exceptions * num_dimensions);
+
+        }
+        means = (float *) next_value;
+        next_value += sizeof(float) * num_dimensions;
+        is_normalized = ((char *) next_value)[0];
+        next_value += sizeof(char);
+        is_ivf = ((char *) next_value)[0];
+        next_value += sizeof(char);
+        std::cout << "LOADED" << "\n";
+        if (is_ivf) {
+            centroids = (float *) next_value;
+            next_value += sizeof(float) * num_vectorgroups * num_dimensions;
+            centroids_pdx = (float *) next_value;
+        }
+    }
+};
+
 template <>
 class IndexPDXIVF<U6> {
 public:
