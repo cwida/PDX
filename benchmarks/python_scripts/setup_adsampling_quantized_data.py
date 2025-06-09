@@ -222,7 +222,7 @@ if __name__ == "__main__":
     # generate_u8_vh_ivf('msong-420')
 
     # The real one for symmetric
-    # generate_u8_vh_ivf_symmetric('openai-1536-angular')
+    generate_u8_vh_ivf_symmetric('openai-1536-angular')
     # generate_u8_vh_ivf_symmetric('instructorxl-arxiv-768')
     # generate_u8_vh_ivf_symmetric('gist-960-euclidean')
     # generate_u8_vh_ivf_symmetric('contriever-768')

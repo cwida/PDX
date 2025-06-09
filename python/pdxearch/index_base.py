@@ -135,7 +135,7 @@ class BaseIndexPDXIVF:
                         scale_factors_data = np.full(self.ndim, 1.0, dtype=np.float32)
                         for_data = pre_data - for_bases
                         lep_min = 0
-                        lep_max = 255
+                        lep_max = 127 # TODO: Fix
                         data_norms = np.linalg.norm(pre_data, axis=1)
                     elif not use_exceptions:
 
