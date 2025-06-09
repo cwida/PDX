@@ -464,8 +464,8 @@ public:
 
             // In this asymmetric kernel we cannot advance 64 at a time
             if constexpr (!SKIP_PRUNED){
-                __m512i vec1 = _mm512_broadcast_f32x4(_mm_loadu_ps(reinterpret_cast<const __m128i*>(query + dimension_idx)));
-                __m512i vec_scales = _mm512_broadcast_f32x4(_mm_loadu_ps(reinterpret_cast<const __m128i*>(scaling_factors + dimension_idx)));
+                __m512i vec1 = _mm512_broadcast_f32x4(_mm_loadu_ps(query + dimension_idx));
+                __m512i vec_scales = _mm512_broadcast_f32x4(_mm_loadu_ps(scaling_factors + dimension_idx));
                 for (; i + 16 <= n_vectors; i+=16) {
                     // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
                     __m512 res = _mm512_load_ps(&distances_p[i]); // 16 values at a time
@@ -474,10 +474,11 @@ public:
                     __m512 diff = _mm512_sub_ps(vec1, vec2);
                     __m512 tmp_ = _mm512_mul_ps(diff, diff);
                     res = _mm512_fmadd_ps(tmp_, vec_scales, res);
+                    _mm512_store_ps(&distances_p[i], res);
                     // Cannot use dot-product
                 }
-                // __m512i vec_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(reinterpret_cast<const __m128i*>(query + dimension_idx)));
-                // __m512i vec_scales_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(reinterpret_cast<const __m128i*>(scaling_factors + dimension_idx)));
+                // __m512i vec_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(query + dimension_idx));
+                // __m512i vec_scales_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(scaling_factors + dimension_idx));
                 // for (; i + 8 <= n_vectors; i+=8) {
                 //     // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
                 //     __m256 res = _mm256_load_ps(&distances_p[i]); // 16 values at a time

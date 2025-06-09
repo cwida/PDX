@@ -1,5 +1,5 @@
 #include <pybind11/pybind11.h>
-#include <pdx/lib/lib.hpp>
+// #include <pdx/lib/lib.hpp>
 
 namespace py = pybind11;
 
@@ -11,11 +11,11 @@ PYBIND11_MODULE(compiled, m) {
 
     m.doc() = "A library to do vertical pruned vector similarity search";
 
-    py::class_<PDX::Vectorgroup<PDX::F32>>(m, "Vectorgroup")
-            .def(py::init<>())
-            .def_readwrite("num_embeddings", &PDX::Vectorgroup<PDX::F32>::num_embeddings)
-            .def_readwrite("indices", &PDX::Vectorgroup<PDX::F32>::indices)
-            .def_readwrite("data", &PDX::Vectorgroup<PDX::F32>::data);
+    // py::class_<PDX::Vectorgroup<PDX::F32>>(m, "Vectorgroup")
+    //         .def(py::init<>())
+    //         .def_readwrite("num_embeddings", &PDX::Vectorgroup<PDX::F32>::num_embeddings)
+    //         .def_readwrite("indices", &PDX::Vectorgroup<PDX::F32>::indices)
+    //         .def_readwrite("data", &PDX::Vectorgroup<PDX::F32>::data);
 
     // py::class_<PDX::IndexPDXIVF<PDX::F32>>(m, "IndexPDXIVFFlat")
     //         .def_readwrite("num_dimensions", &PDX::IndexPDXIVF<PDX::F32>::num_dimensions)
