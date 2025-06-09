@@ -31,13 +31,15 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions = nullptr,
             const uint32_t * indices_dimensions = nullptr,
-            const int32_t * dim_clip_value = nullptr
+            const int32_t * dim_clip_value = nullptr,
+            const float * scaling_factors = nullptr
     ){
         // Compute L2
         // TODO: Handle tail in dimension length, for now im not going to worry on that
         // as all the datasets are divisible by 4
         // Todo: template this 4 parameter
         // TODO: Get this distance functions out of here to another folder / file structure
+
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -128,7 +130,8 @@ public:
             const DATA_TYPE *__restrict data,
             size_t start_dimension,
             size_t end_dimension,
-            DISTANCE_TYPE * distances_p
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors = nullptr
     ){
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
@@ -184,7 +187,8 @@ public:
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
-            size_t num_dimensions
+            size_t num_dimensions,
+            const float * scaling_factors = nullptr
     ){
         uint32x4_t sum_vec = vdupq_n_u32(0);
         size_t i = 0;
@@ -222,7 +226,8 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions = nullptr,
             const uint32_t * indices_dimensions = nullptr,
-            const int32_t * dim_clip_value = nullptr
+            const int32_t * dim_clip_value = nullptr,
+            const float * scaling_factors = nullptr
     ){
         // I dont need this because I am doing dot product 4 into 1
         // Maybe it is worth trying doing the lookup and then dot product with a vector of ones.
@@ -337,12 +342,18 @@ public:
             const DATA_TYPE *__restrict data,
             size_t start_dimension,
             size_t end_dimension,
-            DISTANCE_TYPE * distances_p
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors = nullptr
     ){
         // TODO
     }
 
-    static DISTANCE_TYPE Horizontal(const DATA_TYPE *__restrict vector1, const DATA_TYPE *__restrict vector2, size_t num_dimensions){
+    static DISTANCE_TYPE Horizontal(
+        const DATA_TYPE *__restrict vector1,
+        const DATA_TYPE *__restrict vector2,
+        size_t num_dimensions,
+        const float * scaling_factors = nullptr
+    ){
         return 0;
     };
 };
@@ -459,12 +470,24 @@ public:
             }
             size_t offset_to_dimension_start = dimension_idx * total_vectors;
             size_t i = 0;
+#pragma clang loop vectorize(enable)
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
-                if constexpr (SKIP_PRUNED){
+                if constexpr (SKIP_PRUNED) {
                     vector_idx = pruning_positions[vector_idx];
                 }
+
+                // float to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
+                // float to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
+                // float to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
+                // float to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
+                // distances_p[vector_idx] += (to_multiply_a * to_multiply_a) +
+                //                            (to_multiply_b * to_multiply_b) +
+                //                            (to_multiply_c * to_multiply_c) +
+                //                            (to_multiply_d * to_multiply_d);
+
                 // L2
+                // Auto-vectorizes correctly in NEON
                 float to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
                 float to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
                 float to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
@@ -473,6 +496,17 @@ public:
                                            (to_multiply_b * to_multiply_b * scaling_factors[dimension_idx + 1]) +
                                            (to_multiply_c * to_multiply_c * scaling_factors[dimension_idx + 2]) +
                                            (to_multiply_d * to_multiply_d * scaling_factors[dimension_idx + 3]);
+
+
+                // IP Idea
+                // float to_multiply_a = query[dimension_idx] * data[offset_to_dimension_start + (vector_idx * 4)];
+                // float to_multiply_b = query[dimension_idx + 1] * data[offset_to_dimension_start + (vector_idx * 4) + 1];
+                // float to_multiply_c = query[dimension_idx + 2] * data[offset_to_dimension_start + (vector_idx * 4) + 2];
+                // float to_multiply_d = query[dimension_idx + 3] * data[offset_to_dimension_start + (vector_idx * 4) + 3];
+                // distances_p[vector_idx] += (to_multiply_a) +
+                //                            (to_multiply_b) +
+                //                            (to_multiply_c) +
+                //                            (to_multiply_d);
 
             }
         }
@@ -491,8 +525,15 @@ public:
             size_t dimension_idx = dim_idx;
             size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
             for (size_t vector_idx = 0; vector_idx < PDX_VECTOR_SIZE; ++vector_idx) {
+
+                // float to_multiply = query[dimension_idx] - (float)data[offset_to_dimension_start + vector_idx];
+                // distances_p[vector_idx] += to_multiply * to_multiply;
+
                 float to_multiply = query[dimension_idx] - (float)data[offset_to_dimension_start + vector_idx];
                 distances_p[vector_idx] += to_multiply * to_multiply * scaling_factors[dimension_idx];
+
+                // IP idea
+                //distances_p[vector_idx] += query[dimension_idx] * data[offset_to_dimension_start + vector_idx];
             }
         }
     }
@@ -504,11 +545,38 @@ public:
             const float * scaling_factors
     ){
         size_t i = 0;
-        DISTANCE_TYPE distance = 0.0;
-        #pragma clang loop vectorize(enable)
+        float32x4_t sum_vec = vdupq_n_f32(0);
+        // for (; i + 4 < num_dimensions; i+=4) {
+        //     float32x4_t vec_a = vld1q_f32(vector1 + i);
+        //     float32x4_t vec_c = vld1q_f32(scaling_factors + i);
+        //
+        //     uint8x8_t u8_vec_b = vld1_u8(vector2 + i);
+        //     uint16x8_t u16_vec_b = vmovl_u8(u8_vec_b);
+        //     uint32x4_t u32_vec_b = vmovl_u16(vget_low_u16(u16_vec_b));
+        //     float32x4_t vec_b = vcvtq_f32_u32(u32_vec_b);
+        //
+        //     float32x4_t diff_vec = vsubq_f32(vec_a, vec_b);
+        //     // Using FMADD
+        //     float32x4_t tmp = vfmaq_f32(vdupq_n_f32(0), diff_vec, diff_vec);
+        //     sum_vec = vfmaq_f32(sum_vec, tmp, vec_c);
+        //
+        //     // Using MUL
+        //     // float32x4_t sq = vmulq_f32(diff_vec, diff_vec);
+        //     // float32x4_t term = vmulq_f32(sq, vec_c);
+        //     // sum_vec = vaddq_f32(sum_vec, term);
+        //
+        // }
+        DISTANCE_TYPE distance = vaddvq_f32(sum_vec);
+#pragma clang loop vectorize(enable)
         for (; i < num_dimensions; ++i) {
+            // float diff = vector1[i] - (float)vector2[i];
+            // distance += diff * diff;
+
             float diff = vector1[i] - (float)vector2[i];
             distance += diff * diff * scaling_factors[i];
+
+            // IP idea
+            // distance += vector1[i] * vector2[i];
         }
         return distance;
     };

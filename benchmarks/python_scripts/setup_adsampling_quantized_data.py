@@ -41,6 +41,23 @@ def generate_u8_vh_ivf(dataset_name: str, normalize=True):
 
     preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-u8-v4-h64-matrix'))
 
+def generate_u8_vh_ivf_symmetric(dataset_name: str, normalize=True):
+    base_idx = BaseIndexPDXIVF(DIMENSIONALITIES[dataset_name], 'l2sq')
+    # Core index IVF must exist
+    index_path = os.path.join(CORE_INDEXES_FAISS, get_core_index_filename(dataset_name, norm=normalize))
+    # Reads the core index created by faiss to generate the PDX index
+    base_idx.core_index.index = faiss.read_index(index_path)
+    print('Reading train data')
+    data = read_hdf5_train_data(dataset_name)
+    preprocessor = ADSampling(DIMENSIONALITIES[dataset_name])
+    preprocessor.preprocess(data, inplace=True, normalize=True)
+    print('Saving')
+    # PDX FLAT BLOCKIFIED
+    base_idx._to_pdx(data, _type='pdx-v4-h', lep=True, lep_bw=8, centroids_preprocessor=preprocessor, use_original_centroids=True, use_global_params=True)
+    base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-u8-v4-h64-ivf-sym'))
+
+    preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-u8-v4-h64-matrix-sym'))
+
 def generate_lep_ivf(dataset_name: str, normalize=True):
     base_idx = BaseIndexPDXIVF(DIMENSIONALITIES[dataset_name], 'l2sq')
     # Core index IVF must exist
@@ -191,17 +208,25 @@ if __name__ == "__main__":
     # generate_u7_vh128_ivf('openai-1536-angular')
     # generate_u7_vh_b64_ivf('openai-1536-angular')
 
-    generate_lep_ivf('contriever-768')
-    #generate_lep_ivf('gist-960-euclidean')
+    # The real one for lep
+    # generate_lep_ivf('contriever-768')
+    # generate_lep_ivf('gist-960-euclidean')
     # generate_lep_ivf('openai-1536-angular')
     #generate_lep_ivf('instructorxl-arxiv-768')
 
-    # The real one
-    # generate_u8_vh_ivf('openai-1536-angular')
+    # The real one for asymmetric
+    generate_u8_vh_ivf('openai-1536-angular')
     # generate_u8_vh_ivf('instructorxl-arxiv-768')
-    # generate_u8_vh_ivf('gist-960-euclidean')
+    #generate_u8_vh_ivf('gist-960-euclidean')
     # generate_u8_vh_ivf('contriever-768')
     # generate_u8_vh_ivf('msong-420')
+
+    # The real one for symmetric
+    # generate_u8_vh_ivf_symmetric('openai-1536-angular')
+    # generate_u8_vh_ivf_symmetric('instructorxl-arxiv-768')
+    # generate_u8_vh_ivf_symmetric('gist-960-euclidean')
+    # generate_u8_vh_ivf_symmetric('contriever-768')
+    # generate_u8_vh_ivf_symmetric('msong-420')
 
     # generate_u7_ivf('openai-1536-angular')
     # generate_u6_ivf('openai-1536-angular')

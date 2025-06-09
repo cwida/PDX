@@ -53,7 +53,10 @@ public:
         if constexpr (q != Quantization::ASYMMETRIC_U8) {
             this->pruning_threshold = heap.top().distance * ratio;
         } else {
+            //this->pruning_threshold = std::numeric_limits<float>::max();
             this->pruning_threshold = heap.top().distance * ratio * this->current_scaling_factor;
+            // IP idea
+            // this->pruning_threshold = ratio * (2.0f - (2.0f * ((1 / (heap.top().distance) - this->quant.partition_bias)) / (this->quant.q_norm * 5300.0f)));
         }
     }
 

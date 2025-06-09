@@ -17,6 +17,7 @@ class Partition:
         self.for_bases = np.array([])
         self.for_bases_exceptions = np.array([])
         self.scale_factors = np.array([])
+        self.data_norms = np.array([])
         self.scale_factors_exceptions = np.array([])
         self.blocks = []
         self.exceptions_data = np.array([])
@@ -59,6 +60,7 @@ class BaseIndexPDXIVF:
         lep_bw = kwargs.get('lep_bw', 8)
         use_lep = kwargs.get('lep', False)
         use_exceptions = kwargs.get('use_exceptions', False)
+        use_global_params = kwargs.get('use_global_params', False)
         self.partitions = []
         self.means = data.mean(axis=0, dtype=np.float32)
         self.centroids = np.array([], dtype=np.float32)
@@ -122,18 +124,23 @@ class BaseIndexPDXIVF:
                     lep_min = 0
                     lep_max = 16
                 else:  # LEP-8
-                    if not use_exceptions:
+                    if use_global_params:
                         # Global scaling
-                        # pre_data = pre_data * 1000
-                        # if (list_id == 0):
-                        #     print(pre_data)
-                        # pre_data = pre_data * 1.5 # TODO: Fix
-                        # pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
-                        # for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
-                        # for_data = pre_data - for_bases
+                        pre_data = pre_data * 1000
+                        if (list_id == 0):
+                            print(pre_data)
+                        pre_data = pre_data * 1.0 # TODO: Fix
+                        pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                        for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                        scale_factors_data = np.full(self.ndim, 1.0, dtype=np.float32)
+                        for_data = pre_data - for_bases
+                        lep_min = 0
+                        lep_max = 255
+                        data_norms = np.linalg.norm(pre_data, axis=1)
+                    elif not use_exceptions:
 
                         # Scaling per dimension which needs adjustments on the L2 calculation
-                        CURR_LEP_MAX = 31.0
+                        CURR_LEP_MAX = 255.0
                         LOW_PRECISION_LEP_MAX = 15.0
                         # The idea of using low precision dimensions did not worked!
                         LOW_PRECISION_DIMS = 0 # math.ceil(self.ndim * 0.90)
@@ -158,6 +165,8 @@ class BaseIndexPDXIVF:
 
                         lep_min = 0
                         lep_max = CURR_LEP_MAX
+                        data_norms = np.linalg.norm(pre_data, axis=1)
+                        # print(len(data_norms))
                     else:
                         if list_id % 100 == 0:
                             print(f'Encoding LEP for partition {list_id}/{self.core_index.index.nlist}')
@@ -202,6 +211,7 @@ class BaseIndexPDXIVF:
                             """
                                 Matrix indexes at exception_indices
                             """
+                            # Round here if you are not rounding before
                             for_data_exceptions = for_data[exception_indices, column_indices].copy()
                             # To re-scale exceptions:
                             # tmp_range = (for_data_exceptions.max(axis=0) - for_data_exceptions.min(axis=0)).astype(dtype=np.float32)
@@ -233,7 +243,7 @@ class BaseIndexPDXIVF:
                             #     print("There should not be any negatives here:")
                             #     print(for_data.min(axis=0))
                             #     print(for_data.max(axis=0))
-                            scale_factors_data = np.where(col_range != 0, 13 / col_range, 0).astype(dtype=np.float32)
+                            scale_factors_data = np.where(col_range != 0, 15 / col_range, 0).astype(dtype=np.float32)
                             # if (len(for_data) < 20):
                             #     print('FOR DATA BEFORE LAST SCALING', for_data[:, 0:10])
                             for_data = (for_data * scale_factors_data).round(decimals=0).astype(dtype=np.int32)
@@ -286,6 +296,8 @@ class BaseIndexPDXIVF:
                 for_data = for_data.astype(dtype=np.uint8)
                 partition.for_bases = for_bases.astype(dtype=np.float32)
                 partition.scale_factors = scale_factors_data.astype(dtype=np.float32)
+                partition.data_norms = data_norms.astype(dtype=np.float32)
+
 
                 if use_exceptions:
                     partition.exceptions_n = int(exceptions_n) * 2 # Because exceptions_n is the number on each side
@@ -411,6 +423,7 @@ class BaseIndexPDXIVF:
             for i in range(self.num_partitions):
                 data.extend(self.partitions[i].for_bases.tobytes("C"))
                 data.extend(self.partitions[i].scale_factors.tobytes("C"))
+                data.extend(self.partitions[i].data_norms.tobytes("C"))
                 if kwargs.get('use_exceptions', False): # If ENCODE_EXCEPTIONS
                     # print('Partition with', self.partitions[i].exceptions_n, 'exceptions')
                     # print('self.partitions[i].exceptions_pos', len(self.partitions[i].exceptions_pos))

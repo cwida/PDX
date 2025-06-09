@@ -115,6 +115,7 @@ namespace PDX {
         uint32_t *indices = nullptr;
         uint8_t *data = nullptr;
         float *for_bases{};
+        float *norms{};
         float *scale_factors{};
     };
 
@@ -123,6 +124,7 @@ namespace PDX {
         uint32_t num_embeddings{};
         uint32_t *indices = nullptr;
         float *data = nullptr;
+        float *norms{};
     };
 
     template<>
@@ -135,6 +137,7 @@ namespace PDX {
         float *scale_factors{};
         float *for_bases_exceptions{};
         float *scale_factors_exceptions{};
+        float *norms{};
         uint8_t *data_exceptions = nullptr;
         uint32_t *exceptions_positions = nullptr;
     };

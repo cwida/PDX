@@ -218,6 +218,8 @@ public:
             next_value += sizeof(uint32_t) * num_dimensions;
             vectorgroup.scale_factors = (float *) next_value;
             next_value += sizeof(uint32_t) * num_dimensions;
+            vectorgroup.norms = (float *) next_value;
+            next_value += sizeof(float) * vectorgroup.num_embeddings;
         }
         means = (float *) next_value;
         next_value += sizeof(float) * num_dimensions;

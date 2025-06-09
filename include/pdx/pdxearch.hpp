@@ -104,6 +104,7 @@ protected:
     static constexpr uint16_t PDX_VECTOR_SIZE = 64;
     alignas(64) inline static DISTANCES_TYPE distances[PDX_VECTOR_SIZE]; // Used in full scans (no pruning)
     alignas(64) inline static DISTANCES_TYPE pruning_distances[10240]; // TODO: Use dynamic arrays. Buckets with more than 10k vectors (rare) overflow
+    alignas(64) inline static DISTANCES_TYPE pruning_l2_distances[10240];
 
     alignas(64) inline static uint32_t pruning_positions[10240];
 
@@ -128,17 +129,71 @@ protected:
         pruning_threshold = heap.size() == k ? heap.top().distance : std::numeric_limits<DISTANCES_TYPE>::max();
     };
 
+//     // TODO: Do it fast (lol)
+//     template <bool IS_ON_POSITIONS_ARRAY=false>
+//     void FastTransformIPtoL2(size_t n_vectors) {
+// #ifdef BENCHMARK_TIME
+//         this->end_to_end_clock.Toc();
+// #endif
+//         float estimated_object_norm = (float)(current_dimension_idx) / pdx_data.num_dimensions;
+//
+//         float delta = 0.01;
+//         float expected = static_cast<double>(current_dimension_idx + 1) / pdx_data.num_dimensions;
+//         float log_term = std::log(2.0 / delta);
+//         float margin = std::sqrt(log_term / (2.0 * pdx_data.num_dimensions));
+//         float lb = expected - margin;
+//         //curr_dim_factor = 2 * curr_dim_factor;
+//         // std::cout << "current_dimension_idx = " << current_dimension_idx << std::endl;
+//         // std::cout << "curr_dim_factor = " << curr_dim_factor << std::endl;
+//         // std::cout << "quant.q_partition_biases[current_dimension_idx] = " << quant.q_partition_biases[current_dimension_idx] << std::endl;
+//         // std::cout << "n_vectors = " << n_vectors << std::endl;
+//         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
+//             size_t v_idx = vector_idx;
+//             if constexpr (IS_ON_POSITIONS_ARRAY) {
+//                 v_idx = pruning_positions[v_idx];
+//             }
+//             pruning_l2_distances[v_idx] =
+//                 quant.q_norms[current_dimension_idx] + lb - 2 *
+//                     (pruning_distances[v_idx] + quant.q_partition_biases[current_dimension_idx]);
+//         }
+// #ifdef BENCHMARK_TIME
+//         this->end_to_end_clock.Tic();
+// #endif
+//     }
+
     virtual void EvaluatePruningPredicateScalar(uint32_t &n_pruned, size_t n_vectors) {
+        // if constexpr (q == ASYMMETRIC_U8) {
+        //     FastTransformIPtoL2<false>(n_vectors);
+        // }
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
             n_pruned += pruning_distances[vector_idx] >= pruning_threshold;
+
+            // IP idea
+            // if constexpr (q == ASYMMETRIC_U8) {
+            //     n_pruned += pruning_l2_distances[vector_idx] >= pruning_threshold;
+            // } else {
+            //     n_pruned += pruning_distances[vector_idx] >= pruning_threshold;
+            // }
+
         }
     };
 
     virtual void EvaluatePruningPredicateOnPositionsArray(size_t n_vectors){
         n_vectors_not_pruned = 0;
+        // if constexpr (q == ASYMMETRIC_U8) {
+        //     FastTransformIPtoL2<true>(n_vectors);
+        // }
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
             pruning_positions[n_vectors_not_pruned] = pruning_positions[vector_idx];
             n_vectors_not_pruned += pruning_distances[pruning_positions[vector_idx]] < pruning_threshold;
+
+            // IP idea
+            // if constexpr (q == ASYMMETRIC_U8) {
+            //     n_vectors_not_pruned += pruning_l2_distances[pruning_positions[vector_idx]] < pruning_threshold;
+            // } else {
+            //     n_vectors_not_pruned += pruning_distances[pruning_positions[vector_idx]] < pruning_threshold;
+            // }
+
             //if (pruning_distances[pruning_positions[vector_idx]] >= pruning_threshold && (when_is_pruned_exist.find(pruning_positions[vector_idx]) == when_is_pruned_exist.end())){
             //    when_is_pruned[current_dimension_idx]++;
             //    when_is_pruned_exist.insert(pruning_positions[vector_idx]);
@@ -147,16 +202,37 @@ protected:
     };
 
     virtual void EvaluatePruningPredicateVectorized(uint32_t &n_pruned) {
+        // if constexpr (q == ASYMMETRIC_U8) {
+        //     FastTransformIPtoL2<false>((size_t)PDX_VECTOR_SIZE);
+        // }
         for (size_t vector_idx = 0; vector_idx < PDX_VECTOR_SIZE; ++vector_idx) {
             n_pruned += pruning_distances[vector_idx] >= pruning_threshold;
+
+            // IP Idea
+            // if constexpr (q == ASYMMETRIC_U8) {
+            //     n_pruned += pruning_l2_distances[vector_idx] >= pruning_threshold;
+            // } else {
+            //     n_pruned += pruning_distances[vector_idx] >= pruning_threshold;
+            // }
         }
     };
 
     inline virtual void InitPositionsArray(size_t n_vectors){
+        // if constexpr (q == ASYMMETRIC_U8) {
+        //     FastTransformIPtoL2<false>(n_vectors);
+        // }
         n_vectors_not_pruned = 0;
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
             pruning_positions[n_vectors_not_pruned] = vector_idx;
             n_vectors_not_pruned += pruning_distances[vector_idx] < pruning_threshold;
+
+            // IP idea
+            // if constexpr (q == ASYMMETRIC_U8) {
+            //     n_vectors_not_pruned += pruning_l2_distances[vector_idx] < pruning_threshold;
+            // } else {
+            //     n_vectors_not_pruned += pruning_distances[vector_idx] < pruning_threshold;
+            // }
+
             //if (pruning_distances[vector_idx] >= pruning_threshold && (when_is_pruned_exist.find(vector_idx) == when_is_pruned_exist.end())){
             //    when_is_pruned[current_dimension_idx]++;
             //    when_is_pruned_exist.insert(vector_idx);
@@ -341,8 +417,7 @@ protected:
 
             }
         }
-        /*
-        if constexpr (q != Quantization::ASYMMETRIC_U8) {
+        if constexpr (q != Quantization::ASYMMETRIC_U8 && q != Quantization::ASYMMETRIC_LEP_U8) {
             // Clipping (TODO: This looks horrible)
             for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension++) {
                 if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
@@ -350,20 +425,27 @@ protected:
                         size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
                                           ((horizontal_dimension / H_DIM_SIZE) * H_DIM_SIZE * n_vectors) +
                                           (vector_idx * H_DIM_SIZE) + (horizontal_dimension % H_DIM_SIZE);
-                        pruning_distances[vector_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension]; //* quant.cur_scaling_factors[pdx_data.num_vertical_dimensions + horizontal_dimension];
+                        pruning_distances[vector_idx] -= 2 * data[data_pos] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension]; // * quant.cur_scaling_factors[pdx_data.num_vertical_dimensions + horizontal_dimension];
                         pruning_distances[vector_idx] += quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] * quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension]; // * quant.cur_scaling_factors[pdx_data.num_vertical_dimensions + horizontal_dimension];
                     }
                 }
             }
         }
-        */
         // end of horizontal part
         size_t max_possible_k = std::min((size_t) k, n_vectors);
         std::vector<size_t> indices_sorted;
         indices_sorted.resize(n_vectors);
         std::iota(indices_sorted.begin(), indices_sorted.end(), 0);
+
+        // if (q == Quantization::ASYMMETRIC_U8) {
+        //     for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
+        //         pruning_distances[vector_idx] = 2 - 2 * (pruning_distances[vector_idx] + quant.partition_bias);
+        //     }
+        // }
+
         std::partial_sort(indices_sorted.begin(), indices_sorted.begin() + max_possible_k, indices_sorted.end(),
                           [](size_t i1, size_t i2) {
+                              //return pruning_distances[i1] > pruning_distances[i2];
                               return pruning_distances[i1] < pruning_distances[i2];
                           });
         // insert first k results into the heap
@@ -375,6 +457,9 @@ protected:
                 embedding.distance = pruning_distances[index];
             } else {
                 embedding.distance = pruning_distances[index] * current_scaling_factor;
+                // IP idea
+                //embedding.distance = pruning_distances[index];
+                //embedding.distance = 1 / ((pruning_distances[index] * current_scaling_factor) + quant.partition_bias);
             }
             this->best_k.push(embedding);
         }
@@ -445,6 +530,7 @@ protected:
     // We scan only the not-yet pruned vectors
     void Prune(const QUANTIZED_VECTOR_TYPE *__restrict query, const DATA_TYPE *__restrict data, const size_t n_vectors, uint32_t k, std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t> &heap) {
         //when_is_pruned_exist.clear();
+        //std::cout << "Pruning at" << current_dimension_idx << std::endl;
         GetPruningThreshold(k, heap);
         InitPositionsArray(n_vectors);
         size_t cur_n_vectors_not_pruned = 0;
@@ -511,10 +597,8 @@ protected:
                             quant.cur_scaling_factors + offset_query
                     );
                 }
-
             }
-            /*
-            if constexpr (q != Quantization::ASYMMETRIC_U8) {
+            if constexpr (q != Quantization::ASYMMETRIC_U8 && q != Quantization::ASYMMETRIC_LEP_U8) {
                 // Clipping (TODO: This looks horrible)
                 for (size_t horizontal_dimension = current_horizontal_dimension; horizontal_dimension < current_horizontal_dimension + H_DIM_SIZE; horizontal_dimension++) {
                     if (quant.dim_clip_value[pdx_data.num_vertical_dimensions + horizontal_dimension] < 0){
@@ -529,7 +613,6 @@ protected:
                     }
                 }
             }
-            */
             // end of clipping
             current_horizontal_dimension += H_DIM_SIZE;
             current_dimension_idx += H_DIM_SIZE;
@@ -609,7 +692,7 @@ protected:
     void MergeIntoHeap(const uint32_t * vector_indices, size_t n_vectors, uint32_t k, std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t> &heap) {
         for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
             size_t index = position_idx;
-            // DISTANCES_TYPE current_distance;
+            //DISTANCES_TYPE current_distance;
             float current_distance;
             if constexpr (IS_PRUNING){
                 index = pruning_positions[position_idx];
@@ -617,12 +700,18 @@ protected:
                     current_distance = pruning_distances[index];
                 } else {
                     current_distance = pruning_distances[index] * current_scaling_factor;
+                    // IP with correction
+                    // current_distance = 1 / ((pruning_distances[index] * current_scaling_factor) + quant.partition_bias);
+                    //current_distance = 2 - 2 * (pruning_distances[index] + quant.partition_bias);
                 }
             } else {
                 if constexpr (q != Quantization::ASYMMETRIC_U8) {
                     current_distance = distances[index];
                 } else {
-                    current_distance = distances[index] * current_scaling_factor;
+                    current_distance = pruning_distances[index] * current_scaling_factor;
+                    // IP with correction
+                    // current_distance = 1 / ((distances[index] * current_scaling_factor) + quant.partition_bias);
+                    //current_distance = 2 - 2 * (pruning_distances[index] + quant.partition_bias);
                 }
             }
             //when_is_pruned[current_dimension_idx]++;
@@ -801,9 +890,9 @@ public:
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
         quant.ScaleQuery(quant.transformed_raw_query);
-        current_scaling_factor = 1.0f / (first_vectorgroup.scale_factors[0] * first_vectorgroup.scale_factors[0]);
+        current_scaling_factor = 1.0f;
         quant.PrepareQuery(
-            first_vectorgroup.for_bases, first_vectorgroup.scale_factors[0],
+            first_vectorgroup.for_bases, first_vectorgroup.scale_factors,
             nullptr, nullptr
         );
         Start(quant.quantized_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
@@ -811,9 +900,9 @@ public:
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
-            current_scaling_factor = 1.0f / (vectorgroup.scale_factors[0] * vectorgroup.scale_factors[0]);
+            current_scaling_factor = 1.0f;
             quant.PrepareQuery(
-                vectorgroup.for_bases, vectorgroup.scale_factors[0],
+                vectorgroup.for_bases, vectorgroup.scale_factors,
                 nullptr, nullptr
                 );
             //total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;

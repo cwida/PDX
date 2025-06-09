@@ -30,7 +30,8 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions = nullptr,
             const uint32_t * indices_dimensions = nullptr,
-            const int32_t * dim_clip_value = nullptr
+            const int32_t * dim_clip_value = nullptr,
+            const float * scaling_factors = nullptr
     ){
         __m512i res;
         __m512i vec2_u8;
@@ -115,7 +116,8 @@ public:
             const DATA_TYPE *__restrict data,
             size_t start_dimension,
             size_t end_dimension,
-            DISTANCE_TYPE * distances_p
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors = nullptr
     ){
         __m512i res[4];
         __m512i vec2_u8;
@@ -154,7 +156,9 @@ public:
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
-            size_t num_dimensions){
+            size_t num_dimensions,
+            const float * scaling_factors = nullptr
+    ){
         __m512i d2_i32_vec = _mm512_setzero_si512();
         __m512i a_u8_vec, b_u8_vec, d_u8_vec;
 
@@ -199,7 +203,8 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions = nullptr,
             const uint32_t * indices_dimensions = nullptr,
-            const int32_t * dim_clip_value = nullptr
+            const int32_t * dim_clip_value = nullptr,
+            const float * scaling_factors = nullptr
     ){
         // TODO
     }
@@ -209,12 +214,18 @@ public:
             const DATA_TYPE *__restrict data,
             size_t start_dimension,
             size_t end_dimension,
-            DISTANCE_TYPE * distances_p
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors = nullptr
     ){
         // TODO
     }
 
-    static DISTANCE_TYPE Horizontal(const DATA_TYPE *__restrict vector1, const DATA_TYPE *__restrict vector2, size_t num_dimensions){
+    static DISTANCE_TYPE Horizontal(
+        const DATA_TYPE *__restrict vector1,
+        const DATA_TYPE *__restrict vector2,
+        size_t num_dimensions,
+        const float * scaling_factors = nullptr
+    ){
         return 0;
     };
 };
@@ -252,7 +263,8 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions = nullptr,
             const uint32_t * indices_dimensions = nullptr,
-            const int32_t * dim_clip_value = nullptr
+            const int32_t * dim_clip_value = nullptr,
+            const float * scaling_factors = nullptr
     ){
         GatherDistances(n_vectors, distances_p, pruning_positions);
         __m512 data_vec, d_vec, cur_dist_vec;
@@ -334,7 +346,8 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions = nullptr,
             const uint32_t * indices_dimensions = nullptr,
-            const int32_t * dim_clip_value = nullptr
+            const int32_t * dim_clip_value = nullptr,
+            const float * scaling_factors = nullptr
     ){
         // SIMD is less efficient when looping on the array of not-yet pruned vectors
         // A way to improve the performance by ~20% is using a GATHER intrinsic. However this only works on Intel microarchs.
@@ -373,7 +386,8 @@ public:
             const DATA_TYPE *__restrict data,
             size_t start_dimension,
             size_t end_dimension,
-            DISTANCE_TYPE * distances_p
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors = nullptr
     ){
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
             size_t dimension_idx = dim_idx;
@@ -388,7 +402,8 @@ public:
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
-            size_t num_dimensions
+            size_t num_dimensions,
+            const float * scaling_factors = nullptr
     ){
         __m512 d2_vec = _mm512_setzero();
         __m512 a_vec, b_vec;
@@ -414,7 +429,129 @@ public:
         r = _mm_hadd_ps(r, r);
         return _mm_cvtss_f32(_mm_hadd_ps(r, r));
     };
+};
 
+
+template <>
+class SIMDComputer<L2, Quantization::ASYMMETRIC_U8>{
+public:
+    using DISTANCE_TYPE = DistanceType_t<ASYMMETRIC_U8>;
+    using QUERY_TYPE = QuantizedVectorType_t<ASYMMETRIC_U8>;
+    using DATA_TYPE = DataType_t<ASYMMETRIC_U8>;
+
+    // Defer to the scalar kernel
+    template<bool USE_DIMENSIONS_REORDER, bool SKIP_PRUNED>
+    static void VerticalPruning(
+            const QUERY_TYPE *__restrict query,
+            const DATA_TYPE *__restrict data,
+            size_t n_vectors,
+            size_t total_vectors,
+            size_t start_dimension,
+            size_t end_dimension,
+            DISTANCE_TYPE * distances_p,
+            const uint32_t * pruning_positions,
+            const uint32_t * indices_dimensions,
+            const int32_t * dim_clip_value,
+            const float * scaling_factors
+    ){
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
+            uint32_t dimension_idx = dim_idx;
+            if constexpr (USE_DIMENSIONS_REORDER){
+                dimension_idx = indices_dimensions[dim_idx];
+            }
+            size_t offset_to_dimension_start = dimension_idx * total_vectors;
+            size_t i = 0;
+
+            // In this asymmetric kernel we cannot advance 64 at a time
+            if constexpr (!SKIP_PRUNED){
+                __m512i vec1 = _mm512_broadcast_f32x4(_mm_loadu_ps(reinterpret_cast<const __m128i*>(query + dimension_idx)));
+                __m512i vec_scales = _mm512_broadcast_f32x4(_mm_loadu_ps(reinterpret_cast<const __m128i*>(scaling_factors + dimension_idx)));
+                for (; i + 16 <= n_vectors; i+=16) {
+                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+                    __m512 res = _mm512_load_ps(&distances_p[i]); // 16 values at a time
+                    __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i * 4])));
+
+                    __m512 diff = _mm512_sub_ps(vec1, vec2);
+                    __m512 tmp_ = _mm512_mul_ps(diff, diff);
+                    res = _mm512_fmadd_ps(tmp_, vec_scales, res);
+                    // Cannot use dot-product
+                }
+                // __m512i vec_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(reinterpret_cast<const __m128i*>(query + dimension_idx)));
+                // __m512i vec_scales_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(reinterpret_cast<const __m128i*>(scaling_factors + dimension_idx)));
+                // for (; i + 8 <= n_vectors; i+=8) {
+                //     // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+                //     __m256 res = _mm256_load_ps(&distances_p[i]); // 16 values at a time
+                //     __m256 vec2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i * 4])));
+                //
+                //     __m256 diff = _mm256_sub_ps(vec1, vec2);
+                //     __m256 tmp_ = _mm256_mul_ps(diff, diff);
+                //     res = _mm256_fmadd_ps(tmp_, vec_scales, res);
+                //     // Cannot use dot-product
+                // }
+            }
+            #pragma clang loop vectorize(enable)
+            for (; i < n_vectors; ++i) {
+                size_t vector_idx = i;
+                if constexpr (SKIP_PRUNED) {
+                    vector_idx = pruning_positions[vector_idx];
+                }
+
+                // L2
+                float to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
+                float to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
+                float to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
+                float to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
+                distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scaling_factors[dimension_idx]) +
+                                           (to_multiply_b * to_multiply_b * scaling_factors[dimension_idx + 1]) +
+                                           (to_multiply_c * to_multiply_c * scaling_factors[dimension_idx + 2]) +
+                                           (to_multiply_d * to_multiply_d * scaling_factors[dimension_idx + 3]);
+            }
+        }
+    }
+
+    // Defer to the scalar kernel
+    static void Vertical(
+            const QUERY_TYPE *__restrict query,
+            const DATA_TYPE *__restrict data,
+            size_t start_dimension,
+            size_t end_dimension,
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors
+    ){
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
+            size_t dimension_idx = dim_idx;
+            size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
+            for (size_t vector_idx = 0; vector_idx < PDX_VECTOR_SIZE; ++vector_idx) {
+                float to_multiply = query[dimension_idx] - (float)data[offset_to_dimension_start + vector_idx];
+                distances_p[vector_idx] += to_multiply * to_multiply * scaling_factors[dimension_idx];
+            }
+        }
+    }
+
+    static DISTANCE_TYPE Horizontal(
+            const QUERY_TYPE *__restrict vector1,
+            const DATA_TYPE *__restrict vector2,
+            size_t num_dimensions,
+            const float * scaling_factors
+    ){
+        size_t i = 0;
+        __m512 sum_vec = _mm512_setzero_ps();
+        for (; i + 16 < num_dimensions; i+=16) {
+            __m512 vec1 = _mm512_load_ps(&vector1[i]);
+            __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&vector2[i])));
+            __m512 vec_scale = _mm512_load_ps(&scaling_factors[i]);
+            __m512 diff = _mm512_sub_ps(vec1, vec2);
+            __m512 tmp = _mm512_mul_ps(diff, diff);
+            sum_vec = _mm512_fmadd_ps(tmp, vec_scale, sum_vec);
+        }
+        DISTANCE_TYPE distance = _mm512_reduce_add_ps(sum_vec); // TODO: Only on intel
+        #pragma clang loop vectorize(enable)
+        for (; i < num_dimensions; ++i) {
+            float diff = vector1[i] - (float)vector2[i];
+            distance += diff * diff * scaling_factors[i];
+        }
+        return distance;
+    };
 };
 
 template <>
@@ -436,7 +573,8 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions,
             const uint32_t * indices_dimensions,
-            const int32_t * dim_clip_value
+            const int32_t * dim_clip_value,
+            const float * scaling_factors = nullptr
     ){
         size_t dimensions_jump_factor = total_vectors;
         for (size_t dimension_idx = start_dimension; dimension_idx < end_dimension; ++dimension_idx) {
@@ -461,7 +599,8 @@ public:
             const DATA_TYPE *__restrict data,
             size_t start_dimension,
             size_t end_dimension,
-            DISTANCE_TYPE * distances_p
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors = nullptr
     ){
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
             size_t dimension_idx = dim_idx;
@@ -475,7 +614,8 @@ public:
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
-            size_t num_dimensions
+            size_t num_dimensions,
+            const float * scaling_factors = nullptr
     ){
         return 0.0;
     };
@@ -501,7 +641,8 @@ public:
             DISTANCE_TYPE * distances_p,
             const uint32_t * pruning_positions = nullptr,
             const uint32_t * indices_dimensions = nullptr,
-            const int32_t * dim_clip_value = nullptr
+            const int32_t * dim_clip_value = nullptr,
+            const float * scaling_factors = nullptr
     ){
         // TODO
     }
@@ -512,7 +653,8 @@ public:
             const DATA_TYPE *__restrict data,
             size_t start_dimension,
             size_t end_dimension,
-            DISTANCE_TYPE * distances_p
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors = nullptr
     ){
         // TODO
     }
@@ -520,7 +662,8 @@ public:
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
-            size_t num_dimensions
+            size_t num_dimensions,
+            const float * scaling_factors = nullptr
     ){
         __m512 d2_vec = _mm512_setzero();
         __m512 a_vec, b_vec;

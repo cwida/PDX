@@ -24,6 +24,8 @@ public:
     alignas(64) float normalized_query[4096]{};
     alignas(64) float cur_scaling_factors[4096]{};
     alignas(64) float cur_exceptions_scaling_factors[4096]{};
+    alignas(64) float q_partition_biases[4096]{};
+    alignas(64) float q_norms[4096]{};
 
 public:
     void NormalizeQuery(const float * src) {
@@ -62,6 +64,7 @@ public:
     alignas(64) inline static float asymmetric_scaled_query[4096];
 
     LEPQuantizer(){
+        partition_bias = 0.0f;
         lep_exponent = 1000;
         if constexpr (q == Quantization::U8 || q == Quantization::ASYMMETRIC_U8){
             //lep_factor = 1.0;
@@ -87,6 +90,8 @@ public:
         }
     }
 
+    float q_norm;
+    float partition_bias;
     int lep_exponent;
     float lep_factor;
     uint8_t MAX_VALUE;
@@ -127,10 +132,21 @@ public:
         const float *scale_factors_exceptions
     ){
         if constexpr (q == Quantization::ASYMMETRIC_U8) {
+            //q_norm = 0.0;
+            //partition_bias = 0.0;
             for (size_t i = 0; i < num_dimensions; ++i) {
                 cur_scaling_factors[i] = 1 / (scale_factors[i] * scale_factors[i]);
                 asymmetric_query[i] = (asymmetric_scaled_query[i] - for_bases[i]) * scale_factors[i];
+
+                // IP Idea
+                // cur_scaling_factors[i] = 1 / (scale_factors[i] * scale_factors[i]);
+                // asymmetric_query[i] = (asymmetric_scaled_query[i]) / scale_factors[i];
+                // partition_bias += asymmetric_scaled_query[i] * for_bases[i];
+                // q_norm += asymmetric_scaled_query[i] * asymmetric_scaled_query[i];
+                // q_partition_biases[i] = partition_bias;
+                // q_norms[i] = q_norm;
             }
+            //q_norm = std::sqrt(q_norm); // IP Idea
             return;
         } else if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
             for (size_t i = 0; i < num_dimensions; ++i) {
@@ -259,7 +275,7 @@ public:
         // Seems that in AVX512, this code is equally as performant as the explicit SIMD one
         for (size_t i = 0; i < num_dimensions; ++i){
             cur_scaling_factors[i] = 1 / (scale_factors[i] * scale_factors[i]);
-            int rounded = std::round(((pre_scaled_query[i] - for_bases[i]) * scale_factors[i]));
+            int rounded = std::round(((pre_scaled_query[i] * 1000 - for_bases[i]) * scale_factors[i]));
             dim_clip_value[i] = rounded;
             if (rounded > MAX_VALUE || rounded < 0) {
                     quantized_query[i] = 0;
