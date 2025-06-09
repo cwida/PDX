@@ -556,6 +556,137 @@ public:
 };
 
 template <>
+class SIMDComputer<L2, Quantization::ASYMMETRIC_LEP_U8>{
+public:
+    using DISTANCE_TYPE = DistanceType_t<ASYMMETRIC_LEP_U8>;
+    using QUERY_TYPE = QuantizedVectorType_t<ASYMMETRIC_LEP_U8>;
+    using DATA_TYPE = DataType_t<ASYMMETRIC_LEP_U8>;
+
+    // Defer to the scalar kernel
+    template<bool USE_DIMENSIONS_REORDER, bool SKIP_PRUNED>
+    static void VerticalPruning(
+            const QUERY_TYPE *__restrict query,
+            const DATA_TYPE *__restrict data,
+            size_t n_vectors,
+            size_t total_vectors,
+            size_t start_dimension,
+            size_t end_dimension,
+            DISTANCE_TYPE * distances_p,
+            const uint32_t * pruning_positions,
+            const uint32_t * indices_dimensions,
+            const int32_t * dim_clip_value,
+            const float * scaling_factors
+    ){
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
+            uint32_t dimension_idx = dim_idx;
+            if constexpr (USE_DIMENSIONS_REORDER){
+                dimension_idx = indices_dimensions[dim_idx];
+            }
+            size_t offset_to_dimension_start = dimension_idx * total_vectors;
+            size_t i = 0;
+            for (; i < n_vectors; ++i) {
+                size_t vector_idx = i;
+                if constexpr (SKIP_PRUNED){
+                    vector_idx = pruning_positions[vector_idx];
+                }
+                // L2
+                // TODO: Inline patching of exceptions
+                /*
+                 *
+                 * if data[offset_to_dimension_start + (vector_idx * 4)] == ESCAPE_CODE:
+                 *  use exception data value
+                 *  use exception query value
+                 *  use exception scaling factor
+                 *  advance exception_array by 1
+                 * The other option would be to do another loop that goes through data
+                 * masking it, and applying the correction. Probably faster.
+                 */
+                float to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
+                float to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
+                float to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
+                float to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
+                distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scaling_factors[dimension_idx]) +
+                                           (to_multiply_b * to_multiply_b * scaling_factors[dimension_idx + 1]) +
+                                           (to_multiply_c * to_multiply_c * scaling_factors[dimension_idx + 2]) +
+                                           (to_multiply_d * to_multiply_d * scaling_factors[dimension_idx + 3]);
+
+            }
+        }
+    }
+
+    // Defer to the scalar kernel
+    static void Vertical(
+            const QUERY_TYPE *__restrict query,
+            const DATA_TYPE *__restrict data,
+            size_t start_dimension,
+            size_t end_dimension,
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors
+    ){
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
+            size_t dimension_idx = dim_idx;
+            size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
+            for (size_t vector_idx = 0; vector_idx < PDX_VECTOR_SIZE; ++vector_idx) {
+                // Inline patching of exceptions
+                float to_multiply = query[dimension_idx] - (float)data[offset_to_dimension_start + vector_idx];
+                distances_p[vector_idx] += to_multiply * to_multiply * scaling_factors[dimension_idx];
+            }
+        }
+    }
+
+    static DISTANCE_TYPE Horizontal(
+            const QUERY_TYPE *__restrict vector1,
+            const DATA_TYPE *__restrict vector2,
+            size_t num_dimensions,
+            const float * scaling_factors
+    ){
+        size_t i = 0;
+        DISTANCE_TYPE distance = 0.0;
+        #pragma clang loop vectorize(enable)
+        for (; i < num_dimensions; ++i) {
+            float diff = vector1[i] - (float)vector2[i];
+            distance += diff * diff * scaling_factors[i];
+        }
+        return distance;
+    };
+
+    // Defer to the scalar kernel
+    template<bool USE_DIMENSIONS_REORDER, bool SKIP_PRUNED>
+    static void PatchVertical(
+            const QUERY_TYPE *__restrict quant_query,
+            const QUERY_TYPE *__restrict exceptions_query,
+            const DATA_TYPE *__restrict exceptions_data,
+            const uint32_t *__restrict exceptions_positions,
+            size_t n_exceptions,
+            size_t start_dimension,
+            size_t end_dimension,
+            DISTANCE_TYPE * distances_p,
+            const uint32_t * pruning_positions,
+            const uint32_t * indices_dimensions,
+            const int32_t * dim_clip_value,
+            const float * scaling_factors,
+            const float * scaling_factors_exceptions
+    ){
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=1) {
+            uint32_t dimension_idx = dim_idx;
+            size_t offset_to_dimension_start = dimension_idx * n_exceptions;
+            size_t i = 0;
+            // Correct current L2
+            // This bad term can be computer on the fly, but my guess is it will not take much time
+            float bad_term = quant_query[dimension_idx] * quant_query[dimension_idx] * scaling_factors[dimension_idx];
+            for (; i < n_exceptions; ++i) {
+                size_t vector_idx = exceptions_positions[offset_to_dimension_start + i];
+                // Calculate the real L2
+                float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
+                good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
+                distances_p[vector_idx] += good_term - bad_term;
+            }
+        }
+    }
+
+};
+
+template <>
 class SIMDComputer<NEGATIVE_L2, Quantization::F32>{
 public:
     using DISTANCE_TYPE = DistanceType_t<F32>;
