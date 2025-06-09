@@ -463,33 +463,33 @@ public:
             size_t i = 0;
 
             // In this asymmetric kernel we cannot advance 64 at a time
-            if constexpr (!SKIP_PRUNED){
-                __m512i vec1 = _mm512_broadcast_f32x4(_mm_loadu_ps(query + dimension_idx));
-                __m512i vec_scales = _mm512_broadcast_f32x4(_mm_loadu_ps(scaling_factors + dimension_idx));
-                for (; i + 16 <= n_vectors; i+=16) {
-                    // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
-                    __m512 res = _mm512_load_ps(&distances_p[i]); // 16 values at a time
-                    __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i * 4])));
-
-                    __m512 diff = _mm512_sub_ps(vec1, vec2);
-                    __m512 tmp_ = _mm512_mul_ps(diff, diff);
-                    res = _mm512_fmadd_ps(tmp_, vec_scales, res);
-                    _mm512_store_ps(&distances_p[i], res);
-                    // Cannot use dot-product
-                }
-                // __m512i vec_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(query + dimension_idx));
-                // __m512i vec_scales_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(scaling_factors + dimension_idx));
-                // for (; i + 8 <= n_vectors; i+=8) {
-                //     // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
-                //     __m256 res = _mm256_load_ps(&distances_p[i]); // 16 values at a time
-                //     __m256 vec2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i * 4])));
-                //
-                //     __m256 diff = _mm256_sub_ps(vec1, vec2);
-                //     __m256 tmp_ = _mm256_mul_ps(diff, diff);
-                //     res = _mm256_fmadd_ps(tmp_, vec_scales, res);
-                //     // Cannot use dot-product
-                // }
-            }
+            // if constexpr (!SKIP_PRUNED){
+            //     __m512i vec1 = _mm512_broadcast_f32x4(_mm_loadu_ps(query + dimension_idx));
+            //     __m512i vec_scales = _mm512_broadcast_f32x4(_mm_loadu_ps(scaling_factors + dimension_idx));
+            //     for (; i + 16 <= n_vectors; i+=16) {
+            //         // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+            //         __m512 res = _mm512_load_ps(&distances_p[i]); // 16 values at a time
+            //         __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i * 4])));
+            //
+            //         __m512 diff = _mm512_sub_ps(vec1, vec2);
+            //         __m512 tmp_ = _mm512_mul_ps(diff, diff);
+            //         res = _mm512_fmadd_ps(tmp_, vec_scales, res);
+            //         _mm512_store_ps(&distances_p[i], res);
+            //         // Cannot use dot-product
+            //     }
+            //     // __m512i vec_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(query + dimension_idx));
+            //     // __m512i vec_scales_256 = _mm256_broadcast_f32x4(_mm_loadu_ps(scaling_factors + dimension_idx));
+            //     // for (; i + 8 <= n_vectors; i+=8) {
+            //     //     // Read 16 bytes of data (16 values) with 4 dimensions of 4 vectors
+            //     //     __m256 res = _mm256_load_ps(&distances_p[i]); // 16 values at a time
+            //     //     __m256 vec2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i * 4])));
+            //     //
+            //     //     __m256 diff = _mm256_sub_ps(vec1, vec2);
+            //     //     __m256 tmp_ = _mm256_mul_ps(diff, diff);
+            //     //     res = _mm256_fmadd_ps(tmp_, vec_scales, res);
+            //     //     // Cannot use dot-product
+            //     // }
+            // }
             #pragma clang loop vectorize(enable)
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
@@ -536,16 +536,17 @@ public:
             const float * scaling_factors
     ){
         size_t i = 0;
-        __m512 sum_vec = _mm512_setzero_ps();
-        for (; i + 16 < num_dimensions; i+=16) {
-            __m512 vec1 = _mm512_load_ps(&vector1[i]);
-            __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&vector2[i])));
-            __m512 vec_scale = _mm512_load_ps(&scaling_factors[i]);
-            __m512 diff = _mm512_sub_ps(vec1, vec2);
-            __m512 tmp = _mm512_mul_ps(diff, diff);
-            sum_vec = _mm512_fmadd_ps(tmp, vec_scale, sum_vec);
-        }
-        DISTANCE_TYPE distance = _mm512_reduce_add_ps(sum_vec); // TODO: Only on intel
+        // __m512 sum_vec = _mm512_setzero_ps();
+        // for (; i + 16 < num_dimensions; i+=16) {
+        //     __m512 vec1 = _mm512_load_ps(&vector1[i]);
+        //     __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&vector2[i])));
+        //     __m512 vec_scale = _mm512_load_ps(&scaling_factors[i]);
+        //     __m512 diff = _mm512_sub_ps(vec1, vec2);
+        //     __m512 tmp = _mm512_mul_ps(diff, diff);
+        //     sum_vec = _mm512_fmadd_ps(tmp, vec_scale, sum_vec);
+        // }
+        // DISTANCE_TYPE distance = _mm512_reduce_add_ps(sum_vec); // TODO: Only on intel
+        DISTANCE_TYPE distance = 0;
         #pragma clang loop vectorize(enable)
         for (; i < num_dimensions; ++i) {
             float diff = vector1[i] - (float)vector2[i];
@@ -683,7 +684,6 @@ public:
             }
         }
     }
-
 };
 
 template <>
