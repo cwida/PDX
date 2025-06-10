@@ -215,7 +215,7 @@ if __name__ == "__main__":
     #generate_lep_ivf('instructorxl-arxiv-768')
 
     # The real one for asymmetric
-    generate_u8_vh_ivf('openai-1536-angular')
+    # generate_u8_vh_ivf('openai-1536-angular')
     # generate_u8_vh_ivf('instructorxl-arxiv-768')
     #generate_u8_vh_ivf('gist-960-euclidean')
     # generate_u8_vh_ivf('contriever-768')

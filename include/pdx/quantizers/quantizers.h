@@ -274,8 +274,13 @@ public:
 #else
         // Seems that in AVX512, this code is equally as performant as the explicit SIMD one
         for (size_t i = 0; i < num_dimensions; ++i){
-            cur_scaling_factors[i] = 1 / (scale_factors[i] * scale_factors[i]);
-            int rounded = std::round(((pre_scaled_query[i] * 1000 - for_bases[i]) * scale_factors[i]));
+            // Used in per-partition adaptivity
+            // cur_scaling_factors[i] = 1 / (scale_factors[i] * scale_factors[i]);
+            // int rounded = std::round(((pre_scaled_query[i] * 1000 - for_bases[i]) * scale_factors[i]));
+
+            // Scale factor is global in symmetric kernel
+            cur_scaling_factors[i] = 1.0f;
+            int rounded = std::round(pre_scaled_query[i] * scale_factors[0] - for_bases[i]);
             dim_clip_value[i] = rounded;
             if (rounded > MAX_VALUE || rounded < 0) {
                     quantized_query[i] = 0;

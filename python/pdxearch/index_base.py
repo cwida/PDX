@@ -61,6 +61,10 @@ class BaseIndexPDXIVF:
         use_lep = kwargs.get('lep', False)
         use_exceptions = kwargs.get('use_exceptions', False)
         use_global_params = kwargs.get('use_global_params', False)
+        if use_global_params:
+            data_max = data.max()
+            data_min = data.min()
+            data_range = data_max - data_min
         self.partitions = []
         self.means = data.mean(axis=0, dtype=np.float32)
         self.centroids = np.array([], dtype=np.float32)
@@ -126,16 +130,15 @@ class BaseIndexPDXIVF:
                 else:  # LEP-8
                     if use_global_params:
                         # Global scaling
-                        pre_data = pre_data * 1000
-                        if (list_id == 0):
-                            print(pre_data)
-                        pre_data = pre_data * 1.0 # TODO: Fix
-                        pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
-                        for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
-                        scale_factors_data = np.full(self.ndim, 1.0, dtype=np.float32)
-                        for_data = pre_data - for_bases
                         lep_min = 0
                         lep_max = 127 # TODO: Fix
+                        # Uncomment to use per-partition scaling factor (not helpful)
+                        global_scale_factor = float(lep_max) / data_range
+                        pre_data = pre_data * global_scale_factor
+                        pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                        for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                        scale_factors_data = np.full(self.ndim, global_scale_factor, dtype=np.float32)
+                        for_data = pre_data - for_bases
                         data_norms = np.linalg.norm(pre_data, axis=1)
                     elif not use_exceptions:
 
@@ -282,7 +285,7 @@ class BaseIndexPDXIVF:
                 if np.any(for_data > lep_max) or np.any(for_data < lep_min):  # TODO: We are assuming data fits in 8-bits
                     if lep_bw == 8 or lep_bw == 7:  # I am only interested of knowing this if we use 8-bits
                         print(f'LEP overflow when converting to uint8 in partition {list_id}')
-                    print(for_data)
+                        # print(for_data)
                     exceptions_count += ((for_data > lep_max) | (for_data < lep_min)).sum()
                     # TODO: Support exceptions
                     for_data = np.clip(for_data, lep_min, lep_max)  # Perhaps using a mask (e.g. matrix & 0x3F) is faster
