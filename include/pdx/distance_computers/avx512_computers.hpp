@@ -454,6 +454,12 @@ public:
             const int32_t * dim_clip_value,
             const float * scaling_factors
     ){
+        const __m512i dumb_mask = _mm512_setr_epi32(
+            0xFFFFFFFF, 0,         0,         0,
+            0,          0xFFFFFFFF,0,         0,
+            0,          0,         0xFFFFFFFF,0,
+            0,          0,         0,         0xFFFFFFFF
+        );
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -468,7 +474,10 @@ public:
                 __m512i vec_scales = _mm512_broadcast_f32x4(_mm_loadu_ps(scaling_factors + dimension_idx));
                 for (; i + 4 <= n_vectors; i+=4) {
                     // Unfortunately, I am only going 4 vectors at a time (4x4)
-                    __m512 res = _mm512_load_ps(&distances_p[i]); // 16 values, but only going to use 4
+                    //__m512 res = _mm512_load_ps(&distances_p[i]); // 16 values, but only going to use 4
+                    __m512 res = _mm512_broadcast_f32x4(_mm_load_ps(&distances_p[i])); // 16 values, but only going to use 4
+                    res = _mm512_and_ps(res, _mm512_castsi512_ps(dumb_mask));
+
                     __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i * 4]))); // 16 values at a time from 4 vectors
 
                     // Problem: 4 values of vec2 need to sum only to 1 value of res
