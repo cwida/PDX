@@ -469,7 +469,7 @@ public:
                 for (; i + 4 <= n_vectors; i+=4) {
                     // Unfortunately, I am only going 4 vectors at a time (4x4)
                     __m512 res = _mm512_load_ps(&distances_p[i]); // 16 values, but only going to use 4
-                    __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i]))); // 16 values at a time from 4 vectors
+                    __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i * 16]))); // 16 values at a time from 4 vectors
 
                     // Problem: 4 values of vec2 need to sum only to 1 value of res
                     __m512 diff = _mm512_sub_ps(vec1, vec2);
