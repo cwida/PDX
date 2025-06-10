@@ -472,7 +472,6 @@ public:
                     __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&data[offset_to_dimension_start + i]))); // 16 values at a time from 4 vectors
 
                     // Problem: 4 values of vec2 need to sum only to 1 value of res
-
                     __m512 diff = _mm512_sub_ps(vec1, vec2);
                     __m512 tmp_ = _mm512_mul_ps(diff, diff);
                     res = _mm512_fmadd_ps(tmp_, vec_scales, res);
@@ -488,12 +487,16 @@ public:
                     // 4) s2 now holds the 4-sum in *every* element of each 128-bit lane:
                     //    idxs 0,1,2,3 all = res1; 4–7 = res2; 8–11 = res3; 12–15 = res4
 
-                    // 5) build a mask picking one element out of each 4-float lane:
-                    //    bits 0,4,8,12 are set → mask = 0b0001_0001_0001_0001 = 0x1111
-                    const __mmask16 m = 0x1111;
+                    __m128 l0 = _mm512_castps512_ps128(s2);           // lane 0 → [res1,res1,res1,res1]
+                    __m128 l1 = _mm512_extractf32x4_ps(s2, 1);        // lane 1 → [res2,…]
+                    __m128 l2 = _mm512_extractf32x4_ps(s2, 2);        // lane 2 → [res3,…]
+                    __m128 l3 = _mm512_extractf32x4_ps(s2, 3);        // lane 3 → [res4,…]
 
-                    // 6) compress-store only those four elements into ‘out[0..3]’
-                    _mm512_mask_compressstoreu_ps(distances_p + i, m, s2);
+                    // 5) convert low element of each to scalar and store
+                    distances_p[i] = _mm_cvtss_f32(l0);
+                    distances_p[i + 1] = _mm_cvtss_f32(l1);
+                    distances_p[i + 2] = _mm_cvtss_f32(l2);
+                    distances_p[i + 3] = _mm_cvtss_f32(l3);
 
                     //_mm512_store_ps(&distances_p[i], res);
                     // Cannot use dot-product
