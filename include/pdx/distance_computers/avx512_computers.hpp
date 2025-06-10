@@ -495,19 +495,19 @@ public:
 
                     // 4) s2 now holds the 4-sum in *every* element of each 128-bit lane:
                     //    idxs 0,1,2,3 all = res1; 4–7 = res2; 8–11 = res3; 12–15 = res4
-                    // __m128 l0 = _mm512_castps512_ps128(s2);           // lane 0 → [res1,res1,res1,res1]
-                    // __m128 l1 = _mm512_extractf32x4_ps(s2, 1);        // lane 1 → [res2,…]
-                    // __m128 l2 = _mm512_extractf32x4_ps(s2, 2);        // lane 2 → [res3,…]
-                    // __m128 l3 = _mm512_extractf32x4_ps(s2, 3);        // lane 3 → [res4,…]
-                    // // 5) convert low element of each to scalar and store
-                    // distances_p[i] = _mm_cvtss_f32(l0);
-                    // distances_p[i + 1] = _mm_cvtss_f32(l1);
-                    // distances_p[i + 2] = _mm_cvtss_f32(l2);
-                    // distances_p[i + 3] = _mm_cvtss_f32(l3);
-                    const __mmask16 m = 0x1111;
-
-                    // 6) compress-store only those four elements into ‘out[0..3]’
-                    _mm512_mask_compressstoreu_ps(distances_p + i, m, s2);
+                    __m128 l0 = _mm512_castps512_ps128(s2);           // lane 0 → [res1,res1,res1,res1]
+                    __m128 l1 = _mm512_extractf32x4_ps(s2, 1);        // lane 1 → [res2,…]
+                    __m128 l2 = _mm512_extractf32x4_ps(s2, 2);        // lane 2 → [res3,…]
+                    __m128 l3 = _mm512_extractf32x4_ps(s2, 3);        // lane 3 → [res4,…]
+                    // 5) convert low element of each to scalar and store
+                    distances_p[i] = _mm_cvtss_f32(l0);
+                    distances_p[i + 1] = _mm_cvtss_f32(l1);
+                    distances_p[i + 2] = _mm_cvtss_f32(l2);
+                    distances_p[i + 3] = _mm_cvtss_f32(l3);
+                    // const __mmask16 m = 0x1111;
+                    //
+                    // // 6) compress-store only those four elements into ‘out[0..3]’
+                    // _mm512_mask_compressstoreu_ps(distances_p + i, m, s2);
 
                     //_mm512_store_ps(&distances_p[i], res);
                     // Cannot use dot-product
