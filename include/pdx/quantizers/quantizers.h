@@ -214,7 +214,7 @@ public:
             vst1_u8(quantized_query + i, result_1);
             vst1_u8(quantized_query + i + 8, result_2);
         }
-#elif defined(__AVX512F__)
+#elif defined(__AVX512F__DELETELATER)
         __m512i zero = _mm512_setzero_si512();
         __m512i cur_max  = _mm512_set1_epi8(MAX_VALUE);
         for (size_t i = 0; i < num_dimensions; i += 64) {
