@@ -652,8 +652,8 @@ public:
                 uint16_t exc_offset_0 = 0;
                 uint16_t exc_offset_1 = 0;
                 /////////////////////////////////////////////////
-                __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
-                __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
+                //__m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
+                //__m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
                 for (; i + 16 <= n_vectors; i+=16) {
                     __m512 res = _mm512_load_ps(&distances_p[i]); // touching 16 vectors
 
@@ -669,19 +669,19 @@ public:
                     __mmask16 exc_mask_0 = _mm_cmpeq_epi8_mask(raw_data_0, EXC_ESCAPE_CODE);
                     __mmask16 exc_mask_1 = _mm_cmpeq_epi8_mask(raw_data_1, EXC_ESCAPE_CODE);
                     // Detect where I must read exceptions from
-                    // __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
-                    // __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
+                    __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
+                    __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
                     // // Increase offset counters of exception array
-                    // exc_offset_0 += _mm_popcnt_u32((uint32_t)exc_mask_0);
-                    // exc_offset_1 += _mm_popcnt_u32((uint32_t)exc_mask_1);
+                    exc_offset_0 += _mm_popcnt_u32((uint32_t)exc_mask_0);
+                    exc_offset_1 += _mm_popcnt_u32((uint32_t)exc_mask_1);
                     // Mask original vectors
-                    // raw_data_0 = _mm_mask_expand_epi8(raw_data_0, exc_mask_0, next_exceptions_0);
-                    // raw_data_1 = _mm_mask_expand_epi8(raw_data_1, exc_mask_1, next_exceptions_1);
+                    raw_data_0 = _mm_mask_expand_epi8(raw_data_0, exc_mask_0, next_exceptions_0);
+                    raw_data_1 = _mm_mask_expand_epi8(raw_data_1, exc_mask_1, next_exceptions_1);
                     // Interleave with exceptions vectors
-                    // __m512 vec_a_0 = _mm512_mask_blend_ps(exc_mask_0,  vec_a_orig_0, exc_query_0);
-                    // __m512 vec_c_0 = _mm512_mask_blend_ps(exc_mask_0, vec_c_orig_0, exc_scaling_0);
-                    // __m512 vec_a_1 = _mm512_mask_blend_ps(exc_mask_1, vec_a_orig_1, exc_query_1);
-                    // __m512 vec_c_1 = _mm512_mask_blend_ps(exc_mask_1, vec_c_orig_1, exc_scaling_1);
+                    __m512 vec_a_0 = _mm512_mask_blend_ps(exc_mask_0,  vec_a_orig_0, exc_query_0);
+                    __m512 vec_c_0 = _mm512_mask_blend_ps(exc_mask_0, vec_c_orig_0, exc_scaling_0);
+                    __m512 vec_a_1 = _mm512_mask_blend_ps(exc_mask_1, vec_a_orig_1, exc_query_1);
+                    __m512 vec_c_1 = _mm512_mask_blend_ps(exc_mask_1, vec_c_orig_1, exc_scaling_1);
                     ////////////////////////////////////
 
                     // From uint8 to float
@@ -690,23 +690,23 @@ public:
 
                     // DELETE LATER
                     // Sub, multiply and fmadd on dimension 0
-                    __m512 diff_0 = _mm512_sub_ps(vec_a_orig_0, vec_b_0);
-                    __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
-                    res = _mm512_fmadd_ps(tmp_0, vec_c_orig_0, res);
-                    // Sub, multiply and fmadd on dimension 1
-                    __m512 diff_1 = _mm512_sub_ps(vec_a_orig_1, vec_b_1);
-                    __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
-                    res = _mm512_fmadd_ps(tmp_1, vec_c_orig_1, res);
+                    // __m512 diff_0 = _mm512_sub_ps(vec_a_orig_0, vec_b_0);
+                    // __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
+                    // res = _mm512_fmadd_ps(tmp_0, vec_c_orig_0, res);
+                    // // Sub, multiply and fmadd on dimension 1
+                    // __m512 diff_1 = _mm512_sub_ps(vec_a_orig_1, vec_b_1);
+                    // __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
+                    // res = _mm512_fmadd_ps(tmp_1, vec_c_orig_1, res);
                     //////////
 
                     // Sub, multiply and fmadd on dimension 0
-                    // __m512 diff_0 = _mm512_sub_ps(vec_a_0, vec_b_0);
-                    // __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
-                    // res = _mm512_fmadd_ps(tmp_0, vec_c_0, res);
-                    // // Sub, multiply and fmadd on dimension 1
-                    // __m512 diff_1 = _mm512_sub_ps(vec_a_1, vec_b_1);
-                    // __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
-                    // res = _mm512_fmadd_ps(tmp_1, vec_c_1, res);
+                    __m512 diff_0 = _mm512_sub_ps(vec_a_0, vec_b_0);
+                    __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
+                    res = _mm512_fmadd_ps(tmp_0, vec_c_0, res);
+                    // Sub, multiply and fmadd on dimension 1
+                    __m512 diff_1 = _mm512_sub_ps(vec_a_1, vec_b_1);
+                    __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
+                    res = _mm512_fmadd_ps(tmp_1, vec_c_1, res);
                     // Store distances
                     _mm512_store_ps(&distances_p[i], res);
                 }
