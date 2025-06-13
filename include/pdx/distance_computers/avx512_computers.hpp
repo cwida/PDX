@@ -749,7 +749,7 @@ public:
             const float * scaling_factors_exceptions
     ){
         //std::cout << n_exceptions << std::endl;
-        alignas(64) static float distance_correction[1024];
+        alignas(64) static float distance_correction[256];
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=1) {
             uint32_t dimension_idx = dim_idx;
             size_t offset_to_dimension_start = dimension_idx * n_exceptions;
@@ -788,17 +788,8 @@ public:
                 distance_correction[i] = good_term - bad_term;
             }
             size_t j = 0;
-            for (; j + 16 < n_exceptions; j+=16) {
-                __m512 vec_corr = _mm512_load_ps(distance_correction + j);
-                __m512i vec_pos = _mm512_cvtepu16_epi32(_mm256_loadu_si256((__m256i*)(exceptions_positions + offset_to_dimension_start + j)));
-                _mm512_i32scatter_ps(
-                    distances_p,                      // base address
-                    vec_pos,                          // indices
-                    vec_corr,                         // values to add
-                    sizeof(DISTANCE_TYPE)            // scale
-                );
-            }
             for (; j < n_exceptions; j++) {
+                // I cannot use scatter as this is an accumulation
                 uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + j];
                 distances_p[vector_idx] += distance_correction[j];
             }
