@@ -1049,7 +1049,6 @@ public:
         );
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
-        //this->end_to_end_clock.Tic();
 #endif
         Start(quant.asymmetric_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
@@ -1060,15 +1059,21 @@ public:
                 vectorgroup.for_bases, vectorgroup.scale_factors,
                 nullptr, nullptr
             );
+#ifdef BENCHMARK_TIME
+            this->end_to_end_clock.Tic();
+#endif
             Warmup(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
+#ifdef BENCHMARK_TIME
+            this->end_to_end_clock.Toc();
+#endif
             Prune(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
-#ifdef BENCHMARK_TIME
-        //this->end_to_end_clock.Toc();
-#endif
+// #ifdef BENCHMARK_TIME
+//         this->end_to_end_clock.Toc();
+// #endif
         return BuildResultSet(k);
     }
 
