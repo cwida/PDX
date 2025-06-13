@@ -638,7 +638,7 @@ public:
                 for (; i + 16 <= n_vectors; i+=16) {
                     __m512 res = _mm512_load_ps(&distances_p[i]); // touching 16 vectors
 
-                    __m128i raw_data = _mm_loadu_si128((__m128i*)&data[offset_to_dimension_start + i * 4]);
+                    __m128i raw_data = _mm_loadu_si128((__m128i*)&data[offset_to_dimension_start + i]);
                     __m128i raw_data_0 = _mm_and_si128(_mm_srli_epi16(raw_data, 4), low_mask);
                     __m128i raw_data_1 = _mm_and_si128(raw_data, low_mask);
 
