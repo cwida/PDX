@@ -748,7 +748,7 @@ public:
             const float * scaling_factors,
             const float * scaling_factors_exceptions
     ){
-        std::cout << n_exceptions << std::endl;
+        //std::cout << n_exceptions << std::endl;
         alignas(64) static float distance_correction[1024];
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=1) {
             uint32_t dimension_idx = dim_idx;
