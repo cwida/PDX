@@ -652,7 +652,8 @@ public:
                 uint16_t exc_offset_0 = 0;
                 uint16_t exc_offset_1 = 0;
                 /////////////////////////////////////////////////
-
+                __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
+                __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
                 for (; i + 16 <= n_vectors; i+=16) {
                     __m512 res = _mm512_load_ps(&distances_p[i]); // touching 16 vectors
 
@@ -668,11 +669,11 @@ public:
                     __mmask16 exc_mask_0 = _mm_cmpeq_epi8_mask(raw_data_0, EXC_ESCAPE_CODE);
                     __mmask16 exc_mask_1 = _mm_cmpeq_epi8_mask(raw_data_1, EXC_ESCAPE_CODE);
                     // Detect where I must read exceptions from
-                    __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
-                    __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
+                    //__m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
+                    //__m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
                     // Increase offset counters of exception array
-                    exc_offset_0 += _mm_popcnt_u32((uint32_t)exc_mask_0);
-                    exc_offset_1 += _mm_popcnt_u32((uint32_t)exc_mask_1);
+                    //exc_offset_0 += _mm_popcnt_u32((uint32_t)exc_mask_0);
+                    //exc_offset_1 += _mm_popcnt_u32((uint32_t)exc_mask_1);
                     // Mask original vectors
                     raw_data_0 = _mm_mask_expand_epi8(raw_data_0, exc_mask_0, next_exceptions_0);
                     raw_data_1 = _mm_mask_expand_epi8(raw_data_1, exc_mask_1, next_exceptions_1);
