@@ -71,10 +71,10 @@ def pack_4bit(in_array, out_array):
         out_array[128 * 3 + i] = x6 | (x7 << 4)
 
 
-def pack_4bit_symmetric(in_array, out_array):
+def pack_4bit_symmetric(in_array, out_array, original_length=1024):
     j = 0
-    for i in range(0, 1024, 2):
+    for i in range(0, original_length, 2):
         x0 = in_array[i] & 0x0F
         x1 = in_array[i + 1] & 0x0F
-        out_array[j] = (x1 << 4) | x0
+        out_array[j] = (x0 << 4) | x1
         j += 1

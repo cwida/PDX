@@ -139,7 +139,7 @@ namespace PDX {
         float *scale_factors_exceptions{};
         float *norms{};
         uint8_t *data_exceptions = nullptr;
-        uint32_t *exceptions_positions = nullptr;
+        uint16_t *exceptions_positions = nullptr;
     };
 
 };

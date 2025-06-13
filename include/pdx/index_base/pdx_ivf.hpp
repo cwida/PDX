@@ -2,6 +2,7 @@
 #define PDX_DATA_LOADER_HPP
 
 #include <cstdint>
+#include <cassert>
 #include <vector>
 #include <string>
 #include <numeric>
@@ -237,12 +238,13 @@ public:
     }
 };
 
-
+// LEP 8 always admit 4-bit data
 template <>
 class IndexPDXIVF<ASYMMETRIC_LEP_U8> {
 public:
 
     using VECTORGROUP_TYPE = Vectorgroup<ASYMMETRIC_LEP_U8>;
+    const size_t BW = 4;
 
     uint32_t num_dimensions{};
     uint32_t num_vectorgroups{};
@@ -285,7 +287,12 @@ public:
             VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.num_embeddings = nums_embeddings[i];
             vectorgroup.data = (uint8_t *) next_value;
-            next_value += sizeof(uint8_t) * vectorgroup.num_embeddings * num_dimensions;
+            // Each group of 4 dimensions in the vectorgroup is aligned at the byte level
+            for (size_t d = 0; d < num_dimensions; d+=4){
+                // They should be the same, as I am grouping every 4 dimensions an 4*4 = 16 --always byte aligned
+                assert((BW * vectorgroup.num_embeddings * 4 / 8) == (AlignValue<uint32_t, 8>(BW * vectorgroup.num_embeddings * 4) / 8));
+                next_value += AlignValue<uint32_t, 8>(BW * vectorgroup.num_embeddings * 4) / 8;
+            }
         }
         for (size_t i = 0; i < num_vectorgroups; ++i) {
             VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
@@ -299,6 +306,8 @@ public:
             next_value += sizeof(uint32_t) * num_dimensions;
             vectorgroup.scale_factors = (float *) next_value;
             next_value += sizeof(uint32_t) * num_dimensions;
+            vectorgroup.norms = (float *) next_value;
+            next_value += sizeof(float) * vectorgroup.num_embeddings;
 
             vectorgroup.num_exceptions = ((uint32_t *) next_value)[0];
             next_value += sizeof(uint32_t);
@@ -311,8 +320,8 @@ public:
 
             if (vectorgroup.num_exceptions == 0) continue;
 
-            vectorgroup.exceptions_positions = (uint32_t *) next_value;
-            next_value += sizeof(uint32_t) * (vectorgroup.num_exceptions * num_dimensions);
+            vectorgroup.exceptions_positions = (uint16_t *) next_value;
+            next_value += sizeof(uint16_t) * (vectorgroup.num_exceptions * num_dimensions);
 
             vectorgroup.data_exceptions = (uint8_t *) next_value;
             next_value += sizeof(uint8_t) * (vectorgroup.num_exceptions * num_dimensions);

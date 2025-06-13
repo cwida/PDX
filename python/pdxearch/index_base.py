@@ -2,6 +2,9 @@ import numpy as np
 import sys
 import math
 from bitarray import bitarray
+
+from python.pdxearch.fastlanes_pack import pack_4bit_symmetric
+
 np.set_printoptions(threshold=np.inf, edgeitems=3, linewidth=100)
 
 from typing import List
@@ -119,19 +122,19 @@ class BaseIndexPDXIVF:
                     for_data = pre_data - for_bases
                     lep_min = 0
                     lep_max = 64
-                elif lep_bw == 4:   # LEP-4
-                    pre_data = pre_data * 1000
-                    pre_data = pre_data * 0.0625
-                    pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
-                    for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
-                    for_data = pre_data - for_bases
-                    lep_min = 0
-                    lep_max = 16
+                # elif lep_bw == 4:   # LEP-4 TODO" Move to global_params
+                #     pre_data = pre_data * 1000
+                #     pre_data = pre_data * 0.0625
+                #     pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
+                #     for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                #     for_data = pre_data - for_bases
+                #     lep_min = 0
+                #     lep_max = 16
                 else:  # LEP-8
                     if use_global_params:
                         # Global scaling
                         lep_min = 0
-                        lep_max = 127 # TODO: Fix
+                        lep_max = 255 # TODO: Fix
                         # Uncomment to use per-partition scaling factor (not helpful)
                         global_scale_factor = float(lep_max) / data_range
                         pre_data = pre_data * global_scale_factor
@@ -171,6 +174,7 @@ class BaseIndexPDXIVF:
                         data_norms = np.linalg.norm(pre_data, axis=1)
                         # print(len(data_norms))
                     else:
+                        data_norms = np.linalg.norm(pre_data, axis=1)
                         if list_id % 100 == 0:
                             print(f'Encoding LEP for partition {list_id}/{self.core_index.index.nlist}')
                         # Exceptions are encoded first at 255
@@ -189,7 +193,9 @@ class BaseIndexPDXIVF:
                         if len(pre_data) == 1:
                             exceptions_n = 0
                         else:
-                            exceptions_n = math.ceil(num_list_embeddings * 0.1) # From each side
+                            EXCEPTIONS_ESCAPE_CODE = 15
+                            EXCEPTIONS_PERCENTAGE = 0.05 # x% From each side of the distribution
+                            exceptions_n = math.ceil(num_list_embeddings * EXCEPTIONS_PERCENTAGE)
                             rows, cols = for_data.shape
                             low_idx = np.argpartition(for_data, exceptions_n, axis=0)[:exceptions_n, :]
                             high_idx = np.argpartition(for_data, -exceptions_n, axis=0)[-exceptions_n:, :]
@@ -246,10 +252,18 @@ class BaseIndexPDXIVF:
                             #     print("There should not be any negatives here:")
                             #     print(for_data.min(axis=0))
                             #     print(for_data.max(axis=0))
+
+                            # 14 because 15 is reserved as a escape code
                             scale_factors_data = np.where(col_range != 0, 15 / col_range, 0).astype(dtype=np.float32)
+
                             # if (len(for_data) < 20):
                             #     print('FOR DATA BEFORE LAST SCALING', for_data[:, 0:10])
                             for_data = (for_data * scale_factors_data).round(decimals=0).astype(dtype=np.int32)
+
+                            # Putting escape code in place of exceptions
+                            for_data[low_idx.ravel(), low_col_idx.ravel()] = 0 # EXCEPTIONS_ESCAPE_CODE
+                            for_data[high_idx.ravel(), high_col_idx.ravel()] = 0 #EXCEPTIONS_ESCAPE_CODE
+
                             # print(for_data)
                             # print(for_data_exceptions)
 
@@ -309,7 +323,7 @@ class BaseIndexPDXIVF:
                         partition.scale_factors_exceptions = scale_factors_exceptions.astype(dtype=np.float32)
 
                         partition.exceptions_data = for_data_exceptions.astype(dtype=np.uint8)
-                        partition.exceptions_pos = exception_indices.astype(dtype=np.int32)
+                        partition.exceptions_pos = exception_indices.astype(dtype=np.int16)
                     else:
                         partition.for_bases_exceptions = np.full(self.ndim, 0.0, dtype=np.float32)
                         partition.scale_factors_exceptions = np.full(self.ndim, 1.0, dtype=np.float32)
@@ -373,15 +387,35 @@ class BaseIndexPDXIVF:
                         assert h_dims % 64 == 0
                         tmp_block = self.partitions[i].blocks[p][:, :v_dims]
                         rows, _ = tmp_block.shape
-                        pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
+                        # pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
+
+                        # TODO: Reshape with 2 dimensions together so that the unpacking is better
+                        pdx_4_block = tmp_block.reshape(rows, -1, 2).transpose(1, 0, 2).reshape(-1)
                         lep_bw = kwargs.get('lep_bw', 8)
                         h_dims_block = kwargs.get('h_dims_block', 64)
                         assert h_dims % h_dims_block == 0
                         if lep_bw == 8 or lep_bw == 7:  # Vertical Dimensions
-                            data.extend(pdx_4_block.tobytes("C"))
+                            data.extend(pdx_4_block.tobytes("C")) # Fully decomposed now, was C
+                        else:
+                            # For now, we only support 4-bit width
+                            total_values = len(pdx_4_block)
+                            assert(total_values % 2 == 0)
+                            assert(total_values % 4 == 0)
+                            out_array = np.zeros(int(total_values / 2), dtype=np.uint8)
+                            pack_4bit_symmetric(pdx_4_block, out_array, total_values)
+                            data.extend(out_array.tobytes("C")) # Fully decomposed now, was C
+
                         # Horizontal block (rest)
                         pdx_64_block = self.partitions[i].blocks[p][:, v_dims:].reshape(rows, -1, h_dims_block).transpose(1, 0, 2).reshape(-1)
-                        data.extend(pdx_64_block.tobytes("C"))
+                        if lep_bw == 8 or lep_bw == 7:
+                            data.extend(pdx_64_block.tobytes("C"))
+                        else:
+                            total_values = len(pdx_64_block)
+                            assert(total_values % 2 == 0)
+                            assert(total_values % 4 == 0)
+                            out_array = np.zeros(int(total_values / 2), dtype=np.uint8)
+                            pack_4bit_symmetric(pdx_64_block, out_array, total_values)
+                            data.extend(out_array.tobytes("C"))
                     elif _type == 'pdx-4':
                         tmp_block = self.partitions[i].blocks[p]
                         rows, _ = tmp_block.shape
@@ -392,28 +426,16 @@ class BaseIndexPDXIVF:
                         if lep_bw == 8 or lep_bw == 7:
                             data.extend(pdx_4_block.tobytes("C"))
                         else:
+                            # For now, we only support 4-bit width
                             total_values = len(pdx_4_block)
-                            padding_length = (1024 - total_values % 1024) % 1024  # Fastlanes needs 1024 values
-                            pdx_4_block = np.pad(pdx_4_block, (0, padding_length), mode='constant', constant_values=0)
-                            out_array = np.zeros(packed_length(len(pdx_4_block), lep_bw), dtype=np.uint8)
-                            compression_unit_length = packed_length(1024, lep_bw)
+                            assert(total_values % 2 == 0)
+                            assert(total_values % 4 == 0)
+                            out_array = np.zeros(int(total_values / 2), dtype=np.uint8)
                             if lep_bw == 4:
-                                compression_unit_offset = 0
-                                for i in range(0, len(pdx_4_block), 1024):
-                                    #pack_4bit(pdx_4_block[i: i+1024], out_array[compression_unit_offset: compression_unit_offset+compression_unit_length])
-                                    pack_4bit_symmetric(pdx_4_block[i: i+1024], out_array[compression_unit_offset: compression_unit_offset+compression_unit_length])
-                                    compression_unit_offset += compression_unit_length
+                                pack_4bit_symmetric(pdx_4_block, out_array, total_values)
                             elif lep_bw == 6:
-                                compression_unit_offset = 0
-                                for i in range(0, len(pdx_4_block), 1024):
-                                    pack_6bit(pdx_4_block[i: i+1024], out_array[compression_unit_offset: compression_unit_offset+compression_unit_length])
-                                    # pack_4bit_symmetric(pdx_4_block[i: i+1024], out_array[compression_unit_offset: compression_unit_offset+compression_unit_length])
-                                    compression_unit_offset += compression_unit_length
+                                pass
                             data.extend(out_array.tobytes("C"))
-                            # if len(tmp_bitarray):  # Byte aligned every 4 dimensions
-                            #     data.extend(tmp_bitarray.tobytes())
-                        # if len(tmp_bitarray):  # Byte aligned every partition
-                        #     data.extend(tmp_bitarray.tobytes())
                     elif _type == 'n-ary':
                         data.extend(self.partitions[i].blocks[p].tobytes("C"))
                     elif _type == 'dual':

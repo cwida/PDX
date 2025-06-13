@@ -70,7 +70,7 @@ def generate_lep_ivf(dataset_name: str, normalize=True):
     preprocessor.preprocess(data, inplace=True, normalize=True)
     print('Saving')
     # PDX FLAT BLOCKIFIED
-    base_idx._to_pdx(data, _type='pdx-v4-h', lep=True, lep_bw=8, centroids_preprocessor=preprocessor, use_original_centroids=True, use_exceptions=True)
+    base_idx._to_pdx(data, _type='pdx-v4-h', lep=True, lep_bw=4, centroids_preprocessor=preprocessor, use_original_centroids=True, use_exceptions=True)
     base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-lep-ivf'))
 
     preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-lep-matrix'))
@@ -211,19 +211,19 @@ if __name__ == "__main__":
     # The real one for lep
     # generate_lep_ivf('contriever-768')
     # generate_lep_ivf('gist-960-euclidean')
-    # generate_lep_ivf('openai-1536-angular')
-    #generate_lep_ivf('instructorxl-arxiv-768')
+    generate_lep_ivf('openai-1536-angular')
+    generate_lep_ivf('instructorxl-arxiv-768')
 
     # The real one for asymmetric
-    # generate_u8_vh_ivf('openai-1536-angular')
-    # generate_u8_vh_ivf('instructorxl-arxiv-768')
+    generate_u8_vh_ivf('openai-1536-angular')
+    generate_u8_vh_ivf('instructorxl-arxiv-768')
     #generate_u8_vh_ivf('gist-960-euclidean')
     # generate_u8_vh_ivf('contriever-768')
     # generate_u8_vh_ivf('msong-420')
 
     # The real one for symmetric
     generate_u8_vh_ivf_symmetric('openai-1536-angular')
-    # generate_u8_vh_ivf_symmetric('instructorxl-arxiv-768')
+    generate_u8_vh_ivf_symmetric('instructorxl-arxiv-768')
     # generate_u8_vh_ivf_symmetric('gist-960-euclidean')
     # generate_u8_vh_ivf_symmetric('contriever-768')
     # generate_u8_vh_ivf_symmetric('msong-420')
