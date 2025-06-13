@@ -678,10 +678,10 @@ public:
                     // raw_data_0 = _mm_mask_expand_epi8(raw_data_0, exc_mask_0, next_exceptions_0);
                     // raw_data_1 = _mm_mask_expand_epi8(raw_data_1, exc_mask_1, next_exceptions_1);
                     // Interleave with exceptions vectors
-                    __m512 vec_a_0 = _mm512_mask_blend_ps(exc_mask_0,  vec_a_orig_0, exc_query_0);
-                    __m512 vec_c_0 = _mm512_mask_blend_ps(exc_mask_0, vec_c_orig_0, exc_scaling_0);
-                    __m512 vec_a_1 = _mm512_mask_blend_ps(exc_mask_1, vec_a_orig_1, exc_query_1);
-                    __m512 vec_c_1 = _mm512_mask_blend_ps(exc_mask_1, vec_c_orig_1, exc_scaling_1);
+                    // __m512 vec_a_0 = _mm512_mask_blend_ps(exc_mask_0,  vec_a_orig_0, exc_query_0);
+                    // __m512 vec_c_0 = _mm512_mask_blend_ps(exc_mask_0, vec_c_orig_0, exc_scaling_0);
+                    // __m512 vec_a_1 = _mm512_mask_blend_ps(exc_mask_1, vec_a_orig_1, exc_query_1);
+                    // __m512 vec_c_1 = _mm512_mask_blend_ps(exc_mask_1, vec_c_orig_1, exc_scaling_1);
                     ////////////////////////////////////
 
                     // From uint8 to float
