@@ -748,6 +748,7 @@ public:
             const float * scaling_factors,
             const float * scaling_factors_exceptions
     ){
+        alignas(64) static float distance_correction[1024];
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=1) {
             uint32_t dimension_idx = dim_idx;
             size_t offset_to_dimension_start = dimension_idx * n_exceptions;
@@ -755,16 +756,38 @@ public:
             // Correct current L2
             // This bad term can be computer on the fly, but my guess is it will not take much time
             float bad_term = quant_query[dimension_idx] * quant_query[dimension_idx] * scaling_factors[dimension_idx];
-            #pragma clang loop vectorize(enable)
-            for (; i < n_exceptions; ++i) {
-                uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + i];
+            __m512 vec_bad_term = _mm512_set1_ps(bad_term);
+            __m512 vec_exc_query = _mm512_set1_ps(exceptions_query[dimension_idx]);
+            __m512 vec_exc_scaling_factor = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx]);
+
+            for (; i + 16 < n_exceptions; i+=16) {
+                //__m512 vec_ids = _mm512_load_ps(exceptions_positions + offset_to_dimension_start + i);
+
+                __m128i raw_exc_data = _mm_loadu_si128((__m128i*)&exceptions_data[offset_to_dimension_start + i]);
+                __m512 vec_exc_data = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(raw_exc_data));
+
+                __m512 vec_good_terms = _mm512_sub_ps(vec_exc_query, vec_exc_data);
+                __m512 tmp = _mm512_mul_ps(vec_good_terms, vec_good_terms);
+                __m512 dis_correction = _mm512_mul_ps(tmp, vec_exc_scaling_factor);
+                dis_correction = _mm512_sub_ps(dis_correction, vec_bad_term);
+                _mm512_store_ps(&distance_correction[i], dis_correction);
+
+                // Scalar kernel
+                // uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + i];
                 // Calculate the real L2
+                //float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
+                //good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
+                //distances_p[vector_idx] += good_term - bad_term;
+            }
+            for (; i < n_exceptions; i++) {
+                // Scalar kernel
                 float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
                 good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
-
-                // Since there was never a bad term, this is wrong.
-                //distances_p[vector_idx] += good_term - bad_term;
-                distances_p[vector_idx] += good_term - bad_term;
+                distance_correction[i] += good_term - bad_term;
+            }
+            for (size_t j = 0; j < n_exceptions; j++) {
+                uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + i];
+                distances_p[vector_idx] += distance_correction[j];
             }
         }
     }
