@@ -790,7 +790,7 @@ public:
             size_t j = 0;
             for (; j + 16 < n_exceptions; j+=16) {
                 __m512 vec_corr = _mm512_load_ps(distance_correction + j);
-                __m256i raw_pos16 = _mm256_loadu_si256((__m256i*)(offset_to_dimension_start + j));
+                __m256i raw_pos16 = _mm512_cvtepu16_epi32(_mm256_loadu_si256((__m256i*)(exceptions_positions + offset_to_dimension_start + j)));
                 __m512 vec_pos = _mm512_cvtepu16_epi32(raw_pos16);
                 _mm512_i32scatter_ps(
                     distances_p,                      // base address
