@@ -555,6 +555,7 @@ protected:
         //std::cout << "Pruning at" << current_dimension_idx << std::endl;
         GetPruningThreshold(k, heap);
         InitPositionsArray(n_vectors);
+        return;
         size_t cur_n_vectors_not_pruned = 0;
         // To count all bytes that went to the PRUNE phase
         //prune_bytes += (pdx_data.num_dimensions - current_dimension_idx) * n_vectors_not_pruned;
