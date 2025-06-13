@@ -755,6 +755,7 @@ public:
             // Correct current L2
             // This bad term can be computer on the fly, but my guess is it will not take much time
             float bad_term = quant_query[dimension_idx] * quant_query[dimension_idx] * scaling_factors[dimension_idx];
+            #pragma clang loop vectorize(enable)
             for (; i < n_exceptions; ++i) {
                 uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + i];
                 // Calculate the real L2
