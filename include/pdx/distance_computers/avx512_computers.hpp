@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cassert>
 #include <immintrin.h>
 #include "pdx/common.hpp"
 #include "pdx/distance_computers/scalar_computers.hpp"
@@ -697,6 +698,10 @@ public:
                     // Store distances
                     _mm512_store_ps(&distances_p[i], res);
                 }
+                std::cout << exc_offset_0 << std::endl;
+                std::cout << exc_offset_1 << std::endl;
+                assert(exc_offset_0 == n_exceptions);
+                assert(exc_offset_1 == n_exceptions);
             }
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
