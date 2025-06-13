@@ -508,21 +508,21 @@ protected:
 // #ifdef BENCHMARK_TIME
 //                     this->end_to_end_clock.Toc();
 // #endif
-                    // distance_computer::PatchVertical(
-                    //     query,
-                    //     quant.asymmetric_exceptions_query,
-                    //     pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
-                    //     pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
-                    //     pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
-                    //     current_dimension_idx, // start
-                    //     last_dimension_to_fetch, // end
-                    //     pruning_distances,
-                    //     pruning_positions,
-                    //     indices_dimensions.data(),
-                    //     quant.dim_clip_value,
-                    //     quant.cur_scaling_factors,
-                    //     quant.cur_exceptions_scaling_factors
-                    // );
+                    distance_computer::PatchVertical(
+                        query,
+                        quant.asymmetric_exceptions_query,
+                        pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                        pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                        pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                        current_dimension_idx, // start
+                        last_dimension_to_fetch, // end
+                        pruning_distances,
+                        pruning_positions,
+                        indices_dimensions.data(),
+                        quant.dim_clip_value,
+                        quant.cur_scaling_factors,
+                        quant.cur_exceptions_scaling_factors
+                    );
                 } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
                     distance_computer::Vertical(query, data, n_vectors, n_vectors, current_dimension_idx,
                                                      last_dimension_to_fetch, pruning_distances,
