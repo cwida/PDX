@@ -757,21 +757,21 @@ public:
             const float * scaling_factors,
             const float * scaling_factors_exceptions
     ){
-        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=1) {
-            uint32_t dimension_idx = dim_idx;
-            size_t offset_to_dimension_start = dimension_idx * n_exceptions;
-            size_t i = 0;
-            // Correct current L2
-            // This bad term can be computer on the fly, but my guess is it will not take much time
-            float bad_term = quant_query[dimension_idx] * quant_query[dimension_idx] * scaling_factors[dimension_idx];
-            for (; i < n_exceptions; ++i) {
-                uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + i];
-                // Calculate the real L2
-                float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
-                good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
-                distances_p[vector_idx] += good_term - bad_term;
-            }
-        }
+        // for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=1) {
+        //     uint32_t dimension_idx = dim_idx;
+        //     size_t offset_to_dimension_start = dimension_idx * n_exceptions;
+        //     size_t i = 0;
+        //     // Correct current L2
+        //     // This bad term can be computer on the fly, but my guess is it will not take much time
+        //     float bad_term = quant_query[dimension_idx] * quant_query[dimension_idx] * scaling_factors[dimension_idx];
+        //     for (; i < n_exceptions; ++i) {
+        //         uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + i];
+        //         // Calculate the real L2
+        //         float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
+        //         good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
+        //         distances_p[vector_idx] += good_term - bad_term;
+        //     }
+        // }
     }
 };
 
