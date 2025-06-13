@@ -786,10 +786,10 @@ public:
                 good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
                 distance_correction[i] = good_term - bad_term;
             }
-            for (size_t j = 0; j < n_exceptions; j++) {
-                uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + j];
-                distances_p[vector_idx] += distance_correction[j];
-            }
+            // for (size_t j = 0; j < n_exceptions; j++) {
+            //     uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + j];
+            //     distances_p[vector_idx] += distance_correction[j];
+            // }
         }
     }
 };
