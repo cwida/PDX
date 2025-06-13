@@ -385,12 +385,12 @@ class BaseIndexPDXIVF:
                         assert h_dims % 64 == 0
                         tmp_block = self.partitions[i].blocks[p][:, :v_dims]
                         rows, _ = tmp_block.shape
+                        lep_bw = kwargs.get('lep_bw', 8)
                         if lep_bw == 8 or lep_bw == 7:
                             pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
                         else:
                             # TODO: Reshape with 2 dimensions together so that the unpacking is better
                             pdx_4_block = tmp_block.reshape(rows, -1, 2).transpose(1, 0, 2).reshape(-1)
-                        lep_bw = kwargs.get('lep_bw', 8)
                         h_dims_block = kwargs.get('h_dims_block', 64)
                         assert h_dims % h_dims_block == 0
                         if lep_bw == 8 or lep_bw == 7:  # Vertical Dimensions
