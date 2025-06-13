@@ -764,22 +764,39 @@ public:
             size_t num_nibbles,
             const float * scaling_factors
     ){
+        const uint8_t EXC_ESCAPE_CODE_SCALAR = 15;
         size_t num_words = num_nibbles / 2;
         size_t cur_dim = 0;
         size_t i = 0;
         DISTANCE_TYPE distance = 0.0;
+        #pragma clang loop vectorize(enable)
         for (; i < num_words; i++) {
             uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
             uint8_t nibble_low = (vector2[i] & 0x0F);
 
-            float diff_high = vector1[cur_dim] - (float)(nibble_high);
-            float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
-
-            distance += diff_high * diff_high * scaling_factors[cur_dim];
-            distance += diff_low * diff_low * scaling_factors[cur_dim+1];
+            if (nibble_high != EXC_ESCAPE_CODE_SCALAR) {
+                float diff_high = vector1[cur_dim] - (float)(nibble_high);
+                distance += diff_high * diff_high * scaling_factors[cur_dim];
+            }
+            if (nibble_low != EXC_ESCAPE_CODE_SCALAR) {
+                float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
+                distance += diff_low * diff_low * scaling_factors[cur_dim+1];
+            }
 
             cur_dim += 2;
         }
+        // for (; i < num_words; i++) {
+        //     uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
+        //     uint8_t nibble_low = (vector2[i] & 0x0F);
+        //
+        //     float diff_high = vector1[cur_dim] - (float)(nibble_high);
+        //     float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
+        //
+        //     distance += diff_high * diff_high * scaling_factors[cur_dim];
+        //     distance += diff_low * diff_low * scaling_factors[cur_dim+1];
+        //
+        //     cur_dim += 2;
+        // }
         return distance;
         // for (; i < num_dimensions; ++i) {
         //     float diff = vector1[i] - (float)vector2[i];
@@ -815,7 +832,8 @@ public:
             // Correct current L2
             // This bad term can be computer on the fly, but my guess is it will not take much time
             float bad_term = quant_query[dimension_idx] * quant_query[dimension_idx] * scaling_factors[dimension_idx];
-            __m512 vec_bad_term = _mm512_set1_ps(bad_term);
+            // __m512 vec_bad_term = _mm512_set1_ps(bad_term);
+            __m512 vec_bad_term = _mm512_set1_ps(0.0f);
             __m512 vec_exc_query = _mm512_set1_ps(exceptions_query[dimension_idx]);
             __m512 vec_exc_scaling_factor = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx]);
 
