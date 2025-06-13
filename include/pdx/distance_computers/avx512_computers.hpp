@@ -633,7 +633,7 @@ public:
             float scale_1 = scaling_factors[dimension_idx + 1];
             size_t i = 0;
             // In this asymmetric kernel we cannot advance 64 at a time
-            if constexpr (!SKIP_PRUNED){
+            if constexpr (false && !SKIP_PRUNED){
                 __m512 vec_a_orig_0 = _mm512_set1_ps(query_dim_0);
                 __m512 vec_a_orig_1 = _mm512_set1_ps(query_dim_1);
                 __m512 vec_c_orig_0 = _mm512_set1_ps(scale_0);
@@ -842,7 +842,6 @@ public:
             // This bad term can be computer on the fly, but my guess is it will not take much time
             float bad_term = quant_query[dimension_idx] * quant_query[dimension_idx] * scaling_factors[dimension_idx];
             // __m512 vec_bad_term = _mm512_set1_ps(bad_term);
-            __m512 vec_bad_term = _mm512_set1_ps(0.0f);
             __m512 vec_exc_query = _mm512_set1_ps(exceptions_query[dimension_idx]);
             __m512 vec_exc_scaling_factor = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx]);
 
@@ -855,7 +854,7 @@ public:
                 __m512 vec_good_terms = _mm512_sub_ps(vec_exc_query, vec_exc_data);
                 __m512 tmp = _mm512_mul_ps(vec_good_terms, vec_good_terms);
                 __m512 dis_correction = _mm512_mul_ps(tmp, vec_exc_scaling_factor);
-                dis_correction = _mm512_sub_ps(dis_correction, vec_bad_term);
+                //dis_correction = _mm512_sub_ps(dis_correction, vec_bad_term);
                 _mm512_store_ps(&distance_correction[i], dis_correction);
 
                 // Scalar kernel
