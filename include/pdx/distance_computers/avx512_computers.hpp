@@ -654,7 +654,7 @@ public:
                     __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
                     res = _mm512_fmadd_ps(tmp_1, vec_scales_1, res);
 
-                    _mm512_store_epi32(&distances_p[i], res);
+                    _mm512_store_ps(&distances_p[i], res);
                 }
             }
             for (; i < n_vectors; ++i) {
