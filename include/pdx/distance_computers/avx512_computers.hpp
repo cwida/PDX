@@ -670,8 +670,8 @@ public:
                     __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
                     __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
                     // Increase offset counters of exception array
-                    // exc_offset_0 += vaddv_u8(_mm_and_si128(exc_mask_0, MASK_TO_COUNT_EXCEPTIONS));
-                    // exc_offset_1 += vaddv_u8(_mm_and_si128(exc_mask_1, MASK_TO_COUNT_EXCEPTIONS));
+                    exc_offset_0 += _mm_popcnt_u32((uint32_t)exc_mask_0);
+                    exc_offset_1 += _mm_popcnt_u32((uint32_t)exc_mask_1);
                     // Mask original vectors
                     raw_data_0 = _mm_mask_expand_epi8(raw_data_0, exc_mask_0, next_exceptions_0);
                     raw_data_1 = _mm_mask_expand_epi8(raw_data_1, exc_mask_1, next_exceptions_1);
