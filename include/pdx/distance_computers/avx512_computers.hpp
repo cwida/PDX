@@ -715,34 +715,34 @@ public:
                 // assert(exc_offset_0 == n_exceptions);
                 // assert(exc_offset_1 == n_exceptions);
             }
-            for (; i < n_vectors; ++i) {
-                size_t vector_idx = i;
-                if constexpr (SKIP_PRUNED){
-                    vector_idx = pruning_positions[vector_idx];
-                }
-                // L2
-                // TODO: Inline patching of exceptions
-                /*
-                 *
-                 * if data[offset_to_dimension_start + (vector_idx * 4)] == ESCAPE_CODE:
-                 *  use exception data value
-                 *  use exception query value
-                 *  use exception scaling factor
-                 *  advance exception_array by 1
-                 * The other option would be to do another loop that goes through data
-                 * masking it, and applying the correction. Probably faster.
-                 */
-
-                uint8_t n_1 = data[offset_to_dimension_start + vector_idx];
-                uint8_t nibble_0 = (n_1 & 0xF0) >> 4;
-                uint8_t nibble_1 = n_1 & 0x0F;
-
-                float to_multiply_a = query_dim_0 - (float)nibble_0; // High
-                float to_multiply_b = query_dim_1 - (float)nibble_1; // Low
-
-                distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scale_0) +
-                                           (to_multiply_b * to_multiply_b * scale_1);
-            }
+            // for (; i < n_vectors; ++i) {
+            //     size_t vector_idx = i;
+            //     if constexpr (SKIP_PRUNED){
+            //         vector_idx = pruning_positions[vector_idx];
+            //     }
+            //     // L2
+            //     // TODO: Inline patching of exceptions
+            //     /*
+            //      *
+            //      * if data[offset_to_dimension_start + (vector_idx * 4)] == ESCAPE_CODE:
+            //      *  use exception data value
+            //      *  use exception query value
+            //      *  use exception scaling factor
+            //      *  advance exception_array by 1
+            //      * The other option would be to do another loop that goes through data
+            //      * masking it, and applying the correction. Probably faster.
+            //      */
+            //
+            //     uint8_t n_1 = data[offset_to_dimension_start + vector_idx];
+            //     uint8_t nibble_0 = (n_1 & 0xF0) >> 4;
+            //     uint8_t nibble_1 = n_1 & 0x0F;
+            //
+            //     float to_multiply_a = query_dim_0 - (float)nibble_0; // High
+            //     float to_multiply_b = query_dim_1 - (float)nibble_1; // Low
+            //
+            //     distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scale_0) +
+            //                                (to_multiply_b * to_multiply_b * scale_1);
+            // }
         }
     }
 
@@ -861,7 +861,7 @@ public:
                 // Scalar kernel
                 float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
                 good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
-                distance_correction[i] = good_term - bad_term;
+                distance_correction[i] = good_term; //- bad_term;
             }
             size_t j = 0;
             for (; j < n_exceptions; j++) {
