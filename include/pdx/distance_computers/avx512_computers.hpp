@@ -739,33 +739,33 @@ public:
                 uint8_t nibble_0 = (n_1 & 0xF0) >> 4;
                 uint8_t nibble_1 = n_1 & 0x0F;
 
-                if (nibble_0 == EXC_ESCAPE_CODE_SCALAR) {
-                    nibble_0 = exceptions_data[exc_start_0 + exc_offset_0];
-                    query_dim_0 = exceptions_query[dimension_idx];
-                    scale_0 = scaling_factors_exceptions[dimension_idx];
-                    exc_offset_0 += 1;
-                }
-                if (nibble_1 == EXC_ESCAPE_CODE_SCALAR) {
-                    nibble_1 = exceptions_data[exc_start_1 + exc_offset_1];
-                    query_dim_1 = exceptions_query[dimension_idx + 1];
-                    scale_1 = scaling_factors_exceptions[dimension_idx + 1];
-                    exc_offset_1 += 1;
-                }
+                // if (nibble_0 == EXC_ESCAPE_CODE_SCALAR) {
+                //     nibble_0 = exceptions_data[exc_start_0 + exc_offset_0];
+                //     query_dim_0 = exceptions_query[dimension_idx];
+                //     scale_0 = scaling_factors_exceptions[dimension_idx];
+                //     exc_offset_0 += 1;
+                // }
+                // if (nibble_1 == EXC_ESCAPE_CODE_SCALAR) {
+                //     nibble_1 = exceptions_data[exc_start_1 + exc_offset_1];
+                //     query_dim_1 = exceptions_query[dimension_idx + 1];
+                //     scale_1 = scaling_factors_exceptions[dimension_idx + 1];
+                //     exc_offset_1 += 1;
+                // }
 
-                //if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
+                if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
                     float diff_high = query_dim_0 - (float)(nibble_0);
                     distances_p[vector_idx] += diff_high * diff_high * scale_0;
-                //}
-                //if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
+                }
+                if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
                     float diff_low = query_dim_1 - (float)(nibble_1);
                     distances_p[vector_idx] += diff_low * diff_low * scale_1;
-                //}
+                }
 
-                // float to_multiply_a = query_dim_0 - (float)nibble_0; // High
-                // float to_multiply_b = query_dim_1 - (float)nibble_1; // Low
+                float to_multiply_a = query_dim_0 - (float)nibble_0; // High
+                float to_multiply_b = query_dim_1 - (float)nibble_1; // Low
 
-                // distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scale_0) +
-                //                            (to_multiply_b * to_multiply_b * scale_1);
+                distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scale_0) +
+                                           (to_multiply_b * to_multiply_b * scale_1);
             }
         }
     }
