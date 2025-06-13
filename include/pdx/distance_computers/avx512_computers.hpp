@@ -779,6 +779,7 @@ public:
                 //good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
                 //distances_p[vector_idx] += good_term - bad_term;
             }
+            #pragma clang loop vectorize(enable)
             for (; i < n_exceptions; i++) {
                 // Scalar kernel
                 float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
