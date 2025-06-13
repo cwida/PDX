@@ -252,15 +252,15 @@ class BaseIndexPDXIVF:
                             #     print(for_data.max(axis=0))
 
                             # 14 because 15 is reserved as a escape code
-                            scale_factors_data = np.where(col_range != 0, 15 / col_range, 0).astype(dtype=np.float32)
+                            scale_factors_data = np.where(col_range != 0, 14 / col_range, 0).astype(dtype=np.float32)
 
                             # if (len(for_data) < 20):
                             #     print('FOR DATA BEFORE LAST SCALING', for_data[:, 0:10])
                             for_data = (for_data * scale_factors_data).round(decimals=0).astype(dtype=np.int32)
 
                             # Putting escape code in place of exceptions
-                            for_data[low_idx.ravel(), low_col_idx.ravel()] = 0 # EXCEPTIONS_ESCAPE_CODE
-                            for_data[high_idx.ravel(), high_col_idx.ravel()] = 0 #EXCEPTIONS_ESCAPE_CODE
+                            for_data[low_idx.ravel(), low_col_idx.ravel()] = EXCEPTIONS_ESCAPE_CODE # 0
+                            for_data[high_idx.ravel(), high_col_idx.ravel()] = EXCEPTIONS_ESCAPE_CODE # 0
 
                             # print(for_data)
                             # print(for_data_exceptions)
