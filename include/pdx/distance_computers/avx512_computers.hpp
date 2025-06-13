@@ -719,19 +719,19 @@ public:
         size_t num_words = num_nibbles / 2;
         size_t cur_dim = 0;
 
-        #pragma clang loop vectorize(enable)
-        for (; i < num_words; i++) {
-            uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
-            uint8_t nibble_low = (vector2[i] & 0x0F);
-
-            float diff_high = vector1[cur_dim] - (float)(nibble_high);
-            float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
-
-            distance += diff_high * diff_high * scaling_factors[cur_dim];
-            distance += diff_low * diff_low * scaling_factors[cur_dim+1];
-
-            cur_dim += 2;
-        }
+        // #pragma clang loop vectorize(enable)
+        // for (; i < num_words; i++) {
+        //     uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
+        //     uint8_t nibble_low = (vector2[i] & 0x0F);
+        //
+        //     float diff_high = vector1[cur_dim] - (float)(nibble_high);
+        //     float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
+        //
+        //     distance += diff_high * diff_high * scaling_factors[cur_dim];
+        //     distance += diff_low * diff_low * scaling_factors[cur_dim+1];
+        //
+        //     cur_dim += 2;
+        // }
         // for (; i < num_dimensions; ++i) {
         //     float diff = vector1[i] - (float)vector2[i];
         //     distance += diff * diff * scaling_factors[i];
