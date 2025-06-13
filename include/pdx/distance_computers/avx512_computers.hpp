@@ -621,7 +621,7 @@ public:
             if constexpr (USE_DIMENSIONS_REORDER){
                 dimension_idx = indices_dimensions[dim_idx];
             }
-            size_t offset_to_dimension_start = dimension_idx * total_vectors;
+            size_t offset_to_dimension_start = dimension_idx * total_vectors / 2;
             float query_dim_0 = query[dimension_idx];
             float query_dim_1 = query[dimension_idx + 1];
 
@@ -697,15 +697,7 @@ public:
             DISTANCE_TYPE * distances_p,
             const float * scaling_factors
     ){
-        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
-            size_t dimension_idx = dim_idx;
-            size_t offset_to_dimension_start = dimension_idx * PDX_VECTOR_SIZE;
-            for (size_t vector_idx = 0; vector_idx < PDX_VECTOR_SIZE; ++vector_idx) {
-                // Inline patching of exceptions
-                float to_multiply = query[dimension_idx] - (float)data[offset_to_dimension_start + vector_idx];
-                distances_p[vector_idx] += to_multiply * to_multiply * scaling_factors[dimension_idx];
-            }
-        }
+        // TODO
     }
 
     static DISTANCE_TYPE Horizontal(
@@ -714,12 +706,10 @@ public:
             size_t num_nibbles,
             const float * scaling_factors
     ){
-        size_t i = 0;
-        DISTANCE_TYPE distance = 0.0;
         size_t num_words = num_nibbles / 2;
         size_t cur_dim = 0;
-
-        #pragma clang loop vectorize(enable)
+        size_t i = 0;
+        DISTANCE_TYPE distance = 0.0;
         for (; i < num_words; i++) {
             uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
             uint8_t nibble_low = (vector2[i] & 0x0F);
@@ -732,6 +722,7 @@ public:
 
             cur_dim += 2;
         }
+        return distance;
         // for (; i < num_dimensions; ++i) {
         //     float diff = vector1[i] - (float)vector2[i];
         //     distance += diff * diff * scaling_factors[i];
@@ -769,6 +760,9 @@ public:
                 // Calculate the real L2
                 float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
                 good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
+
+                // Since there was never a bad term, this is wrong.
+                //distances_p[vector_idx] += good_term - bad_term;
                 distances_p[vector_idx] += good_term - bad_term;
             }
         }
