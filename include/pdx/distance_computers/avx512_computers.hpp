@@ -629,34 +629,34 @@ public:
             float scale_1 = scaling_factors[dimension_idx + 1];
             size_t i = 0;
             // In this asymmetric kernel we cannot advance 64 at a time
-            // if constexpr (!SKIP_PRUNED){
-            //     __m512i vec_a_0 = _mm512_set1_ps(query_dim_0);
-            //     __m512i vec_a_1 = _mm512_set1_ps(query_dim_1);
-            //     __m512i vec_scales_0 = _mm512_set1_ps(scale_0);
-            //     __m512i vec_scales_1 = _mm512_set1_ps(scale_1);
-            //
-            //     for (; i + 16 <= n_vectors; i+=16) {
-            //         __m512 res = _mm512_load_ps(&distances_p[i]); // touching 16 vectors
-            //
-            //         __m128i raw_data = _mm_loadu_si128((__m128i*)&data[offset_to_dimension_start + i]);
-            //         __m128i raw_data_0 = _mm_and_si128(_mm_srli_epi16(raw_data, 4), low_mask);
-            //         __m128i raw_data_1 = _mm_and_si128(raw_data, low_mask);
-            //
-            //         __m512 vec_b_0 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(raw_data_0)); // 16 values at a time from 2 vectors
-            //         __m512 vec_b_1 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(raw_data_1));
-            //
-            //         // Problem: 4 values of vec2 need to sum only to 1 value of res
-            //         __m512 diff_0 = _mm512_sub_ps(vec_a_0, vec_b_0);
-            //         __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
-            //         res = _mm512_fmadd_ps(tmp_0, vec_scales_0, res);
-            //
-            //         __m512 diff_1 = _mm512_sub_ps(vec_a_1, vec_b_1);
-            //         __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
-            //         res = _mm512_fmadd_ps(tmp_1, vec_scales_1, res);
-            //
-            //         _mm512_store_ps(&distances_p[i], res);
-            //     }
-            // }
+            if constexpr (!SKIP_PRUNED){
+                __m512i vec_a_0 = _mm512_set1_ps(query_dim_0);
+                __m512i vec_a_1 = _mm512_set1_ps(query_dim_1);
+                __m512i vec_scales_0 = _mm512_set1_ps(scale_0);
+                __m512i vec_scales_1 = _mm512_set1_ps(scale_1);
+
+                for (; i + 16 <= n_vectors; i+=16) {
+                    __m512 res = _mm512_load_ps(&distances_p[i]); // touching 16 vectors
+
+                    __m128i raw_data = _mm_loadu_si128((__m128i*)&data[offset_to_dimension_start + i]);
+                    __m128i raw_data_0 = _mm_and_si128(_mm_srli_epi16(raw_data, 4), low_mask);
+                    __m128i raw_data_1 = _mm_and_si128(raw_data, low_mask);
+
+                    __m512 vec_b_0 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(raw_data_0)); // 16 values at a time from 2 vectors
+                    __m512 vec_b_1 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(raw_data_1));
+
+                    // Problem: 4 values of vec2 need to sum only to 1 value of res
+                    __m512 diff_0 = _mm512_sub_ps(vec_a_0, vec_b_0);
+                    __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
+                    res = _mm512_fmadd_ps(tmp_0, vec_scales_0, res);
+
+                    __m512 diff_1 = _mm512_sub_ps(vec_a_1, vec_b_1);
+                    __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
+                    res = _mm512_fmadd_ps(tmp_1, vec_scales_1, res);
+
+                    _mm512_store_ps(&distances_p[i], res);
+                }
+            }
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
                 if constexpr (SKIP_PRUNED){
