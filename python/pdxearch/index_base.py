@@ -3,8 +3,6 @@ import sys
 import math
 from bitarray import bitarray
 
-from python.pdxearch.fastlanes_pack import pack_4bit_symmetric
-
 np.set_printoptions(threshold=np.inf, edgeitems=3, linewidth=100)
 
 from typing import List
