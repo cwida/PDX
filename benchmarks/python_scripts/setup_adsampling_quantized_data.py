@@ -211,7 +211,7 @@ if __name__ == "__main__":
     # The real one for lep
     # generate_lep_ivf('contriever-768')
     # generate_lep_ivf('gist-960-euclidean')
-    # generate_lep_ivf('openai-1536-angular')
+    generate_lep_ivf('openai-1536-angular')
     # generate_lep_ivf('instructorxl-arxiv-768')
 
     # The real one for asymmetric

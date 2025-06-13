@@ -714,53 +714,53 @@ public:
             size_t exc_offset_0 = 0;
             size_t exc_offset_1 = 0;
 
-            //#pragma clang loop vectorize(enable)
-            // for (; i < n_vectors; ++i) {
-            //     size_t vector_idx = i;
-            //     if constexpr (SKIP_PRUNED){
-            //         vector_idx = pruning_positions[vector_idx];
-            //     }
-            //     // L2
-            //     // TODO: Inline patching of exceptions
-            //     /*
-            //      *
-            //      * if data[offset_to_dimension_start + (vector_idx * 4)] == ESCAPE_CODE:
-            //      *  use exception data value
-            //      *  use exception query value
-            //      *  use exception scaling factor
-            //      *  advance exception_array by 1
-            //      * The other option would be to do another loop that goes through data
-            //      * masking it, and applying the correction. Probably faster.
-            //      */
-            //     uint8_t n_1 = data[offset_to_dimension_start + vector_idx];
-            //     uint8_t nibble_0 = (n_1 & 0xF0) >> 4;
-            //     uint8_t nibble_1 = n_1 & 0x0F;
-            //
-            //     float query_dim_0 = query[dimension_idx];
-            //     float query_dim_1 = query[dimension_idx + 1];
-            //
-            //     float scale_0 = scaling_factors[dimension_idx];
-            //     float scale_1 = scaling_factors[dimension_idx + 1];
-            //
-            //     if (nibble_0 == EXC_ESCAPE_CODE_SCALAR) {
-            //         nibble_0 = exceptions_data[exc_start_0 + exc_offset_0];
-            //         query_dim_0 = exceptions_query[dimension_idx];
-            //         scale_0 = scaling_factors_exceptions[dimension_idx];
-            //         exc_offset_0 += 1;
-            //     }
-            //     if (nibble_1 == EXC_ESCAPE_CODE_SCALAR) {
-            //         nibble_1 = exceptions_data[exc_start_1 + exc_offset_1];
-            //         query_dim_1 = exceptions_query[dimension_idx + 1];
-            //         scale_1 = scaling_factors_exceptions[dimension_idx + 1];
-            //         exc_offset_1 += 1;
-            //     }
-            //
-            //     float to_multiply_a = query_dim_0 - (float)nibble_0; // High
-            //     float to_multiply_b = query_dim_1 - (float)nibble_1; // Low
-            //
-            //     distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scale_0) +
-            //                                (to_multiply_b * to_multiply_b * scale_1);
-            // }
+            #pragma clang loop vectorize(enable)
+             for (; i < n_vectors; ++i) {
+                 size_t vector_idx = i;
+                 if constexpr (SKIP_PRUNED){
+                     vector_idx = pruning_positions[vector_idx];
+                 }
+                 // L2
+                 // TODO: Inline patching of exceptions
+                 /*
+                  *
+                  * if data[offset_to_dimension_start + (vector_idx * 4)] == ESCAPE_CODE:
+                  *  use exception data value
+                  *  use exception query value
+                  *  use exception scaling factor
+                  *  advance exception_array by 1
+                  * The other option would be to do another loop that goes through data
+                  * masking it, and applying the correction. Probably faster.
+                  */
+                 uint8_t n_1 = data[offset_to_dimension_start + vector_idx];
+                 uint8_t nibble_0 = (n_1 & 0xF0) >> 4;
+                 uint8_t nibble_1 = n_1 & 0x0F;
+
+                 float query_dim_0 = query[dimension_idx];
+                 float query_dim_1 = query[dimension_idx + 1];
+
+                 float scale_0 = scaling_factors[dimension_idx];
+                 float scale_1 = scaling_factors[dimension_idx + 1];
+
+                 // if (nibble_0 == EXC_ESCAPE_CODE_SCALAR) {
+                 //     nibble_0 = exceptions_data[exc_start_0 + exc_offset_0];
+                 //     query_dim_0 = exceptions_query[dimension_idx];
+                 //     scale_0 = scaling_factors_exceptions[dimension_idx];
+                 //     exc_offset_0 += 1;
+                 // }
+                 // if (nibble_1 == EXC_ESCAPE_CODE_SCALAR) {
+                 //     nibble_1 = exceptions_data[exc_start_1 + exc_offset_1];
+                 //     query_dim_1 = exceptions_query[dimension_idx + 1];
+                 //     scale_1 = scaling_factors_exceptions[dimension_idx + 1];
+                 //     exc_offset_1 += 1;
+                 // }
+
+                 float to_multiply_a = query_dim_0 - (float)nibble_0; // High
+                 float to_multiply_b = query_dim_1 - (float)nibble_1; // Low
+
+                 distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scale_0) +
+                                            (to_multiply_b * to_multiply_b * scale_1);
+             }
 
 
             // float bad_term_0 = query[dimension_idx] * query[dimension_idx] * scaling_factors[dimension_idx];
@@ -807,36 +807,36 @@ public:
         size_t cur_dim = 0;
         size_t i = 0;
         DISTANCE_TYPE distance = 0.0;
-        // for (; i < num_words; i++) {
-        //     uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
-        //     uint8_t nibble_low = (vector2[i] & 0x0F);
-        //
-        //     float diff_high = vector1[cur_dim] - (float)(nibble_high);
-        //     float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
-        //
-        //     distance += diff_high * diff_high * scaling_factors[cur_dim];
-        //     distance += diff_low * diff_low * scaling_factors[cur_dim+1];
-        //
-        //     cur_dim += 2;
-        // }
-        // return distance;
-
-        #pragma clang loop vectorize(enable)
         for (; i < num_words; i++) {
             uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
             uint8_t nibble_low = (vector2[i] & 0x0F);
 
-            if (nibble_high != EXC_ESCAPE_CODE_SCALAR) {
-                float diff_high = vector1[cur_dim] - (float)(nibble_high);
-                distance += diff_high * diff_high * scaling_factors[cur_dim];
-            }
-            if (nibble_low != EXC_ESCAPE_CODE_SCALAR) {
-                float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
-                distance += diff_low * diff_low * scaling_factors[cur_dim+1];
-            }
+            float diff_high = vector1[cur_dim] - (float)(nibble_high);
+            float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
+
+            distance += diff_high * diff_high * scaling_factors[cur_dim];
+            distance += diff_low * diff_low * scaling_factors[cur_dim+1];
 
             cur_dim += 2;
         }
+        return distance;
+
+        // #pragma clang loop vectorize(enable)
+        // for (; i < num_words; i++) {
+        //     uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
+        //     uint8_t nibble_low = (vector2[i] & 0x0F);
+        //
+        //     if (nibble_high != EXC_ESCAPE_CODE_SCALAR) {
+        //         float diff_high = vector1[cur_dim] - (float)(nibble_high);
+        //         distance += diff_high * diff_high * scaling_factors[cur_dim];
+        //     }
+        //     if (nibble_low != EXC_ESCAPE_CODE_SCALAR) {
+        //         float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
+        //         distance += diff_low * diff_low * scaling_factors[cur_dim+1];
+        //     }
+        //
+        //     cur_dim += 2;
+        // }
         return distance;
 
     };
@@ -872,7 +872,8 @@ public:
                 good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
 
                 // Since there was never a bad term, this is wrong.
-                distances_p[vector_idx] += good_term; // - bad_term;
+                //distances_p[vector_idx] += good_term - bad_term;
+                distances_p[vector_idx] += good_term - bad_term;
             }
         }
     }
