@@ -698,8 +698,8 @@ public:
                     // Store distances
                     _mm512_store_ps(&distances_p[i], res);
                 }
-                std::cout << exc_offset_0 << std::endl;
-                std::cout << exc_offset_1 << std::endl;
+                std::cout << exc_offset_0 << ", " <<  n_exceptions << std::endl;
+                std::cout << exc_offset_1 << ", " <<  n_exceptions << std::endl;
                 assert(exc_offset_0 == n_exceptions);
                 assert(exc_offset_1 == n_exceptions);
             }
