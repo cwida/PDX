@@ -132,7 +132,7 @@ class BaseIndexPDXIVF:
                     if use_global_params:
                         # Global scaling
                         lep_min = 0
-                        lep_max = 255 # TODO: Fix
+                        lep_max = 127 # TODO: Fix for Intel can only by max of 127
                         # Uncomment to use per-partition scaling factor (not helpful)
                         global_scale_factor = float(lep_max) / data_range
                         pre_data = pre_data * global_scale_factor
@@ -385,10 +385,11 @@ class BaseIndexPDXIVF:
                         assert h_dims % 64 == 0
                         tmp_block = self.partitions[i].blocks[p][:, :v_dims]
                         rows, _ = tmp_block.shape
-                        # pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
-
-                        # TODO: Reshape with 2 dimensions together so that the unpacking is better
-                        pdx_4_block = tmp_block.reshape(rows, -1, 2).transpose(1, 0, 2).reshape(-1)
+                        if lep_bw == 8 or lep_bw == 7:
+                            pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
+                        else:
+                            # TODO: Reshape with 2 dimensions together so that the unpacking is better
+                            pdx_4_block = tmp_block.reshape(rows, -1, 2).transpose(1, 0, 2).reshape(-1)
                         lep_bw = kwargs.get('lep_bw', 8)
                         h_dims_block = kwargs.get('h_dims_block', 64)
                         assert h_dims % h_dims_block == 0
