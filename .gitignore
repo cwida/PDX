@@ -86,6 +86,9 @@ cmake_install.cmake
 /benchmarks/BenchmarkNaryIVFADSampling
 /benchmarks/BenchmarkNaryIVFADSamplingSIMD
 /benchmarks/BenchmarkPDXADSampling
+/benchmarks/BenchmarkASYM_U8PDXADSampling
+/benchmarks/BenchmarkU8PDXADSampling
+/benchmarks/BenchmarkLEP8PDXADSampling
 /benchmarks/BenchmarkNaryIVFBSASIMD
 /benchmarks/BenchmarkPDXBSA
 /benchmarks/BenchmarkPDXIVFBOND
