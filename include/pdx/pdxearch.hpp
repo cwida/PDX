@@ -562,6 +562,7 @@ protected:
         // GO THROUGH THE HORIZONTAL DIMENSIONS (possibly) AT THE MIDDLE OF THE VERTICAL ONES
         size_t current_vertical_dimension = current_dimension_idx;
         size_t current_horizontal_dimension = 0;
+        std::cout << "Here222\n";
         while (
                 pdx_data.num_horizontal_dimensions &&
                 n_vectors_not_pruned &&
