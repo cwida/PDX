@@ -772,6 +772,8 @@ public:
                 // distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scale_0) +
                 //                            (to_multiply_b * to_multiply_b * scale_1);
             }
+            assert(n_exceptions == exc_offset_0);
+            assert(n_exceptions == exc_offset_1);
         }
     }
 
