@@ -666,8 +666,8 @@ public:
 
                     // Detect and Patch exceptions
                     //Detect ESCAPE_CODE mask
-                    __mmask16 exc_mask_0 = _mm_cmpeq_epi8_mask(raw_data_0, EXC_ESCAPE_CODE);
-                    __mmask16 exc_mask_1 = _mm_cmpeq_epi8_mask(raw_data_1, EXC_ESCAPE_CODE);
+                    // __mmask16 exc_mask_0 = _mm_cmpeq_epi8_mask(raw_data_0, EXC_ESCAPE_CODE);
+                    // __mmask16 exc_mask_1 = _mm_cmpeq_epi8_mask(raw_data_1, EXC_ESCAPE_CODE);
                     // Detect where I must read exceptions from
                     // __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
                     // __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
@@ -675,8 +675,8 @@ public:
                     // exc_offset_0 += _mm_popcnt_u32((uint32_t)exc_mask_0);
                     // exc_offset_1 += _mm_popcnt_u32((uint32_t)exc_mask_1);
                     // // Mask original vectors
-                    raw_data_0 = _mm_mask_expand_epi8(raw_data_0, exc_mask_0, next_exceptions_0);
-                    raw_data_1 = _mm_mask_expand_epi8(raw_data_1, exc_mask_1, next_exceptions_1);
+                    // raw_data_0 = _mm_mask_expand_epi8(raw_data_0, exc_mask_0, next_exceptions_0);
+                    // raw_data_1 = _mm_mask_expand_epi8(raw_data_1, exc_mask_1, next_exceptions_1);
                     // Interleave with exceptions vectors
                     // __m512 vec_a_0 = _mm512_mask_blend_ps(exc_mask_0,  vec_a_orig_0, exc_query_0);
                     // __m512 vec_c_0 = _mm512_mask_blend_ps(exc_mask_0, vec_c_orig_0, exc_scaling_0);
