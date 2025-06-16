@@ -650,6 +650,7 @@ protected:
             assert(current_dimension_idx == current_vertical_dimension + current_horizontal_dimension);
             EvaluatePruningPredicateOnPositionsArray(cur_n_vectors_not_pruned);
         }
+        std::cout << n_vectors_not_pruned << "\n";
         // GO THROUGH THE REST IN THE VERTICAL
         while (
                 n_vectors_not_pruned &&
