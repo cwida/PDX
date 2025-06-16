@@ -703,9 +703,9 @@ public:
                     // __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
                     // res = _mm512_fmadd_ps(tmp_0, vec_c_orig_0, res);
                     // // Sub, multiply and fmadd on dimension 1
-                    // __m512 diff_1 = _mm512_sub_ps(vec_a_orig_1, vec_b_1);
-                    // __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
-                    // res = _mm512_fmadd_ps(tmp_1, vec_c_orig_1, res);
+                    __m512 diff_1 = _mm512_sub_ps(vec_a_orig_1, vec_b_1);
+                    __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
+                    res = _mm512_fmadd_ps(tmp_1, vec_c_orig_1, res);
                     //////////
 
                     // Sub, multiply and fmadd on dimension 0
@@ -713,9 +713,9 @@ public:
                     __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
                     res = _mm512_fmadd_ps(tmp_0, vec_c_0, res);
                     // Sub, multiply and fmadd on dimension 1
-                    __m512 diff_1 = _mm512_sub_ps(vec_a_1, vec_b_1);
-                    __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
-                    res = _mm512_fmadd_ps(tmp_1, vec_c_1, res);
+                    // __m512 diff_1 = _mm512_sub_ps(vec_a_1, vec_b_1);
+                    // __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
+                    // res = _mm512_fmadd_ps(tmp_1, vec_c_1, res);
                     // Store distances
                     _mm512_store_ps(&distances_p[i], res);
                 }
