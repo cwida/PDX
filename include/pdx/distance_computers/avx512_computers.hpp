@@ -772,8 +772,8 @@ public:
                         distances_p[vector_idx] += diff_low * diff_low * scale_1;
                     }
                     else {
-                        float diff_high = exceptions_query[dim_idx + 1] - (float)(exceptions_data[exc_start_1 + exc_offset_1]);
-                        distances_p[vector_idx] += diff_high * diff_high * scaling_factors_exceptions[dim_idx + 1];
+                        float diff_low = exceptions_query[dim_idx + 1] - (float)(exceptions_data[exc_start_1 + exc_offset_1]);
+                        distances_p[vector_idx] += diff_low * diff_low * scaling_factors_exceptions[dim_idx + 1];
                         exc_offset_1 += 1;
                     }
                 }
