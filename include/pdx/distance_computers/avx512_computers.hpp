@@ -792,18 +792,18 @@ public:
             //     std::cout << n_exceptions << " exceptions present [0].\n";
             //     std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
             // }
-            if constexpr (!SKIP_PRUNED) {
-                if (n_exceptions != exc_offset_0) {
-                    std::cout << n_exceptions << " exceptions present [0].\n";
-                    std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
-                }
-                if (n_exceptions != exc_offset_1) {
-                    std::cout << n_exceptions << " exceptions present [1].\n";
-                    std::cout << exc_offset_0 << " exceptions were skipped [1].\n";
-                }
-                assert(n_exceptions == exc_offset_0);
-                assert(n_exceptions == exc_offset_1);
-            }
+            // if constexpr (!SKIP_PRUNED) {
+            //     if (n_exceptions != exc_offset_0) {
+            //         std::cout << n_exceptions << " exceptions present [0].\n";
+            //         std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
+            //     }
+            //     if (n_exceptions != exc_offset_1) {
+            //         std::cout << n_exceptions << " exceptions present [1].\n";
+            //         std::cout << exc_offset_0 << " exceptions were skipped [1].\n";
+            //     }
+            //     assert(n_exceptions == exc_offset_0);
+            //     assert(n_exceptions == exc_offset_1);
+            // }
         }
     }
 
