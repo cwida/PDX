@@ -664,7 +664,7 @@ protected:
             //processed_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
             if (dimension_order == SEQUENTIAL){
                 if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
-                    //std::cout << "Here\n" << "\n";
+                    std::cout << "Here\n" << "\n";
                     distance_computer::VerticalPruning(
                         query, data, cur_n_vectors_not_pruned,
                         n_vectors, current_vertical_dimension,
@@ -677,21 +677,21 @@ protected:
                         pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
                         quant.cur_exceptions_scaling_factors
                     );
-                    // distance_computer::PatchVertical( // TODO: Patch only on proper positions
-                    //     query,
-                    //     quant.asymmetric_exceptions_query,
-                    //     pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
-                    //     pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
-                    //     pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
-                    //     current_vertical_dimension, // start
-                    //     last_dimension_to_test_idx, // end
-                    //     pruning_distances,
-                    //     pruning_positions,
-                    //     indices_dimensions.data(),
-                    //     quant.dim_clip_value,
-                    //     quant.cur_scaling_factors,
-                    //     quant.cur_exceptions_scaling_factors
-                    // );
+                    distance_computer::PatchVertical( // TODO: Patch only on proper positions
+                        query,
+                        quant.asymmetric_exceptions_query,
+                        pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                        pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                        pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                        current_vertical_dimension, // start
+                        last_dimension_to_test_idx, // end
+                        pruning_distances,
+                        pruning_positions,
+                        indices_dimensions.data(),
+                        quant.dim_clip_value,
+                        quant.cur_scaling_factors,
+                        quant.cur_exceptions_scaling_factors
+                    );
                 } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
                     distance_computer::VerticalPruning(
                         query, data, cur_n_vectors_not_pruned,
