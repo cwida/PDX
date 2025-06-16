@@ -214,12 +214,18 @@ class BaseIndexPDXIVF:
                                            [ 7,  8,  7,  9, 11]])
                             """
                             exception_indices = np.vstack([low_idx, high_idx])
+
+                            sorted_indices = np.argsort(exception_indices, axis=0)
+                            rows_s, cols_s = np.indices(sorted_indices.shape)
+                            sorted_exception_indices = exception_indices[sorted_indices, cols_s]
+
                             column_indices = np.tile(np.arange(cols), (exceptions_n + exceptions_n, 1))
                             """
                                 Matrix indexes at exception_indices
                             """
                             # Round here if you are not rounding before
                             for_data_exceptions = for_data[exception_indices, column_indices].copy()
+                            sorted_for_data_exceptions = for_data_exceptions[sorted_indices, cols_s]
                             # To re-scale exceptions:
                             # tmp_range = (for_data_exceptions.max(axis=0) - for_data_exceptions.min(axis=0)).astype(dtype=np.float32)
                             # new_scale_factors_exceptions = np.where(tmp_range != 0, 15 / tmp_range, 0).astype(dtype=np.float32)
@@ -320,8 +326,10 @@ class BaseIndexPDXIVF:
                         partition.for_bases_exceptions = for_bases_exceptions.astype(dtype=np.float32)
                         partition.scale_factors_exceptions = scale_factors_exceptions.astype(dtype=np.float32)
 
-                        partition.exceptions_data = for_data_exceptions.astype(dtype=np.uint8)
-                        partition.exceptions_pos = exception_indices.astype(dtype=np.int16)
+                        partition.exceptions_data = sorted_for_data_exceptions.astype(dtype=np.uint8)
+                        partition.exceptions_pos = sorted_exception_indices.astype(dtype=np.int16)
+                        # print(partition.exceptions_pos[:, 0])
+                        # exit()
                     else:
                         partition.for_bases_exceptions = np.full(self.ndim, 0.0, dtype=np.float32)
                         partition.scale_factors_exceptions = np.full(self.ndim, 1.0, dtype=np.float32)
