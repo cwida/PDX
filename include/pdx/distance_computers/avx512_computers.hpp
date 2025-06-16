@@ -758,26 +758,26 @@ public:
                         distances_p[vector_idx] += diff_low * diff_low * scale_1;
                     }
                 }
-                // else {
-                //     if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
-                //         float diff_high = query_dim_0 - (float)(nibble_0);
-                //         distances_p[vector_idx] += diff_high * diff_high * scale_0;
-                //     }
-                //     else {
-                //         float diff_high = exceptions_query[dimension_idx] - (float)(exceptions_data[exc_start_0 + exc_offset_0]);
-                //         distances_p[vector_idx] += diff_high * diff_high * scaling_factors_exceptions[dimension_idx];
-                //         exc_offset_0 += 1;
-                //     }
-                //     if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
-                //         float diff_low = query_dim_1 - (float)(nibble_1);
-                //         distances_p[vector_idx] += diff_low * diff_low * scale_1;
-                //     }
-                //     else {
-                //         float diff_low = exceptions_query[dimension_idx + 1] - (float)(exceptions_data[exc_start_1 + exc_offset_1]);
-                //         distances_p[vector_idx] += diff_low * diff_low * scaling_factors_exceptions[dimension_idx + 1];
-                //         exc_offset_1 += 1;
-                //     }
-                // }
+                else {
+                    if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
+                        float diff_high = query_dim_0 - (float)(nibble_0);
+                        distances_p[vector_idx] += diff_high * diff_high * scale_0;
+                    }
+                    // else {
+                    //     float diff_high = exceptions_query[dimension_idx] - (float)(exceptions_data[exc_start_0 + exc_offset_0]);
+                    //     distances_p[vector_idx] += diff_high * diff_high * scaling_factors_exceptions[dimension_idx];
+                    //     exc_offset_0 += 1;
+                    // }
+                    if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
+                        float diff_low = query_dim_1 - (float)(nibble_1);
+                        distances_p[vector_idx] += diff_low * diff_low * scale_1;
+                    }
+                    // else {
+                    //     float diff_low = exceptions_query[dimension_idx + 1] - (float)(exceptions_data[exc_start_1 + exc_offset_1]);
+                    //     distances_p[vector_idx] += diff_low * diff_low * scaling_factors_exceptions[dimension_idx + 1];
+                    //     exc_offset_1 += 1;
+                    // }
+                }
 
                 // float to_multiply_a = query_dim_0 - (float)nibble_0; // High
                 // float to_multiply_b = query_dim_1 - (float)nibble_1; // Low
