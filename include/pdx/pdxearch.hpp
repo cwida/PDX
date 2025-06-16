@@ -562,7 +562,7 @@ protected:
         // GO THROUGH THE HORIZONTAL DIMENSIONS (possibly) AT THE MIDDLE OF THE VERTICAL ONES
         size_t current_vertical_dimension = current_dimension_idx;
         size_t current_horizontal_dimension = 0;
-        std::cout << "Here222\n";
+        //std::cout << "Here222\n";
         while (
                 pdx_data.num_horizontal_dimensions &&
                 n_vectors_not_pruned &&
@@ -664,7 +664,7 @@ protected:
             //processed_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
             if (dimension_order == SEQUENTIAL){
                 if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
-                    std::cout << "Here\n" << "\n";
+                    //std::cout << "Here\n" << "\n";
                     distance_computer::VerticalPruning(
                         query, data, cur_n_vectors_not_pruned,
                         n_vectors, current_vertical_dimension,
