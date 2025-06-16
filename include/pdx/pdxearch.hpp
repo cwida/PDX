@@ -666,7 +666,7 @@ protected:
             //std::cout << "Here\n" << "\n";
             if (dimension_order == SEQUENTIAL){
                 if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
-                    std::cout << "Here\n" << "\n";
+                    //std::cout << "Here\n" << "\n";
                     distance_computer::VerticalPruning(
                         query, data, cur_n_vectors_not_pruned,
                         n_vectors, current_vertical_dimension,
