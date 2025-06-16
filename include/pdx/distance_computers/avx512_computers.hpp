@@ -784,17 +784,17 @@ public:
                 // distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scale_0) +
                 //                            (to_multiply_b * to_multiply_b * scale_1);
             }
-            assert(n_exceptions == exc_offset_0);
-            assert(n_exceptions == exc_offset_1);
-            if constexpr (SKIP_PRUNED) {
-                std::cout << n_exceptions << " exceptions present [0].\n";
-                std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
-            }
+            // if constexpr (SKIP_PRUNED) {
+            //     std::cout << n_exceptions << " exceptions present [0].\n";
+            //     std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
+            // }
             // if constexpr (!SKIP_PRUNED) {
             //     std::cout << n_exceptions << " exceptions present [0].\n";
             //     std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
             // }
             if constexpr (!SKIP_PRUNED) {
+                assert(n_exceptions == exc_offset_0);
+                assert(n_exceptions == exc_offset_1);
                 if (n_exceptions != exc_offset_0) {
                     std::cout << n_exceptions << " exceptions present [0].\n";
                     std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
