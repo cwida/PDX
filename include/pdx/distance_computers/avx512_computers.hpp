@@ -620,6 +620,7 @@ public:
         const __m128i EXC_ESCAPE_CODE = _mm_set1_epi8(15);
         const __m128i MASK_TO_COUNT_EXCEPTIONS = _mm_set1_epi8(1);
         __m128i low_mask = _mm_set1_epi8(0x0f);
+        std::cout << "WTF " << std::endl;
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=2) {
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
