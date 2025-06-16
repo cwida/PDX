@@ -338,8 +338,16 @@ protected:
 //         this->end_to_end_clock.Tic();
 // #endif
             distance_computer::Vertical(
-                query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions,
-                pruning_distances, pruning_positions, indices_dimensions.data(), quant.dim_clip_value,
+                query,
+                data,
+                n_vectors,
+                n_vectors,
+                0,
+                pdx_data.num_vertical_dimensions,
+                pruning_distances,
+                pruning_positions,
+                indices_dimensions.data(),
+                quant.dim_clip_value,
                 quant.cur_scaling_factors,
                 quant.asymmetric_exceptions_query,
                 pdx_data.vectorgroups[current_vectorgroup].data_exceptions,

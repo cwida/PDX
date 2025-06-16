@@ -759,7 +759,21 @@ public:
                     }
                 }
                 else {
-                    if (vector_idx == exceptions_positions[exc_start_0]) {
+                    if (vector_idx == exceptions_positions[exc_start_0 + exc_offset_0]) {
+                        // std::cout << "For dimension " << dimension_idx << "\n";
+                        // std::cout << "Vector with exception " << +exceptions_positions[exc_start_0] << "\n";
+                        // std::cout << "Exception in position 0 " << +exceptions_data[exc_start_0] << "\n";
+                        // std::cout << "Cur v: " << vector_idx << "\n";
+                        // std::cout << "Nibble 0: " << +nibble_0 << "\n";
+                        // std::cout << "Nibble 1: " << +nibble_1 << "\n";
+                        float diff_high = exceptions_query[dimension_idx] - exceptions_data[exc_start_0 + exc_offset_0];
+                        distances_p[vector_idx] += (diff_high * diff_high * scaling_factors_exceptions[dimension_idx]);
+                        exc_offset_0 += 1;
+                    }
+                    if (vector_idx == exceptions_positions[exc_start_1 + exc_offset_1]) {
+                        float diff_low = exceptions_query[dimension_idx + 1] - exceptions_data[exc_start_1 + exc_offset_1];
+                        distances_p[vector_idx] += (diff_low * diff_low * scaling_factors_exceptions[dimension_idx + 1]);
+                        exc_offset_1 += 1;
                         // std::cout << "For dimension " << dimension_idx << "\n";
                         // std::cout << "Vector with exception " << +exceptions_positions[exc_start_0] << "\n";
                         // std::cout << "Exception in position 0 " << +exceptions_data[exc_start_0] << "\n";
@@ -773,21 +787,21 @@ public:
                         float diff_high = query_dim_0 - (float)(nibble_0);
                         distances_p[vector_idx] += diff_high * diff_high * scale_0;
                     }
-                    else {
-                        //std::cout << "Patching nibble 0 " << "\n";
-                        float diff_high = exceptions_query[dimension_idx] - exceptions_data[exc_start_0 + exc_offset_0];
-                        distances_p[vector_idx] += (diff_high * diff_high * scaling_factors_exceptions[dimension_idx]);
-                        exc_offset_0 += 1;
-                    }
+                    // else {
+                    //     //std::cout << "Patching nibble 0 " << "\n";
+                    //     float diff_high = exceptions_query[dimension_idx] - exceptions_data[exc_start_0 + exc_offset_0];
+                    //     distances_p[vector_idx] += (diff_high * diff_high * scaling_factors_exceptions[dimension_idx]);
+                    //     exc_offset_0 += 1;
+                    // }
                     if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
                         float diff_low = query_dim_1 - (float)(nibble_1);
                         distances_p[vector_idx] += diff_low * diff_low * scale_1;
                     }
-                    else {
-                        float diff_low = exceptions_query[dimension_idx + 1] - exceptions_data[exc_start_1 + exc_offset_1];
-                        distances_p[vector_idx] += (diff_low * diff_low * scaling_factors_exceptions[dimension_idx + 1]);
-                        exc_offset_1 += 1;
-                    }
+                    // else {
+                    //     float diff_low = exceptions_query[dimension_idx + 1] - exceptions_data[exc_start_1 + exc_offset_1];
+                    //     distances_p[vector_idx] += (diff_low * diff_low * scaling_factors_exceptions[dimension_idx + 1]);
+                    //     exc_offset_1 += 1;
+                    // }
                 }
 
                 // float to_multiply_a = query_dim_0 - (float)nibble_0; // High
