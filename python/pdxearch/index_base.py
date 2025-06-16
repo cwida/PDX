@@ -192,7 +192,7 @@ class BaseIndexPDXIVF:
                             exceptions_n = 0
                         else:
                             EXCEPTIONS_ESCAPE_CODE = 15
-                            EXCEPTIONS_PERCENTAGE = 0.05 # x% From each side of the distribution
+                            EXCEPTIONS_PERCENTAGE = 0.025 # x% From each side of the distribution
                             exceptions_n = math.ceil(num_list_embeddings * EXCEPTIONS_PERCENTAGE)
                             rows, cols = for_data.shape
                             low_idx = np.argpartition(for_data, exceptions_n, axis=0)[:exceptions_n, :]

@@ -490,7 +490,8 @@ protected:
         uint32_t n_tuples_to_prune = 0;
         if (!is_positional_pruning) GetPruningThreshold(k, heap);
         while (
-                1.0 * n_tuples_to_prune < tuples_needed_to_exit &&
+                // TODO: Re-add condition, I am just testing the kernel efficiency fairly
+                // 1.0 * n_tuples_to_prune < tuples_needed_to_exit &&
                 current_dimension_idx < pdx_data.num_vertical_dimensions) {
             size_t last_dimension_to_fetch = std::min(current_dimension_idx + DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx],
                                                       pdx_data.num_vertical_dimensions);
