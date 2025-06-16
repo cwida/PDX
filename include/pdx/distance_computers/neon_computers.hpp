@@ -755,12 +755,10 @@ public:
                 }
                 else {
                     if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
-                        //std::cout << "Doing nibble 0 " << "\n";
                         float diff_high = query_dim_0 - (float)(nibble_0);
                         distances_p[vector_idx] += diff_high * diff_high * scale_0;
                     }
                     else {
-                        //std::cout << "Patching nibble 0 " << "\n";
                         float diff_high = exceptions_query[dimension_idx] - exceptions_data[exc_start_0 + exc_offset_0];
                         distances_p[vector_idx] += (diff_high * diff_high * scaling_factors_exceptions[dimension_idx]);
                         exc_offset_0 += 1;
