@@ -347,20 +347,20 @@ protected:
                 pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
                 quant.cur_exceptions_scaling_factors
             );
-            distance_computer::PatchVertical(
-                query,
-                quant.asymmetric_exceptions_query,
-                pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
-                pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
-                pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
-                0,
-                pdx_data.num_vertical_dimensions,
-                pruning_distances,
-                pruning_positions,
-                indices_dimensions.data(),
-                quant.dim_clip_value,
-                quant.cur_scaling_factors,
-                quant.cur_exceptions_scaling_factors);
+            // distance_computer::PatchVertical(
+            //     query,
+            //     quant.asymmetric_exceptions_query,
+            //     pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+            //     pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+            //     pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+            //     0,
+            //     pdx_data.num_vertical_dimensions,
+            //     pruning_distances,
+            //     pruning_positions,
+            //     indices_dimensions.data(),
+            //     quant.dim_clip_value,
+            //     quant.cur_scaling_factors,
+            //     quant.cur_exceptions_scaling_factors);
         } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
             distance_computer::Vertical(
                 query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions,
