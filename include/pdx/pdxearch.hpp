@@ -384,55 +384,55 @@ protected:
 //         this->end_to_end_clock.Toc();
 // #endif
         // Horizontal part
-        // for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension+=H_DIM_SIZE) {
-        //     // I don't need to go vector by vector, just patch everything in one go!
-        //     if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
-        //         distance_computer::PatchVertical(
-        //             query,
-        //             quant.asymmetric_exceptions_query,
-        //             pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
-        //             pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
-        //             pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
-        //             pdx_data.num_vertical_dimensions + horizontal_dimension, // start
-        //             pdx_data.num_vertical_dimensions + horizontal_dimension + H_DIM_SIZE, // end
-        //             pruning_distances,
-        //             pruning_positions,
-        //             indices_dimensions.data(),
-        //             quant.dim_clip_value,
-        //             quant.cur_scaling_factors,
-        //             quant.cur_exceptions_scaling_factors
-        //         );
-        //     }
-        //     for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
-        //         size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
-        //                         (horizontal_dimension * n_vectors) +
-        //                           (vector_idx * H_DIM_SIZE);
-        //         if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
-        //             assert(data_pos % 2 == 0);
-        //             data_pos = data_pos / 2;
-        //             pruning_distances[vector_idx] += distance_computer::Horizontal(
-        //                     query + pdx_data.num_vertical_dimensions + horizontal_dimension,
-        //                     data + data_pos,
-        //                     H_DIM_SIZE,
-        //                     quant.cur_scaling_factors + pdx_data.num_vertical_dimensions + horizontal_dimension
-        //             );
-        //         } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
-        //             pruning_distances[vector_idx] += distance_computer::Horizontal(
-        //                     query + pdx_data.num_vertical_dimensions + horizontal_dimension,
-        //                     data + data_pos,
-        //                     H_DIM_SIZE,
-        //                     nullptr
-        //             );
-        //         } else {
-        //             pruning_distances[vector_idx] += distance_computer::Horizontal(
-        //                     query + pdx_data.num_vertical_dimensions + horizontal_dimension,
-        //                     data + data_pos,
-        //                     H_DIM_SIZE,
-        //                     quant.cur_scaling_factors + pdx_data.num_vertical_dimensions + horizontal_dimension
-        //             );
-        //         }
-        //     }
-        // }
+        for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension+=H_DIM_SIZE) {
+            // I don't need to go vector by vector, just patch everything in one go!
+            if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+                distance_computer::PatchVertical(
+                    query,
+                    quant.asymmetric_exceptions_query,
+                    pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                    pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                    pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                    pdx_data.num_vertical_dimensions + horizontal_dimension, // start
+                    pdx_data.num_vertical_dimensions + horizontal_dimension + H_DIM_SIZE, // end
+                    pruning_distances,
+                    pruning_positions,
+                    indices_dimensions.data(),
+                    quant.dim_clip_value,
+                    quant.cur_scaling_factors,
+                    quant.cur_exceptions_scaling_factors
+                );
+            }
+            for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
+                size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
+                                (horizontal_dimension * n_vectors) +
+                                  (vector_idx * H_DIM_SIZE);
+                if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
+                    assert(data_pos % 2 == 0);
+                    data_pos = data_pos / 2;
+                    pruning_distances[vector_idx] += distance_computer::Horizontal(
+                            query + pdx_data.num_vertical_dimensions + horizontal_dimension,
+                            data + data_pos,
+                            H_DIM_SIZE,
+                            quant.cur_scaling_factors + pdx_data.num_vertical_dimensions + horizontal_dimension
+                    );
+                } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
+                    pruning_distances[vector_idx] += distance_computer::Horizontal(
+                            query + pdx_data.num_vertical_dimensions + horizontal_dimension,
+                            data + data_pos,
+                            H_DIM_SIZE,
+                            nullptr
+                    );
+                } else {
+                    pruning_distances[vector_idx] += distance_computer::Horizontal(
+                            query + pdx_data.num_vertical_dimensions + horizontal_dimension,
+                            data + data_pos,
+                            H_DIM_SIZE,
+                            quant.cur_scaling_factors + pdx_data.num_vertical_dimensions + horizontal_dimension
+                    );
+                }
+            }
+        }
         if constexpr (q != Quantization::ASYMMETRIC_U8 && q != Quantization::ASYMMETRIC_LEP_U8) {
             // Clipping (TODO: This looks horrible)
             for (size_t horizontal_dimension = 0; horizontal_dimension < pdx_data.num_horizontal_dimensions; horizontal_dimension++) {
@@ -516,21 +516,21 @@ protected:
 // #ifdef BENCHMARK_TIME
 //                     this->end_to_end_clock.Toc();
 // #endif
-                    distance_computer::PatchVertical(
-                        query,
-                        quant.asymmetric_exceptions_query,
-                        pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
-                        pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
-                        pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
-                        current_dimension_idx, // start
-                        last_dimension_to_fetch, // end
-                        pruning_distances,
-                        pruning_positions,
-                        indices_dimensions.data(),
-                        quant.dim_clip_value,
-                        quant.cur_scaling_factors,
-                        quant.cur_exceptions_scaling_factors
-                    );
+                    // distance_computer::PatchVertical(
+                    //     query,
+                    //     quant.asymmetric_exceptions_query,
+                    //     pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                    //     pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                    //     pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                    //     current_dimension_idx, // start
+                    //     last_dimension_to_fetch, // end
+                    //     pruning_distances,
+                    //     pruning_positions,
+                    //     indices_dimensions.data(),
+                    //     quant.dim_clip_value,
+                    //     quant.cur_scaling_factors,
+                    //     quant.cur_exceptions_scaling_factors
+                    // );
                 } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
                     distance_computer::Vertical(query, data, n_vectors, n_vectors, current_dimension_idx,
                                                      last_dimension_to_fetch, pruning_distances,
