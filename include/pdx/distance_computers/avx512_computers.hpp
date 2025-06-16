@@ -698,7 +698,7 @@ public:
                     __m512 vec_b_1 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(raw_data_1));
 
                     // DELETE LATER
-                    Sub, multiply and fmadd on dimension 0
+                    // Sub, multiply and fmadd on dimension 0
                     __m512 diff_0 = _mm512_sub_ps(vec_a_orig_0, vec_b_0);
                     __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
                     res = _mm512_fmadd_ps(tmp_0, vec_c_orig_0, res);
