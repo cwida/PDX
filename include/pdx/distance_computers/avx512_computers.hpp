@@ -760,12 +760,12 @@ public:
                 }
                 else {
                     if (vector_idx == exceptions_positions[exc_start_0]) {
-                        std:;cout << "For dimension" << dimension_idx << "\n";
+                        std::cout << "For dimension" << dimension_idx << "\n";
                         std::cout << "Vector with exception " << exceptions_positions[exc_start_0] << "\n";
                         std::cout << "Exception in position 0 " << exceptions_data[exc_start_0] << "\n";
                         std::cout << "Cur v:" << vector_idx << "\n";
                         std::cout << "Nibble 0: " << nibble_0 << "\n";
-                        std::cout << "Nibble 1: " << nibble_1 << "\n";                        
+                        std::cout << "Nibble 1: " << nibble_1 << "\n";
                     }
 
                     if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
