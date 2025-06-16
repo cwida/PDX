@@ -620,7 +620,6 @@ public:
         const __m128i EXC_ESCAPE_CODE = _mm_set1_epi8(15);
         const __m128i MASK_TO_COUNT_EXCEPTIONS = _mm_set1_epi8(1);
         __m128i low_mask = _mm_set1_epi8(0x0f);
-        std::cout << "WTF " << std::endl;
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=2) {
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -788,6 +787,10 @@ public:
             assert(n_exceptions == exc_offset_0);
             assert(n_exceptions == exc_offset_1);
             if constexpr (SKIP_PRUNED) {
+                std::cout << n_exceptions << " exceptions present [0].\n";
+                std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
+            }
+            if constexpr (!SKIP_PRUNED) {
                 std::cout << n_exceptions << " exceptions present [0].\n";
                 std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
             }
