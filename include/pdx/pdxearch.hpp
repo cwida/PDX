@@ -662,6 +662,7 @@ protected:
 //            size_t last_dimension_to_test_idx = std::min(current_dimension_idx + 4, pdx_data.num_dimensions);
             //prune_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
             //processed_bytes += (last_dimension_to_test_idx - current_vertical_dimension) * cur_n_vectors_not_pruned;
+            std::cout << "Here\n" << "\n";
             if (dimension_order == SEQUENTIAL){
                 if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
                     std::cout << "Here\n" << "\n";
