@@ -156,7 +156,6 @@ public:
                 float beta = (for_bases_exceptions[i] * alpha) + (for_bases[i] * scale_factors[i]);
                 // For data
                 cur_scaling_factors[i] = 1 / (alpha * alpha);
-                std::cout << cur_scaling_factors[i] << "\n";
                 asymmetric_query[i] = (asymmetric_scaled_query[i] * alpha) - beta;
                 // For exceptions
                 cur_exceptions_scaling_factors[i] = 1 / (scale_factors_exceptions[i] * scale_factors_exceptions[i]);
