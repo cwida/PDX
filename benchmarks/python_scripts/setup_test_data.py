@@ -15,4 +15,5 @@ def generate_test_data(dataset):
 
 
 if __name__ == "__main__":
-    generate_test_data('fashion-mnist-784-euclidean')
+    # generate_test_data('fashion-mnist-784-euclidean')
+    generate_test_data('word2vec-300')

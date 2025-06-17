@@ -129,7 +129,7 @@ class BaseIndexPDXIVF:
                 #     lep_min = 0
                 #     lep_max = 16
                 else:  # LEP-8
-                    if use_global_params:
+                    if use_global_params: # U8
                         # Global scaling
                         lep_min = 0
                         lep_max = 127 # TODO: Fix for Intel can only by max of 127
@@ -141,10 +141,9 @@ class BaseIndexPDXIVF:
                         scale_factors_data = np.full(self.ndim, global_scale_factor, dtype=np.float32)
                         for_data = pre_data - for_bases
                         data_norms = np.linalg.norm(pre_data, axis=1)
-                    elif not use_exceptions:
-
+                    elif not use_exceptions: # ASSYMMETRIC_U8
                         # Scaling per dimension which needs adjustments on the L2 calculation
-                        CURR_LEP_MAX = 255.0
+                        CURR_LEP_MAX = 15.0
                         LOW_PRECISION_LEP_MAX = 15.0
                         # The idea of using low precision dimensions did not worked!
                         LOW_PRECISION_DIMS = 0 # math.ceil(self.ndim * 0.90)
@@ -171,7 +170,7 @@ class BaseIndexPDXIVF:
                         lep_max = CURR_LEP_MAX
                         data_norms = np.linalg.norm(pre_data, axis=1)
                         # print(len(data_norms))
-                    else:
+                    else: # ASYMMETRIC_LEP_U8
                         data_norms = np.linalg.norm(pre_data, axis=1)
                         if list_id % 100 == 0:
                             print(f'Encoding LEP for partition {list_id}/{self.core_index.index.nlist}')
@@ -192,7 +191,7 @@ class BaseIndexPDXIVF:
                             exceptions_n = 0
                         else:
                             EXCEPTIONS_ESCAPE_CODE = 15
-                            EXCEPTIONS_PERCENTAGE = 0.025 # x% From each side of the distribution
+                            EXCEPTIONS_PERCENTAGE = 0.0125 # x% From each side of the distribution (0.025 = 5%, 0.0125 = 2.5%)
                             exceptions_n = math.ceil(num_list_embeddings * EXCEPTIONS_PERCENTAGE)
                             rows, cols = for_data.shape
                             low_idx = np.argpartition(for_data, exceptions_n, axis=0)[:exceptions_n, :]
@@ -258,15 +257,15 @@ class BaseIndexPDXIVF:
                             #     print(for_data.max(axis=0))
 
                             # 14 because 15 is reserved as a escape code
-                            scale_factors_data = np.where(col_range != 0, 14 / col_range, 0).astype(dtype=np.float32)
+                            scale_factors_data = np.where(col_range != 0, 15 / col_range, 0).astype(dtype=np.float32)
 
                             # if (len(for_data) < 20):
                             #     print('FOR DATA BEFORE LAST SCALING', for_data[:, 0:10])
                             for_data = (for_data * scale_factors_data).round(decimals=0).astype(dtype=np.int32)
 
                             # Putting escape code in place of exceptions
-                            for_data[low_idx.ravel(), low_col_idx.ravel()] = EXCEPTIONS_ESCAPE_CODE # 0
-                            for_data[high_idx.ravel(), high_col_idx.ravel()] = EXCEPTIONS_ESCAPE_CODE # 0
+                            for_data[low_idx.ravel(), low_col_idx.ravel()] = 0 # EXCEPTIONS_ESCAPE_CODE # 0
+                            for_data[high_idx.ravel(), high_col_idx.ravel()] = 0 # EXCEPTIONS_ESCAPE_CODE # 0
 
                             # print(for_data)
                             # print(for_data_exceptions)
@@ -379,17 +378,16 @@ class BaseIndexPDXIVF:
                     if _type == 'pdx':
                         data.extend(self.partitions[i].blocks[p].tobytes("F"))  # PDX
                     elif _type == 'pdx-v4-h':
-                        assert self.ndim % 64 == 0
                         h_dims = int(self.ndim * 0.75)
                         v_dims = self.ndim - h_dims
-                        if v_dims % 64 != 0:
-                            v_dims = round(v_dims / 64) * 64
-                            h_dims = self.ndim - v_dims
+                        if h_dims % 64 != 0:
+                            h_dims = round(h_dims / 64) * 64
+                            v_dims = self.ndim - h_dims
+
                         assert h_dims % 4 == 0
                         assert v_dims % 4 == 0
                         assert h_dims + v_dims == self.ndim
                         assert h_dims > v_dims
-                        assert v_dims % 64 == 0
                         assert h_dims % 64 == 0
                         tmp_block = self.partitions[i].blocks[p][:, :v_dims]
                         rows, _ = tmp_block.shape
@@ -455,7 +453,7 @@ class BaseIndexPDXIVF:
             for i in range(self.num_partitions):
                 data.extend(self.partitions[i].for_bases.tobytes("C"))
                 data.extend(self.partitions[i].scale_factors.tobytes("C"))
-                data.extend(self.partitions[i].data_norms.tobytes("C"))
+                # data.extend(self.partitions[i].data_norms.tobytes("C"))
                 if kwargs.get('use_exceptions', False): # If ENCODE_EXCEPTIONS
                     # print('Partition with', self.partitions[i].exceptions_n, 'exceptions')
                     # print('self.partitions[i].exceptions_pos', len(self.partitions[i].exceptions_pos))
@@ -478,7 +476,8 @@ class BaseIndexPDXIVF:
                     data.extend(self.partitions[i].scale_factors_exceptions.tobytes("C"))
                     data.extend(self.partitions[i].exceptions_pos.tobytes("F"))
                     data.extend(self.partitions[i].exceptions_data.tobytes("F"))
-        data.extend(self.means.tobytes("C"))
+        if _type == 'pdx':
+            data.extend(self.means.tobytes("C"))
         is_ivf = True
         data.extend(self.normalize.to_bytes(1, sys.byteorder))
         data.extend(is_ivf.to_bytes(1, sys.byteorder))

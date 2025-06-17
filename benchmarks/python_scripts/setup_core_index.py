@@ -39,9 +39,11 @@ def generate_core_ivf(dataset_name: str, normalize=True):
 
 
 if __name__ == "__main__":
+    generate_core_ivf('word2vec-300', normalize=True)
     # generate_core_ivf('fashion-mnist-784-euclidean', normalize=True)
     # generate_core_ivf('sift-128-euclidean', normalize=True)
     # generate_core_ivf('openai-1536-angular', normalize=True)
+    # generate_core_ivf('msong-420', normalize=True)
     # generate_core_ivf('instructorxl-arxiv-768', normalize=True)
     # generate_core_ivf('contriever-768', normalize=True)
-    generate_core_ivf('gist-960-euclidean', normalize=True)
+    # generate_core_ivf('gist-960-euclidean', normalize=True)

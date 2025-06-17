@@ -743,36 +743,36 @@ public:
                  float scale_1 = scaling_factors[dimension_idx + 1];
 
                 // When we SKIP PRUNED, we do not patch inplace (for now)
-                if constexpr (SKIP_PRUNED) {
-                    if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
+                //if constexpr (SKIP_PRUNED) {
+                //    if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
                         float diff_high = query_dim_0 - (float)(nibble_0);
                         distances_p[vector_idx] += diff_high * diff_high * scale_0;
-                    }
-                    if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
+                //    }
+                //    if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
                         float diff_low = query_dim_1 - (float)(nibble_1);
                         distances_p[vector_idx] += diff_low * diff_low * scale_1;
-                    }
-                }
-                else {
-                    if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
-                        float diff_high = query_dim_0 - (float)(nibble_0);
-                        distances_p[vector_idx] += diff_high * diff_high * scale_0;
-                    }
-                    else {
-                        float diff_high = exceptions_query[dimension_idx] - exceptions_data[exc_start_0 + exc_offset_0];
-                        distances_p[vector_idx] += (diff_high * diff_high * scaling_factors_exceptions[dimension_idx]);
-                        exc_offset_0 += 1;
-                    }
-                    if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
-                        float diff_low = query_dim_1 - (float)(nibble_1);
-                        distances_p[vector_idx] += diff_low * diff_low * scale_1;
-                    }
-                    else {
-                        float diff_low = exceptions_query[dimension_idx + 1] - exceptions_data[exc_start_1 + exc_offset_1];
-                        distances_p[vector_idx] += (diff_low * diff_low * scaling_factors_exceptions[dimension_idx + 1]);
-                        exc_offset_1 += 1;
-                    }
-                }
+                //    }
+                //}
+                // else {
+                //     if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
+                //         float diff_high = query_dim_0 - (float)(nibble_0);
+                //         distances_p[vector_idx] += diff_high * diff_high * scale_0;
+                //     }
+                //     else {
+                //         float diff_high = exceptions_query[dimension_idx] - exceptions_data[exc_start_0 + exc_offset_0];
+                //         distances_p[vector_idx] += (diff_high * diff_high * scaling_factors_exceptions[dimension_idx]);
+                //         exc_offset_0 += 1;
+                //     }
+                //     if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
+                //         float diff_low = query_dim_1 - (float)(nibble_1);
+                //         distances_p[vector_idx] += diff_low * diff_low * scale_1;
+                //     }
+                //     else {
+                //         float diff_low = exceptions_query[dimension_idx + 1] - exceptions_data[exc_start_1 + exc_offset_1];
+                //         distances_p[vector_idx] += (diff_low * diff_low * scaling_factors_exceptions[dimension_idx + 1]);
+                //         exc_offset_1 += 1;
+                //     }
+                // }
              }
 
 
@@ -820,36 +820,37 @@ public:
         size_t cur_dim = 0;
         size_t i = 0;
         DISTANCE_TYPE distance = 0.0;
-        // for (; i < num_words; i++) {
-        //     uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
-        //     uint8_t nibble_low = (vector2[i] & 0x0F);
-        //
-        //     float diff_high = vector1[cur_dim] - (float)(nibble_high);
-        //     float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
-        //
-        //     distance += diff_high * diff_high * scaling_factors[cur_dim];
-        //     distance += diff_low * diff_low * scaling_factors[cur_dim+1];
-        //
-        //     cur_dim += 2;
-        // }
-        // return distance;
-
         #pragma clang loop vectorize(enable)
         for (; i < num_words; i++) {
             uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
             uint8_t nibble_low = (vector2[i] & 0x0F);
 
-            if (nibble_high != EXC_ESCAPE_CODE_SCALAR) {
-                float diff_high = vector1[cur_dim] - (float)(nibble_high);
-                distance += diff_high * diff_high * scaling_factors[cur_dim];
-            }
-            if (nibble_low != EXC_ESCAPE_CODE_SCALAR) {
-                float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
-                distance += diff_low * diff_low * scaling_factors[cur_dim+1];
-            }
+            float diff_high = vector1[cur_dim] - (float)(nibble_high);
+            float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
+
+            distance += diff_high * diff_high * scaling_factors[cur_dim];
+            distance += diff_low * diff_low * scaling_factors[cur_dim+1];
 
             cur_dim += 2;
         }
+        return distance;
+
+        // #pragma clang loop vectorize(enable)
+        // for (; i < num_words; i++) {
+        //     uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
+        //     uint8_t nibble_low = (vector2[i] & 0x0F);
+        //
+        //     if (nibble_high != EXC_ESCAPE_CODE_SCALAR) {
+        //         float diff_high = vector1[cur_dim] - (float)(nibble_high);
+        //         distance += diff_high * diff_high * scaling_factors[cur_dim];
+        //     }
+        //     if (nibble_low != EXC_ESCAPE_CODE_SCALAR) {
+        //         float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
+        //         distance += diff_low * diff_low * scaling_factors[cur_dim+1];
+        //     }
+        //
+        //     cur_dim += 2;
+        // }
         return distance;
 
     };
@@ -885,8 +886,8 @@ public:
                 good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
 
                 // Since there was never a bad term, this is wrong.
-                distances_p[vector_idx] += good_term; // - bad_term;
-                //distances_p[vector_idx] += good_term - bad_term;
+                //distances_p[vector_idx] += good_term; // - bad_term;
+                distances_p[vector_idx] += good_term - bad_term;
             }
         }
     }

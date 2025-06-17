@@ -63,7 +63,8 @@ DATASETS = [
     'gist-960-euclidean',
     'deep-image-96-angular',
     'instructorxl-arxiv-768',
-    'openai-1536-angular'
+    'openai-1536-angular',
+    'word2vec-300'
 ]
 
 DIMENSIONALITIES = {
@@ -86,7 +87,8 @@ DIMENSIONALITIES = {
     'gist-960-euclidean': 960,
     'deep-image-96-angular': 96,
     'instructorxl-arxiv-768': 768,
-    'openai-1536-angular': 1536
+    'openai-1536-angular': 1536,
+    'word2vec-300': 300
 }
 
 DATA_EXPONENTS = {

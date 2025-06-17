@@ -9,6 +9,17 @@ def read_hdf5_train_data(dataset):
     return np.array(hdf5_file["train"], dtype=np.float32)
 
 
+def read_ivecs(filename):
+    a = np.fromfile(filename, dtype="int32")
+    d = a[0]
+    print(f"\t{filename} readed")
+    return a.reshape(-1, d + 1)[:, 1:]
+
+
+def read_fvecs(filename):
+    return read_ivecs(filename).view("float32")
+
+
 def read_hdf5_test_data(dataset):
     hdf5_file_name = os.path.join(RAW_DATA, dataset + ".hdf5")
     hdf5_file = h5py.File(hdf5_file_name, "r")

@@ -360,20 +360,20 @@ protected:
                 pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
                 quant.cur_exceptions_scaling_factors
             );
-            // distance_computer::PatchVertical(
-            //     query,
-            //     quant.asymmetric_exceptions_query,
-            //     pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
-            //     pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
-            //     pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
-            //     0,
-            //     pdx_data.num_vertical_dimensions,
-            //     pruning_distances,
-            //     pruning_positions,
-            //     indices_dimensions.data(),
-            //     quant.dim_clip_value,
-            //     quant.cur_scaling_factors,
-            //     quant.cur_exceptions_scaling_factors);
+            distance_computer::PatchVertical(
+                query,
+                quant.asymmetric_exceptions_query,
+                pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                0,
+                pdx_data.num_vertical_dimensions,
+                pruning_distances,
+                pruning_positions,
+                indices_dimensions.data(),
+                quant.dim_clip_value,
+                quant.cur_scaling_factors,
+                quant.cur_exceptions_scaling_factors);
         } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
             distance_computer::Vertical(
                 query, data, n_vectors, n_vectors, 0, pdx_data.num_vertical_dimensions,
@@ -496,7 +496,7 @@ protected:
         if (!is_positional_pruning) GetPruningThreshold(k, heap);
         while (
                 // TODO: Re-add condition, I am just testing the kernel efficiency fairly
-                // 1.0 * n_tuples_to_prune < tuples_needed_to_exit &&
+                1.0 * n_tuples_to_prune < tuples_needed_to_exit &&
                 current_dimension_idx < pdx_data.num_vertical_dimensions) {
             size_t last_dimension_to_fetch = std::min(current_dimension_idx + DIMENSIONS_FETCHING_SIZES[cur_subgrouping_size_idx],
                                                       pdx_data.num_vertical_dimensions);
@@ -522,21 +522,21 @@ protected:
 // #ifdef BENCHMARK_TIME
 //                     this->end_to_end_clock.Toc();
 // #endif
-                    // distance_computer::PatchVertical(
-                    //     query,
-                    //     quant.asymmetric_exceptions_query,
-                    //     pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
-                    //     pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
-                    //     pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
-                    //     current_dimension_idx, // start
-                    //     last_dimension_to_fetch, // end
-                    //     pruning_distances,
-                    //     pruning_positions,
-                    //     indices_dimensions.data(),
-                    //     quant.dim_clip_value,
-                    //     quant.cur_scaling_factors,
-                    //     quant.cur_exceptions_scaling_factors
-                    // );
+                    distance_computer::PatchVertical(
+                        query,
+                        quant.asymmetric_exceptions_query,
+                        pdx_data.vectorgroups[current_vectorgroup].data_exceptions,
+                        pdx_data.vectorgroups[current_vectorgroup].exceptions_positions,
+                        pdx_data.vectorgroups[current_vectorgroup].num_exceptions,
+                        current_dimension_idx, // start
+                        last_dimension_to_fetch, // end
+                        pruning_distances,
+                        pruning_positions,
+                        indices_dimensions.data(),
+                        quant.dim_clip_value,
+                        quant.cur_scaling_factors,
+                        quant.cur_exceptions_scaling_factors
+                    );
                 } else if constexpr (q != Quantization::ASYMMETRIC_U8) {
                     distance_computer::Vertical(query, data, n_vectors, n_vectors, current_dimension_idx,
                                                      last_dimension_to_fetch, pruning_distances,
@@ -1008,7 +1008,6 @@ public:
         );
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
-        //this->end_to_end_clock.Tic();
 #endif
         Start(quant.asymmetric_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
@@ -1019,21 +1018,21 @@ public:
                 vectorgroup.for_bases, vectorgroup.scale_factors,
                 vectorgroup.for_bases_exceptions, vectorgroup.scale_factors_exceptions
             );
+            Warmup(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
 #ifdef BENCHMARK_TIME
             this->end_to_end_clock.Tic();
 #endif
-            Warmup(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
+            Prune(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
 #ifdef BENCHMARK_TIME
             this->end_to_end_clock.Toc();
 #endif
-            Prune(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
-#ifdef BENCHMARK_TIME
-        //this->end_to_end_clock.Toc();
-#endif
+// #ifdef BENCHMARK_TIME
+//         this->end_to_end_clock.Toc();
+// #endif
         return BuildResultSet(k);
     }
 
@@ -1078,14 +1077,15 @@ public:
                 vectorgroup.for_bases, vectorgroup.scale_factors,
                 nullptr, nullptr
             );
+            Warmup(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
+
 #ifdef BENCHMARK_TIME
             this->end_to_end_clock.Tic();
 #endif
-            Warmup(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
+            Prune(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
 #ifdef BENCHMARK_TIME
             this->end_to_end_clock.Toc();
 #endif
-            Prune(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
             if (n_vectors_not_pruned){
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }

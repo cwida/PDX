@@ -109,9 +109,9 @@ public:
         num_dimensions = ((uint32_t *) input)[0];
         num_horizontal_dimensions = (uint32_t)(num_dimensions * 0.75);
         num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        if (num_vertical_dimensions % 64 != 0) {
-            num_vertical_dimensions = static_cast<int>(std::round(num_vertical_dimensions / 64.0)) * 64;
-            num_horizontal_dimensions = num_dimensions - num_vertical_dimensions;
+        if (num_horizontal_dimensions % 64 != 0) {
+            num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
+            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
         }
         // TODO: UNCOMMENT WHEN GOING BACK TO FULL VERTICAL
 //        num_vertical_dimensions = num_dimensions;
@@ -142,8 +142,8 @@ public:
             next_value += sizeof(uint32_t) * num_dimensions;
             vectorgroup.scale_factors = (float *) next_value;
             next_value += sizeof(uint32_t) * num_dimensions;
-            vectorgroup.norms = (float *) next_value;
-            next_value += sizeof(float) * vectorgroup.num_embeddings;
+            //vectorgroup.norms = (float *) next_value;
+            //next_value += sizeof(float) * vectorgroup.num_embeddings;
         }
         means = (float *) next_value;
         next_value += sizeof(float) * num_dimensions;
@@ -188,9 +188,9 @@ public:
         num_dimensions = ((uint32_t *) input)[0];
         num_horizontal_dimensions = (uint32_t)(num_dimensions * 0.75);
         num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        if (num_vertical_dimensions % 64 != 0) {
-            num_vertical_dimensions = static_cast<int>(std::round(num_vertical_dimensions / 64.0)) * 64;
-            num_horizontal_dimensions = num_dimensions - num_vertical_dimensions;
+        if (num_horizontal_dimensions % 64 != 0) {
+            num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
+            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
         }
         // TODO: UNCOMMENT WHEN GOING BACK TO FULL VERTICAL
 //        num_vertical_dimensions = num_dimensions;
@@ -221,11 +221,11 @@ public:
             next_value += sizeof(uint32_t) * num_dimensions;
             vectorgroup.scale_factors = (float *) next_value;
             next_value += sizeof(uint32_t) * num_dimensions;
-            vectorgroup.norms = (float *) next_value;
-            next_value += sizeof(float) * vectorgroup.num_embeddings;
+            //vectorgroup.norms = (float *) next_value;
+            //next_value += sizeof(float) * vectorgroup.num_embeddings;
         }
-        means = (float *) next_value;
-        next_value += sizeof(float) * num_dimensions;
+        //means = (float *) next_value;
+        //next_value += sizeof(float) * num_dimensions;
         is_normalized = ((char *) next_value)[0];
         next_value += sizeof(char);
         is_ivf = ((char *) next_value)[0];
@@ -268,9 +268,9 @@ public:
         num_dimensions = ((uint32_t *) input)[0];
         num_horizontal_dimensions = (uint32_t)(num_dimensions * 0.75);
         num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        if (num_vertical_dimensions % 64 != 0) {
-            num_vertical_dimensions = static_cast<int>(std::round(num_vertical_dimensions / 64.0)) * 64;
-            num_horizontal_dimensions = num_dimensions - num_vertical_dimensions;
+        if (num_horizontal_dimensions % 64 != 0) {
+            num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
+            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
         }
         // TODO: UNCOMMENT WHEN GOING BACK TO FULL VERTICAL
 //        num_vertical_dimensions = num_dimensions;
@@ -306,8 +306,8 @@ public:
             next_value += sizeof(uint32_t) * num_dimensions;
             vectorgroup.scale_factors = (float *) next_value;
             next_value += sizeof(uint32_t) * num_dimensions;
-            vectorgroup.norms = (float *) next_value;
-            next_value += sizeof(float) * vectorgroup.num_embeddings;
+            //vectorgroup.norms = (float *) next_value;
+            //next_value += sizeof(float) * vectorgroup.num_embeddings;
 
             vectorgroup.num_exceptions = ((uint32_t *) next_value)[0];
             next_value += sizeof(uint32_t);
@@ -327,8 +327,8 @@ public:
             next_value += sizeof(uint8_t) * (vectorgroup.num_exceptions * num_dimensions);
 
         }
-        means = (float *) next_value;
-        next_value += sizeof(float) * num_dimensions;
+        //means = (float *) next_value;
+        //next_value += sizeof(float) * num_dimensions;
         is_normalized = ((char *) next_value)[0];
         next_value += sizeof(char);
         is_ivf = ((char *) next_value)[0];
