@@ -621,14 +621,14 @@ public:
         const __m512 EXC_ESCAPE_CODE_512 = _mm512_set1_ps(15);
         const __m128i MASK_TO_COUNT_EXCEPTIONS = _mm_set1_epi8(1);
         __m128i low_mask = _mm_set1_epi8(0x0f);
-        static __m128i exceptions_catcher[128]; // To fit 1024, 16-bit values
-        for (size_t k = 0; k < 128; ++k) {
+        static __m128i exceptions_catcher[64]; // To fit 1024, 16-bit values
+        for (size_t k = 0; k < 64; ++k) {
             exceptions_catcher[0] = _mm_setzero_si128();
         }
         uint8_t dim_counter = 0;
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=2) {
-            __m128i current_exception_position_0 = _mm_set1_epi16(1u << dim_counter);
-            __m128i current_exception_position_1 = _mm_set1_epi16(1u << (dim_counter + 1));
+            __m128i current_exception_position_0 = _mm_set1_epi8(1u << dim_counter);
+            __m128i current_exception_position_1 = _mm_set1_epi8(1u << (dim_counter + 1));
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
                 dimension_idx = indices_dimensions[dim_idx];
@@ -751,23 +751,25 @@ public:
                 // assert(exc_offset_0 == n_exceptions);
                 // assert(exc_offset_1 == n_exceptions);
                 dim_counter += 2;
-                if (dim_counter > 15) {
+                if (dim_counter > 8) {
                     // Patch
                     std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
                     std::cout << "n_vectors: " << n_vectors << std::endl;
                     dim_counter = 0;
                     uint16_t global_c = 0;
-                    for (size_t k = 0; k < 128; ++k) {
-                        alignas(64) uint16_t vals[8];
-                        _mm_storeu_epi16(vals, exceptions_catcher[k]);
-                        for (int l = 0; l < 8; ++l) {
+                    for (size_t z = 0; z < 64; ++z) {
+                        alignas(64) uint8_t vals[16];
+                        _mm_storeu_epi8(vals, exceptions_catcher[z]);
+                        for (int l = 0; l < 16; ++l) {
                             std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
-                            global_c ++;
+                            global_c++;
                         }
-                        exceptions_catcher[k] = _mm_setzero_si128();
-                        if (k * 8 > n_vectors) {
+                        if (k * 16 > n_vectors) {
                             break;
                         }
+                    }
+                    for (size_t z = 0; z < 64; ++z) {
+                        exceptions_catcher[z] = _mm_setzero_si128();
                     }
                 }
             }
