@@ -754,6 +754,7 @@ public:
                 if (dim_counter > 15) {
                     // Patch
                     std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
+                    std::cout << "n_vectors: " << n_vectors << std::endl;
                     dim_counter = 0;
                     uint16_t global_c = 0;
                     for (size_t k = 0; k < 128; ++k) {
