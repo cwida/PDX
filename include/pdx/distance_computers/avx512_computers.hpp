@@ -765,7 +765,7 @@ public:
                         for (int l = 0; l < 16; ++l) {
                             uint8_t mask = vals[l];
                             while (mask) {
-                                distances_p[global_c] += exceptions_data[exception_offset];
+                                distances_p[global_c] += (float)exceptions_data[exception_offset];
                                 mask &= mask-1;
                                 exception_offset +=1;
                             }
