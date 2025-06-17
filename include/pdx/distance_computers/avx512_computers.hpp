@@ -621,7 +621,14 @@ public:
         const __m512 EXC_ESCAPE_CODE_512 = _mm512_set1_ps(15);
         const __m128i MASK_TO_COUNT_EXCEPTIONS = _mm_set1_epi8(1);
         __m128i low_mask = _mm_set1_epi8(0x0f);
+        static __m128i exceptions_catcher[128]; // To fit 1024, 16-bit values
+        for (size_t k = 0; k < 128; ++k) {
+            exceptions_catcher[0] = _mm_setzero_si128();
+        }
+        uint8_t dim_counter = 0;
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=2) {
+            __m128i current_exception_position_0 = _mm_set1_epi16(1u << dim_counter);
+            __m128i current_exception_position_1 = _mm_set1_epi16(1u << (dim_counter + 1));
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
                 dimension_idx = indices_dimensions[dim_idx];
@@ -646,15 +653,16 @@ public:
 
                 // Loading data that corresponds to exceptions:
                 // Query
-                __m512 exc_query_0 = _mm512_set1_ps(exceptions_query[dimension_idx]);
-                __m512 exc_query_1 = _mm512_set1_ps(exceptions_query[dimension_idx + 1]);
+                // __m512 exc_query_0 = _mm512_set1_ps(exceptions_query[dimension_idx]);
+                // __m512 exc_query_1 = _mm512_set1_ps(exceptions_query[dimension_idx + 1]);
                 // Scaling Factors
-                __m512 exc_scaling_0 = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx]);
-                __m512 exc_scaling_1 = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx + 1]);
+                // __m512 exc_scaling_0 = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx]);
+                // __m512 exc_scaling_1 = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx + 1]);
                 // Data itself
                 /////////////////////////////////////////////////
-                __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
-                __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
+                // __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
+                // __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
+                uint8_t k = 0;
                 for (; i + 16 <= n_vectors; i+=16) {
                     __m512 res = _mm512_load_ps(&distances_p[i]); // touching 16 vectors
 
@@ -665,10 +673,27 @@ public:
                     __m128i raw_data_0 = _mm_and_si128(_mm_srli_epi16(raw_data, 4), low_mask);
                     __m128i raw_data_1 = _mm_and_si128(raw_data, low_mask);
 
+                    ////////////////////
                     // Detect and Patch exceptions
                     //Detect ESCAPE_CODE mask
                     __mmask16 exc_mask_0 = _mm_cmpeq_epi8_mask(raw_data_0, EXC_ESCAPE_CODE);
                     __mmask16 exc_mask_1 = _mm_cmpeq_epi8_mask(raw_data_1, EXC_ESCAPE_CODE);
+
+                    ////////////////////
+                    // New mask logic
+                    __m128i cur_exc_mask_0 = _mm_movm_epi8(exc_mask_0);
+                    __m128i cur_exc_mask_1 = _mm_movm_epi8(exc_mask_1);
+                    exceptions_catcher[k] = _mm_or_si128(
+                        _mm_and_si128(current_exception_position_0, cur_exc_mask_0),
+                        exceptions_catcher[k]
+                    );
+                    exceptions_catcher[k] = _mm_or_si128(
+                        _mm_and_si128(current_exception_position_1, cur_exc_mask_1),
+                        exceptions_catcher[k]
+                    );
+                    ///// End of mask logic
+                    ////////////////////
+
                     // Detect where I must read exceptions from
                     // __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
                     // __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
@@ -719,11 +744,31 @@ public:
                     res = _mm512_fmadd_ps(tmp_1, vec_c_orig_1, res);
                     // Store distances
                     _mm512_store_ps(&distances_p[i], res);
+                    k++;
                 }
                 // std::cout << exc_offset_0 << ", " <<  n_exceptions << std::endl;
                 // std::cout << exc_offset_1 << ", " <<  n_exceptions << std::endl;
                 // assert(exc_offset_0 == n_exceptions);
                 // assert(exc_offset_1 == n_exceptions);
+            }
+            dim_counter += 2;
+            if (dim_counter > 15) {
+                // Patch
+                std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
+                dim_counter = 0;
+                uint16_t global_c = 0;
+                for (size_t k = 0; k < 128; ++k) {
+                    alignas(64) uint16_t vals[8];
+                    _mm_storeu_epi16(vals, exceptions_catcher[k]);
+                    for (int l = 0; l < 8; ++l) {
+                        std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
+                        global_c ++;
+                    }
+                    exceptions_catcher[k] = _mm_setzero_si128();
+                    if (k * 8 > n_vectors) {
+                        break;
+                    }
+                }
             }
             // for (; i < n_vectors; ++i) {
             //     size_t vector_idx = i;
