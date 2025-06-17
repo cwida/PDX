@@ -764,7 +764,7 @@ public:
                             std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
                             global_c++;
                         }
-                        if (k * 16 > n_vectors) {
+                        if (z * 16 > n_vectors) {
                             break;
                         }
                     }
