@@ -750,26 +750,27 @@ public:
                 // std::cout << exc_offset_1 << ", " <<  n_exceptions << std::endl;
                 // assert(exc_offset_0 == n_exceptions);
                 // assert(exc_offset_1 == n_exceptions);
-            }
-            dim_counter += 2;
-            if (dim_counter > 15) {
-                // Patch
-                std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
-                dim_counter = 0;
-                uint16_t global_c = 0;
-                for (size_t k = 0; k < 128; ++k) {
-                    alignas(64) uint16_t vals[8];
-                    _mm_storeu_epi16(vals, exceptions_catcher[k]);
-                    for (int l = 0; l < 8; ++l) {
-                        std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
-                        global_c ++;
-                    }
-                    exceptions_catcher[k] = _mm_setzero_si128();
-                    if (k * 8 > n_vectors) {
-                        break;
+                dim_counter += 2;
+                if (dim_counter > 15) {
+                    // Patch
+                    std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
+                    dim_counter = 0;
+                    uint16_t global_c = 0;
+                    for (size_t k = 0; k < 128; ++k) {
+                        alignas(64) uint16_t vals[8];
+                        _mm_storeu_epi16(vals, exceptions_catcher[k]);
+                        for (int l = 0; l < 8; ++l) {
+                            std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
+                            global_c ++;
+                        }
+                        exceptions_catcher[k] = _mm_setzero_si128();
+                        if (k * 8 > n_vectors) {
+                            break;
+                        }
                     }
                 }
             }
+
             // for (; i < n_vectors; ++i) {
             //     size_t vector_idx = i;
             //     if constexpr (SKIP_PRUNED){
