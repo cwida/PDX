@@ -751,7 +751,7 @@ public:
                 // assert(exc_offset_0 == n_exceptions);
                 // assert(exc_offset_1 == n_exceptions);
                 dim_counter += 2;
-                if (dim_counter > 8) {
+                if (dim_counter >= 8) {
                     // Patch
                     std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
                     std::cout << "Currently in d=" << dim_idx << std::endl;
