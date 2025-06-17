@@ -753,22 +753,22 @@ public:
                 dim_counter += 2;
                 if (dim_counter >= 8) {
                     // Patch
-                    std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
-                    std::cout << "Currently in d=" << dim_idx << std::endl;
-                    std::cout << "n_vectors: " << n_vectors << std::endl;
-                    dim_counter = 0;
-                    uint16_t global_c = 0;
-                    for (size_t z = 0; z < 64; ++z) {
-                        alignas(64) uint8_t vals[16];
-                        _mm_storeu_epi8(vals, exceptions_catcher[z]);
-                        for (int l = 0; l < 16; ++l) {
-                            std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
-                            global_c++;
-                        }
-                        if (z * 16 > n_vectors) {
-                            break;
-                        }
-                    }
+                    // std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
+                    // std::cout << "Currently in d=" << dim_idx << std::endl;
+                    // std::cout << "n_vectors: " << n_vectors << std::endl;
+                    // dim_counter = 0;
+                    // uint16_t global_c = 0;
+                    // for (size_t z = 0; z < 64; ++z) {
+                    //     alignas(64) uint8_t vals[16];
+                    //     _mm_storeu_epi8(vals, exceptions_catcher[z]);
+                    //     for (int l = 0; l < 16; ++l) {
+                    //         std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
+                    //         global_c++;
+                    //     }
+                    //     if (z * 16 > n_vectors) {
+                    //         break;
+                    //     }
+                    // }
                     for (size_t z = 0; z < 64; ++z) {
                         exceptions_catcher[z] = _mm_setzero_si128();
                     }
