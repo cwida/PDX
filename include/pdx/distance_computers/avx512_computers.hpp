@@ -754,6 +754,7 @@ public:
                 if (dim_counter > 8) {
                     // Patch
                     std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
+                    std::cout << "Currently in d=" << dim_idx << std::endl;
                     std::cout << "n_vectors: " << n_vectors << std::endl;
                     dim_counter = 0;
                     uint16_t global_c = 0;
