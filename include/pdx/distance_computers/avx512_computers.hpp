@@ -756,7 +756,7 @@ public:
                     // std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
                     // std::cout << "Currently in d=" << dim_idx << std::endl;
                     // std::cout << "n_vectors: " << n_vectors << std::endl;
-                    // dim_counter = 0;
+                    dim_counter = 0;
                     uint16_t global_c = 0;
                     size_t exception_offset = 0;
                     for (size_t z = 0; z < k; ++z) {
