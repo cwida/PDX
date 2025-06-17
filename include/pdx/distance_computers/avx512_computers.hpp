@@ -757,18 +757,22 @@ public:
                     // std::cout << "Currently in d=" << dim_idx << std::endl;
                     // std::cout << "n_vectors: " << n_vectors << std::endl;
                     // dim_counter = 0;
-                    // uint16_t global_c = 0;
-                    // for (size_t z = 0; z < 64; ++z) {
-                    //     alignas(64) uint8_t vals[16];
-                    //     _mm_storeu_epi8(vals, exceptions_catcher[z]);
-                    //     for (int l = 0; l < 16; ++l) {
-                    //         std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
-                    //         global_c++;
-                    //     }
-                    //     if (z * 16 > n_vectors) {
-                    //         break;
-                    //     }
-                    // }
+                    uint16_t global_c = 0;
+                    size_t exception_offset = 0;
+                    for (size_t z = 0; z < k; ++z) {
+                        alignas(64) static uint8_t vals[16];
+                        _mm_storeu_epi8(vals, exceptions_catcher[z]);
+                        for (int l = 0; l < 16; ++l) {
+                            uint8_t mask = vals[l];
+                            while (mask) {
+                                distances_p[global_c] += exceptions_data[exception_offset];
+                                mask &= mask-1;
+                                exception_offset +=1;
+                            }
+                            global_c++;
+                            //std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
+                        }
+                    }
                     for (size_t z = 0; z < 64; ++z) {
                         exceptions_catcher[z] = _mm_setzero_si128();
                     }
