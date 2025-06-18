@@ -60,6 +60,7 @@ public:
     //alignas(64) inline static int32_t dim_clip_positions[4096];
     alignas(64) inline static QUANTIZED_QUERY_TYPE quantized_query[4096];
     alignas(64) inline static float asymmetric_query[4096];
+    alignas(64) inline static float bad_terms[4096];
     alignas(64) inline static float asymmetric_exceptions_query[4096];
     alignas(64) inline static float asymmetric_scaled_query[4096];
 
@@ -160,6 +161,7 @@ public:
                 // For exceptions
                 cur_exceptions_scaling_factors[i] = 1 / (scale_factors_exceptions[i] * scale_factors_exceptions[i]);
                 asymmetric_exceptions_query[i] = (asymmetric_scaled_query[i] - for_bases_exceptions[i]) * scale_factors_exceptions[i];
+                bad_terms[i] = asymmetric_query[i] * asymmetric_query[i] * cur_scaling_factors[i];
             }
             return;
         }

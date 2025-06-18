@@ -361,6 +361,15 @@ class BaseIndexPDXIVF:
         data = bytearray()
         data.extend(np.int32(self.ndim).tobytes("C"))
         data.extend(np.int32(self.num_partitions).tobytes("C"))
+
+        h_dims = int(self.ndim * 0.75)
+        v_dims = self.ndim - h_dims
+        if h_dims % 64 != 0:
+            h_dims = round(h_dims / 64) * 64
+            v_dims = self.ndim - h_dims
+
+        tmp_columns = np.arange(self.ndim, dtype=np.uint16)
+
         for i in range(self.num_partitions):
             data.extend(np.int32(self.partitions[i].num_embeddings).tobytes("C"))
         if _type == 'dsm':
@@ -371,6 +380,7 @@ class BaseIndexPDXIVF:
             whole_f = np.concatenate(whole, axis=0)
             data.extend(whole_f.tobytes("F"))
         else:
+            # for i in range(0):
             for i in range(self.num_partitions):
                 # if i % 100 == 0:
                 #     print(f"{i}/{self.num_partitions} partitions processed")
@@ -378,12 +388,6 @@ class BaseIndexPDXIVF:
                     if _type == 'pdx':
                         data.extend(self.partitions[i].blocks[p].tobytes("F"))  # PDX
                     elif _type == 'pdx-v4-h':
-                        h_dims = int(self.ndim * 0.75)
-                        v_dims = self.ndim - h_dims
-                        if h_dims % 64 != 0:
-                            h_dims = round(h_dims / 64) * 64
-                            v_dims = self.ndim - h_dims
-
                         assert h_dims % 4 == 0
                         assert v_dims % 4 == 0
                         assert h_dims + v_dims == self.ndim
@@ -449,6 +453,31 @@ class BaseIndexPDXIVF:
                         data.extend(self.partitions[i].blocks[p][:, delta_d:].tobytes("C"))
         for i in range(self.num_partitions):
             data.extend(self.partitions[i].indices.tobytes("C"))
+        if _type == 'pdx':
+            data.extend(self.means.tobytes("C"))
+        is_ivf = True
+        data.extend(self.normalize.to_bytes(1, sys.byteorder))
+        data.extend(is_ivf.to_bytes(1, sys.byteorder))
+        # Since centroids not many, we store them twice to have a dual layout
+        # This is part of our EXPERIMENTAL feature in which we want to do Centroids pruning
+        # We do not currently do so in PDXearch, but we DO use the PDX layout to do a vertical search
+        # on the centroids
+        data.extend(self.centroids.tobytes("C"))  # Nary format
+        if _type == 'pdx' or _type == 'dsm':
+            # PDX format
+            centroids_written = 0
+            reshaped_centroids = np.reshape(self.centroids, (self.num_partitions, self.ndim))
+            while centroids_written != self.num_partitions:
+                if centroids_written + PDXConstants.PDX_CENTROIDS_VECTOR_SIZE > self.num_partitions:
+                    data.extend(reshaped_centroids[centroids_written:, :].tobytes("F"))
+                    centroids_written = self.num_partitions
+                else:
+                    data.extend(
+                        reshaped_centroids[
+                        centroids_written: centroids_written + PDXConstants.PDX_CENTROIDS_VECTOR_SIZE, :
+                        ].tobytes("F")
+                    )
+                    centroids_written += PDXConstants.PDX_CENTROIDS_VECTOR_SIZE
         if (_type == 'pdx-4' or _type == 'pdx-v4-h') and kwargs.get('lep', False):
             for i in range(self.num_partitions):
                 data.extend(self.partitions[i].for_bases.tobytes("C"))
@@ -474,33 +503,71 @@ class BaseIndexPDXIVF:
                     # TODO: Probably I would need to divide in v and h, and change the layout accordingly
                     data.extend(self.partitions[i].for_bases_exceptions.tobytes("C"))
                     data.extend(self.partitions[i].scale_factors_exceptions.tobytes("C"))
-                    data.extend(self.partitions[i].exceptions_pos.tobytes("F"))
-                    data.extend(self.partitions[i].exceptions_data.tobytes("F"))
-        if _type == 'pdx':
-            data.extend(self.means.tobytes("C"))
-        is_ivf = True
-        data.extend(self.normalize.to_bytes(1, sys.byteorder))
-        data.extend(is_ivf.to_bytes(1, sys.byteorder))
-        # Since centroids not many, we store them twice to have a dual layout
-        # This is part of our EXPERIMENTAL feature in which we want to do Centroids pruning
-        # We do not currently do so in PDXearch, but we DO use the PDX layout to do a vertical search
-        # on the centroids
-        data.extend(self.centroids.tobytes("C"))  # Nary format
-        if _type == 'pdx' or _type == 'dsm':
-            # PDX format
-            centroids_written = 0
-            reshaped_centroids = np.reshape(self.centroids, (self.num_partitions, self.ndim))
-            while centroids_written != self.num_partitions:
-                if centroids_written + PDXConstants.PDX_CENTROIDS_VECTOR_SIZE > self.num_partitions:
-                    data.extend(reshaped_centroids[centroids_written:, :].tobytes("F"))
-                    centroids_written = self.num_partitions
-                else:
-                    data.extend(
-                        reshaped_centroids[
-                            centroids_written: centroids_written + PDXConstants.PDX_CENTROIDS_VECTOR_SIZE, :
-                        ].tobytes("F")
-                    )
-                    centroids_written += PDXConstants.PDX_CENTROIDS_VECTOR_SIZE
+                    # data.extend(self.partitions[i].exceptions_pos.tobytes("F"))
+                    # data.extend(self.partitions[i].exceptions_data.tobytes("F"))
+
+                    # Write Vertical Exceptions
+                    data.extend(self.partitions[i].exceptions_pos[:, :v_dims].tobytes("F"))
+                    data.extend(self.partitions[i].exceptions_data[:, :v_dims].tobytes("F"))
+                    # Write Horizontal Exceptions
+                    exceptions_block = {}
+                    for v_idx_tmp in range(0, self.partitions[i].num_embeddings):
+                        exceptions_block[v_idx_tmp] = [0, bytearray(), bytearray()]
+                    for local_hdim in range(v_dims, self.ndim, 64):
+                        hdim_slice_pos = self.partitions[i].exceptions_pos[:, local_hdim: local_hdim + 64]
+                        hdim_slice_data = self.partitions[i].exceptions_data[:, local_hdim: local_hdim + 64]
+                        for v_idx in range(0, self.partitions[i].num_embeddings):
+                            vector_mask = hdim_slice_pos == v_idx
+
+                            dims_with_exceptions = tmp_columns[local_hdim: local_hdim + 64][np.any(vector_mask, axis=0)]
+                            n_dims_with_exceptions = len(dims_with_exceptions)
+                            corresponding_data = hdim_slice_data.ravel('F')[vector_mask.ravel('F')]
+
+                            exceptions_block[v_idx][0] += (
+                                    2 + # 2 bytes of how many exceptions you need to read next
+                                    (2 * n_dims_with_exceptions) + # 2 bytes for every exception position
+                                    (1 * n_dims_with_exceptions) # 1 byte for every exception
+                            )
+                            if i == 1565 and v_idx == 0:
+                                print('Local Hdim', local_hdim, 'to', local_hdim + 64)
+                                print('N dims with exception', n_dims_with_exceptions)
+                                print('Which?', dims_with_exceptions)
+                                print('Values?', corresponding_data)
+                            assert(n_dims_with_exceptions == len(corresponding_data))
+                            exceptions_block[v_idx][1].extend(np.uint16(n_dims_with_exceptions).tobytes("C"))
+                            exceptions_block[v_idx][1].extend(dims_with_exceptions.astype(np.uint16).tobytes("C"))
+                            exceptions_block[v_idx][2].extend(corresponding_data.astype(np.uint8).tobytes("C"))
+                    # Write the offsets to data
+                    total_offset = 0
+                    for v_idx_tmp in range(0, self.partitions[i].num_embeddings):
+                        data.extend(np.uint32(total_offset).tobytes("C"))
+                        if i == 1565 and v_idx_tmp == 0:
+                            print('Total offset:', total_offset)
+                            print('N exceptions:', len(np.frombuffer(exceptions_block[v_idx_tmp][1], dtype=np.uint16)) - (h_dims / 64))
+                            print('Count + Positions:', np.frombuffer(exceptions_block[v_idx_tmp][1], dtype=np.uint16))
+                            print('Values:', np.frombuffer(exceptions_block[v_idx_tmp][2], dtype=np.uint8))
+                            assert (
+                                len(np.frombuffer(exceptions_block[v_idx_tmp][1], dtype=np.uint16)) - (h_dims / 64) ==
+                                len(np.frombuffer(exceptions_block[v_idx_tmp][2], dtype=np.uint8))
+                            )
+                        total_offset += exceptions_block[v_idx_tmp][0]
+                        if i == 1565 and v_idx_tmp == 0:
+                            print('Offset after operation', total_offset)
+                    total_bytes_of_h_exceptions = total_offset
+                    total_offset = 0
+                    for v_idx_tmp in range(0, self.partitions[i].num_embeddings):
+                        total_offset += exceptions_block[v_idx_tmp][0]
+                        pre_buffer_size = len(np.frombuffer(exceptions_block[v_idx_tmp][2], dtype=np.uint8)) * 1
+                        data.extend(np.uint32(total_offset - pre_buffer_size).tobytes("C"))
+                        if i == 1565 and v_idx_tmp == 0:
+                            print('Offset to first group of positions', total_offset - pre_buffer_size)
+                    data.extend(np.uint32(total_bytes_of_h_exceptions).tobytes("C"))
+                    if i == 1565:
+                        print("Total bytes of exceptions", total_bytes_of_h_exceptions)
+                    for v_idx_tmp in range(0, self.partitions[i].num_embeddings):
+                        data.extend(exceptions_block[v_idx_tmp][1])
+                        data.extend(exceptions_block[v_idx_tmp][2])
+
         self.materialized_index = bytes(data)
 
     def _persist(self, path: str):

@@ -214,16 +214,6 @@ public:
             vectorgroup.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
         }
-        // TODO: Should not always load!
-        for (size_t i = 0; i < num_vectorgroups; ++i) {
-            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
-            vectorgroup.for_bases = (float *) next_value;
-            next_value += sizeof(uint32_t) * num_dimensions;
-            vectorgroup.scale_factors = (float *) next_value;
-            next_value += sizeof(uint32_t) * num_dimensions;
-            //vectorgroup.norms = (float *) next_value;
-            //next_value += sizeof(float) * vectorgroup.num_embeddings;
-        }
         //means = (float *) next_value;
         //next_value += sizeof(float) * num_dimensions;
         is_normalized = ((char *) next_value)[0];
@@ -234,6 +224,16 @@ public:
             centroids = (float *) next_value;
             next_value += sizeof(float) * num_vectorgroups * num_dimensions;
             centroids_pdx = (float *) next_value;
+        }
+        // TODO: Should not always load!
+        for (size_t i = 0; i < num_vectorgroups; ++i) {
+            VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
+            vectorgroup.for_bases = (float *) next_value;
+            next_value += sizeof(uint32_t) * num_dimensions;
+            vectorgroup.scale_factors = (float *) next_value;
+            next_value += sizeof(uint32_t) * num_dimensions;
+            //vectorgroup.norms = (float *) next_value;
+            //next_value += sizeof(float) * vectorgroup.num_embeddings;
         }
     }
 };
@@ -299,6 +299,18 @@ public:
             vectorgroup.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
         }
+        //means = (float *) next_value;
+        //next_value += sizeof(float) * num_dimensions;
+        is_normalized = ((char *) next_value)[0];
+        next_value += sizeof(char);
+        is_ivf = ((char *) next_value)[0];
+        next_value += sizeof(char);
+        if (is_ivf) {
+            centroids = (float *) next_value;
+            next_value += sizeof(float) * num_vectorgroups * num_dimensions;
+            // centroids_pdx = (float *) next_value;
+            // next_value += sizeof(uint32_t) * num_dimensions;
+        }
         // TODO: Should not always load!
         for (size_t i = 0; i < num_vectorgroups; ++i) {
             VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
@@ -311,6 +323,7 @@ public:
 
             vectorgroup.num_exceptions = ((uint32_t *) next_value)[0];
             next_value += sizeof(uint32_t);
+            //std::cout << "Num exceptions: " << vectorgroup.num_exceptions << "\n";
 
             vectorgroup.for_bases_exceptions = (float *) next_value;
             next_value += sizeof(uint32_t) * num_dimensions;
@@ -320,25 +333,27 @@ public:
 
             if (vectorgroup.num_exceptions == 0) continue;
 
+            // Vertical Dimensions
             vectorgroup.exceptions_positions = (uint16_t *) next_value;
-            next_value += sizeof(uint16_t) * (vectorgroup.num_exceptions * num_dimensions);
-
+            next_value += sizeof(uint16_t) * (vectorgroup.num_exceptions * num_vertical_dimensions);
             vectorgroup.data_exceptions = (uint8_t *) next_value;
-            next_value += sizeof(uint8_t) * (vectorgroup.num_exceptions * num_dimensions);
+            next_value += sizeof(uint8_t) * (vectorgroup.num_exceptions * num_vertical_dimensions);
 
+            //std::cout << "PRELOADED" << "\n";
+            // Horizontal Dimensions
+            vectorgroup.vec_offsets_to_h_exc_pos = (uint32_t *) next_value;
+            next_value += sizeof(uint32_t) * (vectorgroup.num_embeddings);
+            vectorgroup.vec_offsets_to_h_exc_data = (uint32_t *) next_value;
+            next_value += sizeof(uint32_t) * (vectorgroup.num_embeddings);
+
+            uint32_t total_bytes_of_h_exceptions = ((uint32_t*) next_value)[0];
+            //std::cout << "Total bytes of H exceptions: " << total_bytes_of_h_exceptions << "\n";
+            next_value += sizeof(uint32_t);
+
+            vectorgroup.horizontal_exceptions = (uint8_t *) next_value;
+            next_value += total_bytes_of_h_exceptions;
         }
-        //means = (float *) next_value;
-        //next_value += sizeof(float) * num_dimensions;
-        is_normalized = ((char *) next_value)[0];
-        next_value += sizeof(char);
-        is_ivf = ((char *) next_value)[0];
-        next_value += sizeof(char);
         std::cout << "LOADED" << "\n";
-        if (is_ivf) {
-            centroids = (float *) next_value;
-            next_value += sizeof(float) * num_vectorgroups * num_dimensions;
-            centroids_pdx = (float *) next_value;
-        }
     }
 };
 

@@ -140,6 +140,9 @@ namespace PDX {
         float *norms{};
         uint8_t *data_exceptions = nullptr;
         uint16_t *exceptions_positions = nullptr;
+        uint32_t *vec_offsets_to_h_exc_pos = nullptr;
+        uint32_t *vec_offsets_to_h_exc_data = nullptr;
+        uint8_t *horizontal_exceptions = nullptr;
     };
 
 };

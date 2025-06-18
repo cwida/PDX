@@ -6,6 +6,7 @@
 #include <cstdio>
 #include "arm_neon.h"
 #include <iostream>
+#include <bitset>
 #include "pdx/common.hpp"
 
 namespace PDX {
@@ -809,6 +810,7 @@ public:
         // TODO or not needed
     }
 
+    __attribute__((always_inline))
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
@@ -884,11 +886,33 @@ public:
                 // Calculate the real L2
                 float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
                 good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
-
-                // Since there was never a bad term, this is wrong.
-                //distances_p[vector_idx] += good_term; // - bad_term;
                 distances_p[vector_idx] += good_term - bad_term;
             }
+        }
+    }
+
+    __attribute__((always_inline))
+    constexpr static void PatchVerticalPruning(
+            const QUERY_TYPE *__restrict exceptions_query,
+            DISTANCE_TYPE * distances_p,
+            const float * scaling_factors_exceptions,
+            const float * bad_terms,
+            uint16_t *& positions_to_read, // TODO: Can be uint8_t with an offset from outside
+            uint8_t *& exceptions_to_read,
+            const uint32_t vector_idx
+    ){
+        uint16_t n_exceptions_segment = positions_to_read[0];
+        positions_to_read++;
+        for (size_t i = 0; i < n_exceptions_segment; i++) {
+            auto dimension_idx = positions_to_read[0];
+            //std::cout << "dimension_idx: " << dimension_idx << std::endl;
+            //std::cout << "value: " << +exceptions_to_read[0] << std::endl;
+            // Calculate the real L2
+            float good_term = exceptions_query[dimension_idx] - exceptions_to_read[0];
+            good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
+            distances_p[vector_idx] += good_term - bad_terms[dimension_idx];
+            exceptions_to_read++;
+            positions_to_read++;
         }
     }
 

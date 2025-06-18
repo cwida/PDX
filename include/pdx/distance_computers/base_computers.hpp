@@ -90,7 +90,8 @@ public:
     constexpr static auto VerticalBlock = computer::Vertical;
     constexpr static auto Horizontal = computer::Horizontal;
 
-    constexpr static auto PatchVertical = computer::PatchVertical<true, true>;
+    constexpr static auto PatchVertical = computer::PatchVertical<false, false>;
+    constexpr static auto PatchVerticalPruning = computer::PatchVerticalPruning;
 };
 
 template<>
