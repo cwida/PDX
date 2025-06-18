@@ -214,7 +214,7 @@ if __name__ == "__main__":
     generate_lep_ivf('openai-1536-angular')
     generate_lep_ivf('instructorxl-arxiv-768')
     generate_lep_ivf('msong-420')
-    generate_lep_ivf('word2vec-300')
+    # generate_lep_ivf('word2vec-300')
 
     # The real one for asymmetric
     generate_u8_vh_ivf('openai-1536-angular')
@@ -222,7 +222,7 @@ if __name__ == "__main__":
     generate_u8_vh_ivf('gist-960-euclidean')
     generate_u8_vh_ivf('contriever-768')
     generate_u8_vh_ivf('msong-420')
-    generate_u8_vh_ivf('word2vec-300')
+    # generate_u8_vh_ivf('word2vec-300')
 
     # The real one for symmetric
     # generate_u8_vh_ivf_symmetric('openai-1536-angular')

@@ -616,19 +616,8 @@ public:
             size_t n_exceptions,
             const float * scaling_factors_exceptions
     ){
-        const uint8_t EXC_ESCAPE_CODE_SCALAR = 15;
-        const __m128i EXC_ESCAPE_CODE = _mm_set1_epi8(15);
-        const __m512 EXC_ESCAPE_CODE_512 = _mm512_set1_ps(15);
-        const __m128i MASK_TO_COUNT_EXCEPTIONS = _mm_set1_epi8(1);
         __m128i low_mask = _mm_set1_epi8(0x0f);
-        static __m128i exceptions_catcher[64]; // To fit 1024, 16-bit values
-        for (size_t k = 0; k < 64; ++k) {
-            exceptions_catcher[0] = _mm_setzero_si128();
-        }
-        uint8_t dim_counter = 0;
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=2) {
-            __m128i current_exception_position_0 = _mm_set1_epi8(1u << dim_counter);
-            __m128i current_exception_position_1 = _mm_set1_epi8(1u << (dim_counter + 1));
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
                 dimension_idx = indices_dimensions[dim_idx];
@@ -640,29 +629,12 @@ public:
             float scale_0 = scaling_factors[dimension_idx];
             float scale_1 = scaling_factors[dimension_idx + 1];
             size_t i = 0;
-            size_t exc_start_0 = dimension_idx * n_exceptions;
-            size_t exc_start_1 = (dimension_idx + 1) * n_exceptions;
-            uint16_t exc_offset_0 = 0;
-            uint16_t exc_offset_1 = 0;
             // In this asymmetric kernel we cannot advance 64 at a time
             if constexpr (!SKIP_PRUNED){
-                __m512 vec_a_orig_0 = _mm512_set1_ps(query_dim_0);
-                __m512 vec_a_orig_1 = _mm512_set1_ps(query_dim_1);
-                __m512 vec_c_orig_0 = _mm512_set1_ps(scale_0);
-                __m512 vec_c_orig_1 = _mm512_set1_ps(scale_1);
-
-                // Loading data that corresponds to exceptions:
-                // Query
-                // __m512 exc_query_0 = _mm512_set1_ps(exceptions_query[dimension_idx]);
-                // __m512 exc_query_1 = _mm512_set1_ps(exceptions_query[dimension_idx + 1]);
-                // Scaling Factors
-                // __m512 exc_scaling_0 = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx]);
-                // __m512 exc_scaling_1 = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx + 1]);
-                // Data itself
-                /////////////////////////////////////////////////
-                // __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
-                // __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
-                uint8_t k = 0;
+                __m512 vec_a_0 = _mm512_set1_ps(query_dim_0);
+                __m512 vec_a_1 = _mm512_set1_ps(query_dim_1);
+                __m512 vec_c_0 = _mm512_set1_ps(scale_0);
+                __m512 vec_c_1 = _mm512_set1_ps(scale_1);
                 for (; i + 16 <= n_vectors; i+=16) {
                     __m512 res = _mm512_load_ps(&distances_p[i]); // touching 16 vectors
 
@@ -673,184 +645,41 @@ public:
                     __m128i raw_data_0 = _mm_and_si128(_mm_srli_epi16(raw_data, 4), low_mask);
                     __m128i raw_data_1 = _mm_and_si128(raw_data, low_mask);
 
-                    ////////////////////
-                    // Detect and Patch exceptions
-                    //Detect ESCAPE_CODE mask
-                    __mmask16 exc_mask_0 = _mm_cmpeq_epi8_mask(raw_data_0, EXC_ESCAPE_CODE);
-                    __mmask16 exc_mask_1 = _mm_cmpeq_epi8_mask(raw_data_1, EXC_ESCAPE_CODE);
-
-                    ////////////////////
-                    // New mask logic
-                    __m128i cur_exc_mask_0 = _mm_movm_epi8(exc_mask_0);
-                    __m128i cur_exc_mask_1 = _mm_movm_epi8(exc_mask_1);
-                    exceptions_catcher[k] = _mm_or_si128(
-                        _mm_and_si128(current_exception_position_0, cur_exc_mask_0),
-                        exceptions_catcher[k]
-                    );
-                    exceptions_catcher[k] = _mm_or_si128(
-                        _mm_and_si128(current_exception_position_1, cur_exc_mask_1),
-                        exceptions_catcher[k]
-                    );
-                    ///// End of mask logic
-                    ////////////////////
-
-                    // Detect where I must read exceptions from
-                    // __m128i next_exceptions_0 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_0 + exc_offset_0));
-                    // __m128i next_exceptions_1 = _mm_loadu_si128((__m128i*)(exceptions_data + exc_start_1 + exc_offset_1));
-                    // // Increase offset counters of exception array
-                    // exc_offset_0 += _mm_popcnt_u32((uint32_t)exc_mask_0);
-                    // exc_offset_1 += _mm_popcnt_u32((uint32_t)exc_mask_1);
-                    // Mask original vectors
-                    // raw_data_0 = _mm_mask_expand_epi8(raw_data_0, exc_mask_0, next_exceptions_0);
-                    // raw_data_1 = _mm_mask_expand_epi8(raw_data_1, exc_mask_1, next_exceptions_1);
-                    // Interleave with exceptions vectors
-                    __m512 vec_a_0 = _mm512_mask_blend_ps(exc_mask_0,  vec_a_orig_0, EXC_ESCAPE_CODE_512);
-                    //__m512 vec_c_0 = _mm512_mask_blend_ps(exc_mask_0, vec_c_orig_0, exc_scaling_0);
-                    __m512 vec_a_1 = _mm512_mask_blend_ps(exc_mask_1, vec_a_orig_1, EXC_ESCAPE_CODE_512);
-                    // __m512 vec_c_1 = _mm512_mask_blend_ps(exc_mask_1, vec_c_orig_1, exc_scaling_1);
-                    ////////////////////////////////////
-
-                    // DELETE LATER
-                    // raw_data_0 = _mm_mask_mov_epi8(raw_data_0, exc_mask_0, _mm_setzero_si128());
-                    // raw_data_1 = _mm_mask_mov_epi8(raw_data_1, exc_mask_1, _mm_setzero_si128());
-                    // __m512 vec_a_0 = _mm512_mask_mov_ps(vec_a_orig_0, exc_mask_0,   _mm512_setzero_ps());
-                    // __m512 vec_c_0 = _mm512_mask_mov_ps(vec_c_orig_0, exc_mask_0, _mm512_setzero_ps());
-                    // __m512 vec_a_1 = _mm512_mask_mov_ps(vec_a_orig_1, exc_mask_1, _mm512_setzero_ps());
-                    // __m512 vec_c_1 = _mm512_mask_mov_ps(vec_c_orig_1, exc_mask_1, _mm512_setzero_ps());
-                    /// until here ////
-
                     // From uint8 to float
                     __m512 vec_b_0 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(raw_data_0)); // 16 values at a time from 2 vectors
                     __m512 vec_b_1 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(raw_data_1));
 
-                    // DELETE LATER
-                    // Sub, multiply and fmadd on dimension 0
-                    // __m512 diff_0 = _mm512_sub_ps(vec_a_orig_0, vec_b_0);
-                    // __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
-                    // res = _mm512_fmadd_ps(tmp_0, vec_c_orig_0, res);
-                    // // Sub, multiply and fmadd on dimension 1
-                    // __m512 diff_1 = _mm512_sub_ps(vec_a_orig_1, vec_b_1);
-                    // __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
-                    // res = _mm512_fmadd_ps(tmp_1, vec_c_orig_1, res);
-                    //////////
-
                     // Sub, multiply and fmadd on dimension 0
                     __m512 diff_0 = _mm512_sub_ps(vec_a_0, vec_b_0);
                     __m512 tmp_0 = _mm512_mul_ps(diff_0, diff_0);
-                    res = _mm512_fmadd_ps(tmp_0, vec_c_orig_0, res);
+                    res = _mm512_fmadd_ps(tmp_0, vec_c_0, res);
                     // Sub, multiply and fmadd on dimension 1
                     __m512 diff_1 = _mm512_sub_ps(vec_a_1, vec_b_1);
                     __m512 tmp_1 = _mm512_mul_ps(diff_1, diff_1);
-                    res = _mm512_fmadd_ps(tmp_1, vec_c_orig_1, res);
+                    res = _mm512_fmadd_ps(tmp_1, vec_c_1, res);
                     // Store distances
                     _mm512_store_ps(&distances_p[i], res);
-                    k++;
-                }
-                // std::cout << exc_offset_0 << ", " <<  n_exceptions << std::endl;
-                // std::cout << exc_offset_1 << ", " <<  n_exceptions << std::endl;
-                // assert(exc_offset_0 == n_exceptions);
-                // assert(exc_offset_1 == n_exceptions);
-                dim_counter += 2;
-                if (dim_counter >= 8) {
-                    // Patch
-                    // std::cout << "From dim " << start_dimension << " to " << end_dimension << std::endl;
-                    // std::cout << "Currently in d=" << dim_idx << std::endl;
-                    // std::cout << "n_vectors: " << n_vectors << std::endl;
-                    dim_counter = 0;
-                    uint16_t global_c = 0;
-                    size_t exception_offset = 0;
-                    for (size_t z = 0; z < k; ++z) {
-                        alignas(64) static uint8_t vals[16];
-                        _mm_storeu_epi8(vals, exceptions_catcher[z]);
-                        for (int l = 0; l < 16; ++l) {
-                            uint8_t mask = vals[l];
-                            while (mask) {
-                                distances_p[global_c] += (float)exceptions_data[exception_offset];
-                                mask &= mask-1;
-                                exception_offset +=1;
-                            }
-                            global_c++;
-                            //std::cout << "Vector " << global_c << " has " << +__builtin_popcount(vals[l]) << " exceptions" << std::endl;
-                        }
-                    }
-                    for (size_t z = 0; z < 64; ++z) {
-                        exceptions_catcher[z] = _mm_setzero_si128();
-                    }
                 }
             }
 
-            // for (; i < n_vectors; ++i) {
-            //     size_t vector_idx = i;
-            //     if constexpr (SKIP_PRUNED){
-            //         vector_idx = pruning_positions[vector_idx];
-            //     }
-            //     // L2
-            //     // TODO: Inline patching of exceptions
-            //     /*
-            //      *
-            //      * if data[offset_to_dimension_start + (vector_idx * 4)] == ESCAPE_CODE:
-            //      *  use exception data value
-            //      *  use exception query value
-            //      *  use exception scaling factor
-            //      *  advance exception_array by 1
-            //      * The other option would be to do another loop that goes through data
-            //      * masking it, and applying the correction. Probably faster.
-            //      */
-            //
-            //     uint8_t n_1 = data[offset_to_dimension_start + vector_idx];
-            //     uint8_t nibble_0 = (n_1 & 0xF0) >> 4;
-            //     uint8_t nibble_1 = n_1 & 0x0F;
-            //
-            //     // When we SKIP PRUNED, we do not patch inplace (for now)
-            //     if constexpr (SKIP_PRUNED) {
-            //         if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
-            //             float diff_high = query_dim_0 - (float)(nibble_0);
-            //             distances_p[vector_idx] += diff_high * diff_high * scale_0;
-            //         }
-            //         if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
-            //             float diff_low = query_dim_1 - (float)(nibble_1);
-            //             distances_p[vector_idx] += diff_low * diff_low * scale_1;
-            //         }
-            //     }
-            //     else {
-            //         if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
-            //             float diff_high = query_dim_0 - (float)(nibble_0);
-            //             distances_p[vector_idx] += diff_high * diff_high * scale_0;
-            //         }
-            //         else {
-            //             float diff_high = exceptions_query[dimension_idx] - exceptions_data[exc_start_0 + exc_offset_0];
-            //             distances_p[vector_idx] += (diff_high * diff_high * scaling_factors_exceptions[dimension_idx]);
-            //             exc_offset_0 += 1;
-            //         }
-            //         if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
-            //             float diff_low = query_dim_1 - (float)(nibble_1);
-            //             distances_p[vector_idx] += diff_low * diff_low * scale_1;
-            //         }
-            //         else {
-            //             float diff_low = exceptions_query[dimension_idx + 1] - exceptions_data[exc_start_1 + exc_offset_1];
-            //             distances_p[vector_idx] += (diff_low * diff_low * scaling_factors_exceptions[dimension_idx + 1]);
-            //             exc_offset_1 += 1;
-            //         }
-            //     }
-            //
-            //     // float to_multiply_a = query_dim_0 - (float)nibble_0; // High
-            //     // float to_multiply_b = query_dim_1 - (float)nibble_1; // Low
-            //
-            //     // distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scale_0) +
-            //     //                            (to_multiply_b * to_multiply_b * scale_1);
-            // }
-            // if constexpr (!SKIP_PRUNED) {
-            //     if (n_exceptions != exc_offset_0) {
-            //         std::cout << n_exceptions << " exceptions present [0].\n";
-            //         std::cout << exc_offset_0 << " exceptions were skipped [0].\n";
-            //     }
-            //     if (n_exceptions != exc_offset_1) {
-            //         std::cout << n_exceptions << " exceptions present [1].\n";
-            //         std::cout << exc_offset_0 << " exceptions were skipped [1].\n";
-            //     }
-            //     assert(n_exceptions == exc_offset_0);
-            //     assert(n_exceptions == exc_offset_1);
-            // }
+            for (; i < n_vectors; ++i) {
+                size_t vector_idx = i;
+                if constexpr (SKIP_PRUNED){
+                    vector_idx = pruning_positions[vector_idx];
+                }
+
+                uint8_t n_1 = data[offset_to_dimension_start + vector_idx];
+                uint8_t nibble_0 = (n_1 & 0xF0) >> 4;
+                uint8_t nibble_1 = n_1 & 0x0F;
+
+
+                float diff_high = query_dim_0 - (float)(nibble_0);
+                distances_p[vector_idx] += diff_high * diff_high * scale_0;
+
+                float diff_low = query_dim_1 - (float)(nibble_1);
+                distances_p[vector_idx] += diff_low * diff_low * scale_1;
+
+            }
         }
     }
 
@@ -866,6 +695,7 @@ public:
         // TODO
     }
 
+    __attribute__((always_inline))
     static DISTANCE_TYPE Horizontal(
             const QUERY_TYPE *__restrict vector1,
             const DATA_TYPE *__restrict vector2,
@@ -882,36 +712,14 @@ public:
             uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
             uint8_t nibble_low = (vector2[i] & 0x0F);
 
-            if (nibble_high != EXC_ESCAPE_CODE_SCALAR) {
-                float diff_high = vector1[cur_dim] - (float)(nibble_high);
-                distance += diff_high * diff_high * scaling_factors[cur_dim];
-            }
-            if (nibble_low != EXC_ESCAPE_CODE_SCALAR) {
-                float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
-                distance += diff_low * diff_low * scaling_factors[cur_dim+1];
-            }
-
+            float diff_high = vector1[cur_dim] - (float)(nibble_high);
+            float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
+            distance += diff_high * diff_high * scaling_factors[cur_dim];
+            distance += diff_low * diff_low * scaling_factors[cur_dim+1];
             cur_dim += 2;
         }
-        // for (; i < num_words; i++) {
-        //     uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
-        //     uint8_t nibble_low = (vector2[i] & 0x0F);
-        //
-        //     float diff_high = vector1[cur_dim] - (float)(nibble_high);
-        //     float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
-        //
-        //     distance += diff_high * diff_high * scaling_factors[cur_dim];
-        //     distance += diff_low * diff_low * scaling_factors[cur_dim+1];
-        //
-        //     cur_dim += 2;
-        // }
         return distance;
-        // for (; i < num_dimensions; ++i) {
-        //     float diff = vector1[i] - (float)vector2[i];
-        //     distance += diff * diff * scaling_factors[i];
-        // }
 
-        return distance;
     };
 
     // Defer to the scalar kernel
@@ -931,8 +739,6 @@ public:
             const float * scaling_factors,
             const float * scaling_factors_exceptions
     ){
-        //std::cout << n_exceptions << std::endl;
-        alignas(64) static float distance_correction[256];
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=1) {
             uint32_t dimension_idx = dim_idx;
             size_t offset_to_dimension_start = dimension_idx * n_exceptions;
@@ -940,42 +746,38 @@ public:
             // Correct current L2
             // This bad term can be computer on the fly, but my guess is it will not take much time
             float bad_term = quant_query[dimension_idx] * quant_query[dimension_idx] * scaling_factors[dimension_idx];
-            // __m512 vec_bad_term = _mm512_set1_ps(bad_term);
-            __m512 vec_exc_query = _mm512_set1_ps(exceptions_query[dimension_idx]);
-            __m512 vec_exc_scaling_factor = _mm512_set1_ps(scaling_factors_exceptions[dimension_idx]);
-
-            // for (; i + 16 < n_exceptions; i+=16) {
-            //     //__m512 vec_ids = _mm512_load_ps(exceptions_positions + offset_to_dimension_start + i);
-            //
-            //     __m128i raw_exc_data = _mm_loadu_si128((__m128i*)&exceptions_data[offset_to_dimension_start + i]);
-            //     __m512 vec_exc_data = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(raw_exc_data));
-            //
-            //     __m512 vec_good_terms = _mm512_sub_ps(vec_exc_query, vec_exc_data);
-            //     __m512 tmp = _mm512_mul_ps(vec_good_terms, vec_good_terms);
-            //     __m512 dis_correction = _mm512_mul_ps(tmp, vec_exc_scaling_factor);
-            //     //dis_correction = _mm512_sub_ps(dis_correction, vec_bad_term);
-            //     _mm512_store_ps(&distance_correction[i], dis_correction);
-            //
-            //     // Scalar kernel
-            //     // uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + i];
-            //     // Calculate the real L2
-            //     //float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
-            //     //good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
-            //     //distances_p[vector_idx] += good_term - bad_term;
-            // }
-            #pragma clang loop vectorize(enable)
-            for (; i < n_exceptions; i++) {
-                // Scalar kernel
+            for (; i < n_exceptions; ++i) {
+                uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + i];
+                // Calculate the real L2
                 float good_term = exceptions_query[dimension_idx] - exceptions_data[offset_to_dimension_start + i];
                 good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
-                distance_correction[i] = good_term; //- bad_term;
+                distances_p[vector_idx] += good_term - bad_term;
             }
-            size_t j = 0;
-            for (; j < n_exceptions; j++) {
-                // I cannot use scatter as this is an accumulation
-                uint16_t vector_idx = exceptions_positions[offset_to_dimension_start + j];
-                distances_p[vector_idx] += distance_correction[j];
-            }
+        }
+    }
+
+    __attribute__((always_inline))
+    constexpr static void PatchVerticalPruning(
+        const QUERY_TYPE *__restrict exceptions_query,
+        DISTANCE_TYPE * distances_p,
+        const float * scaling_factors_exceptions,
+        const float * bad_terms,
+        uint16_t *& positions_to_read, // TODO: Can be uint8_t with an offset from outside
+        uint8_t *& exceptions_to_read,
+        const uint32_t vector_idx
+    ){
+        uint16_t n_exceptions_segment = positions_to_read[0];
+        positions_to_read++;
+        for (size_t i = 0; i < n_exceptions_segment; i++) {
+            auto dimension_idx = positions_to_read[0];
+            //std::cout << "dimension_idx: " << dimension_idx << std::endl;
+            //std::cout << "value: " << +exceptions_to_read[0] << std::endl;
+            // Calculate the real L2
+            float good_term = exceptions_query[dimension_idx] - exceptions_to_read[0];
+            good_term = good_term * good_term * scaling_factors_exceptions[dimension_idx];
+            distances_p[vector_idx] += good_term - bad_terms[dimension_idx];
+            exceptions_to_read++;
+            positions_to_read++;
         }
     }
 };

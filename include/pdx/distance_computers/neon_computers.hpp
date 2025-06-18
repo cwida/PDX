@@ -613,9 +613,6 @@ public:
             size_t n_exceptions,
             const float * scaling_factors_exceptions
     ){
-        const uint8_t EXC_ESCAPE_CODE_SCALAR = 15;
-        const uint8x8_t EXC_ESCAPE_CODE = vdup_n_u8(15);
-        const uint8x8_t MASK_TO_COUNT_EXCEPTIONS = vdup_n_u8(1);
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=2) {
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
@@ -657,29 +654,6 @@ public:
             //         uint8x8_t u8_vec_b_0 = vshr_n_u8(u8_vec_b, 4); // High
             //         uint8x8_t u8_vec_b_1 = vand_u8(u8_vec_b, mask_lo_nibble); // Low
             //
-            //         //
-            //         // Detect and Patch exceptions
-            //         // Detect ESCAPE_CODE mask
-            //         // uint8x8_t exc_mask_0 = vceq_u8(u8_vec_b_0, EXC_ESCAPE_CODE);
-            //         // uint8x8_t exc_mask_1 = vceq_u8(u8_vec_b_1, EXC_ESCAPE_CODE);
-            //         // // Detect where I must read exceptions from
-            //         // uint8x8_t next_exceptions_0 = vld1_u8(exceptions_data + exc_start_0 + exc_offset_0);
-            //         // uint8x8_t next_exceptions_1 = vld1_u8(exceptions_data + exc_start_1 + exc_offset_1);
-            //         // // Increase offset counters of exception array
-            //         //exc_offset_0 += vaddv_u8(vand_u8(exc_mask_0, MASK_TO_COUNT_EXCEPTIONS));
-            //         //exc_offset_1 += vaddv_u8(vand_u8(exc_mask_1, MASK_TO_COUNT_EXCEPTIONS));
-            //         // // Mask original vectors
-            //         // u8_vec_b_0 = vbsl_u8(exc_mask_0, next_exceptions_0, u8_vec_b_0);
-            //         // u8_vec_b_1 = vbsl_u8(exc_mask_1, next_exceptions_1, u8_vec_b_1);
-            //         // // Interleave with exceptions vectors
-            //         // uint32x4_t u32_mask_0 = vreinterpretq_u32_u8(vcombine_u8(exc_mask_0, exc_mask_0));
-            //         // uint32x4_t u32_mask_1 = vreinterpretq_u32_u8(vcombine_u8(exc_mask_1, exc_mask_1));
-            //         // float32x4_t vec_a_0 = vbslq_f32(u32_mask_0, exc_query_0, vec_a_orig_0);
-            //         // float32x4_t vec_c_0 = vbslq_f32(u32_mask_0, exc_scaling_0, vec_c_orig_0);
-            //         // float32x4_t vec_a_1 = vbslq_f32(u32_mask_1, exc_query_1, vec_a_orig_1);
-            //         // float32x4_t vec_c_1 = vbslq_f32(u32_mask_1, exc_scaling_1, vec_c_orig_1);
-            //         ////////////////////////////////////
-            //
             //         uint16x8_t u16_vec_b_0 = vmovl_u8(u8_vec_b_0);
             //         float32x4_t vec_b_0_low = vcvtq_f32_u32(vmovl_u16(vget_low_u16(u16_vec_b_0)));
             //         // In NEON programming, low is left
@@ -709,12 +683,6 @@ public:
             //
             //     }
             // }
-
-            size_t exc_start_0 = dimension_idx * n_exceptions;
-            size_t exc_start_1 = (dimension_idx + 1) * n_exceptions;
-            size_t exc_offset_0 = 0;
-            size_t exc_offset_1 = 0;
-
             #pragma clang loop vectorize(enable)
              for (; i < n_vectors; ++i) {
                  size_t vector_idx = i;
@@ -743,37 +711,10 @@ public:
                  float scale_0 = scaling_factors[dimension_idx];
                  float scale_1 = scaling_factors[dimension_idx + 1];
 
-                // When we SKIP PRUNED, we do not patch inplace (for now)
-                //if constexpr (SKIP_PRUNED) {
-                //    if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
-                        float diff_high = query_dim_0 - (float)(nibble_0);
-                        distances_p[vector_idx] += diff_high * diff_high * scale_0;
-                //    }
-                //    if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
-                        float diff_low = query_dim_1 - (float)(nibble_1);
-                        distances_p[vector_idx] += diff_low * diff_low * scale_1;
-                //    }
-                //}
-                // else {
-                //     if (nibble_0 != EXC_ESCAPE_CODE_SCALAR) {
-                //         float diff_high = query_dim_0 - (float)(nibble_0);
-                //         distances_p[vector_idx] += diff_high * diff_high * scale_0;
-                //     }
-                //     else {
-                //         float diff_high = exceptions_query[dimension_idx] - exceptions_data[exc_start_0 + exc_offset_0];
-                //         distances_p[vector_idx] += (diff_high * diff_high * scaling_factors_exceptions[dimension_idx]);
-                //         exc_offset_0 += 1;
-                //     }
-                //     if (nibble_1 != EXC_ESCAPE_CODE_SCALAR) {
-                //         float diff_low = query_dim_1 - (float)(nibble_1);
-                //         distances_p[vector_idx] += diff_low * diff_low * scale_1;
-                //     }
-                //     else {
-                //         float diff_low = exceptions_query[dimension_idx + 1] - exceptions_data[exc_start_1 + exc_offset_1];
-                //         distances_p[vector_idx] += (diff_low * diff_low * scaling_factors_exceptions[dimension_idx + 1]);
-                //         exc_offset_1 += 1;
-                //     }
-                // }
+                float diff_high = query_dim_0 - (float)(nibble_0);
+                distances_p[vector_idx] += diff_high * diff_high * scale_0;
+                float diff_low = query_dim_1 - (float)(nibble_1);
+                distances_p[vector_idx] += diff_low * diff_low * scale_1;
              }
 
 
@@ -817,7 +758,6 @@ public:
             size_t num_nibbles,
             const float * scaling_factors
     ){
-        const uint8_t EXC_ESCAPE_CODE_SCALAR = 15;
         size_t num_words = num_nibbles / 2;
         size_t cur_dim = 0;
         size_t i = 0;
@@ -836,25 +776,6 @@ public:
             cur_dim += 2;
         }
         return distance;
-
-        // #pragma clang loop vectorize(enable)
-        // for (; i < num_words; i++) {
-        //     uint8_t nibble_high = (vector2[i] & 0xF0) >> 4;
-        //     uint8_t nibble_low = (vector2[i] & 0x0F);
-        //
-        //     if (nibble_high != EXC_ESCAPE_CODE_SCALAR) {
-        //         float diff_high = vector1[cur_dim] - (float)(nibble_high);
-        //         distance += diff_high * diff_high * scaling_factors[cur_dim];
-        //     }
-        //     if (nibble_low != EXC_ESCAPE_CODE_SCALAR) {
-        //         float diff_low = vector1[cur_dim+1] - (float)(nibble_low);
-        //         distance += diff_low * diff_low * scaling_factors[cur_dim+1];
-        //     }
-        //
-        //     cur_dim += 2;
-        // }
-        return distance;
-
     };
 
     // Defer to the scalar kernel
