@@ -138,7 +138,7 @@ public:
     inline static float EPSILON0 = 2.1; //2.1;
     inline static float SELECTIVITY_THRESHOLD = 0.80; // more than 20% pruned to pass
     inline static bool VERIFY_RESULTS = true;
-    inline static uint8_t KNN = 10;
+    inline static uint8_t KNN = 100;
 
     template<bool MEASURE_RECALL, PDX::Quantization q=PDX::F32>
     static void VerifyResult(float &recalls, const std::vector<PDX::KNNCandidate<q>> &result, size_t knn,
