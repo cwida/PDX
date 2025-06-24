@@ -235,6 +235,7 @@ public:
             //vectorgroup.norms = (float *) next_value;
             //next_value += sizeof(float) * vectorgroup.num_embeddings;
         }
+        std::cout << "LOADED" << "\n";
     }
 };
 
