@@ -968,6 +968,10 @@ public:
         // For now I will not take into account the preprocessing query time
         GetDimensionsAccessOrder(quant.transformed_raw_query, pdx_data.means);
         // TODO: This should probably not be evaluated here
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         if (pdx_data.is_ivf) {
             if (ivf_nprobe == 0){
                 vectorgroups_to_visit = pdx_data.num_vectorgroups;
@@ -986,10 +990,6 @@ public:
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
         }
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
         // PDXearch core
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];
