@@ -1051,9 +1051,6 @@ public:
         this->end_to_end_clock.Tic();
 #endif
         this->GetVectorgroupsAccessOrderIVF(quant.transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
-#ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Toc();
-#endif
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
@@ -1081,6 +1078,9 @@ public:
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
         //std::cout << "\n\n";
         return BuildResultSet(k);
     }
