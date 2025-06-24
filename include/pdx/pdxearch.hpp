@@ -1081,7 +1081,6 @@ public:
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif
-        //std::cout << "\n\n";
         return BuildResultSet(k);
     }
 
@@ -1106,6 +1105,7 @@ public:
         this->GetVectorgroupsAccessOrderIVF(quant.transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
+        this->end_to_end_clock.Tic();
 #endif
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];
@@ -1148,9 +1148,9 @@ public:
         }
         //std::cout << "\n\n";
         //std::cout << "Big vectorgroups: " << big_vgs << std::endl;
-// #ifdef BENCHMARK_TIME
-//         this->end_to_end_clock.Toc();
-// #endif
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
         return BuildResultSet(k);
     }
 
