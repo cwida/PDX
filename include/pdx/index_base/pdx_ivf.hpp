@@ -135,6 +135,17 @@ public:
             vectorgroup.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup.num_embeddings;
         }
+        // means = (float *) next_value;
+        // next_value += sizeof(float) * num_dimensions;
+        is_normalized = ((char *) next_value)[0];
+        next_value += sizeof(char);
+        is_ivf = ((char *) next_value)[0];
+        next_value += sizeof(char);
+        if (is_ivf) {
+            centroids = (float *) next_value;
+            next_value += sizeof(float) * num_vectorgroups * num_dimensions;
+            centroids_pdx = (float *) next_value;
+        }
         // TODO: Should not always load!
         for (size_t i = 0; i < num_vectorgroups; ++i) {
             VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
@@ -144,17 +155,6 @@ public:
             next_value += sizeof(uint32_t) * num_dimensions;
             //vectorgroup.norms = (float *) next_value;
             //next_value += sizeof(float) * vectorgroup.num_embeddings;
-        }
-        means = (float *) next_value;
-        next_value += sizeof(float) * num_dimensions;
-        is_normalized = ((char *) next_value)[0];
-        next_value += sizeof(char);
-        is_ivf = ((char *) next_value)[0];
-        next_value += sizeof(char);
-        if (is_ivf) {
-            centroids = (float *) next_value;
-            next_value += sizeof(float) * num_vectorgroups * num_dimensions;
-            centroids_pdx = (float *) next_value;
         }
     }
 };
