@@ -1122,6 +1122,7 @@ public:
         // if (first_vectorgroup.num_embeddings > big_vgs_threshold) {
         //     big_vgs += 1;
         // }
+        std::cout << "Dummy3" << "\n";
         Start(quant.asymmetric_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
