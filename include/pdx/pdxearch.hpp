@@ -1087,7 +1087,6 @@ public:
     // PDXearch: PDX + Pruning
     template<Quantization Q=q, std::enable_if_t<Q==ASYMMETRIC_U8, int> = 0>
     std::vector<KNNCandidate_t> Search(float *__restrict raw_query, uint32_t k) {
-        std::cout << "Dummy" << "\n";
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
         if (!pdx_data.is_normalized) {
@@ -1122,7 +1121,6 @@ public:
         // if (first_vectorgroup.num_embeddings > big_vgs_threshold) {
         //     big_vgs += 1;
         // }
-        std::cout << "Dummy3" << "\n";
         Start(quant.asymmetric_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
@@ -1148,7 +1146,6 @@ public:
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
-        std::cout << "Dummy2" << "\n";
         //std::cout << "\n\n";
         //std::cout << "Big vectorgroups: " << big_vgs << std::endl;
 #ifdef BENCHMARK_TIME
