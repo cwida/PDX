@@ -568,17 +568,17 @@ public:
             const float * scaling_factors
     ){
         size_t i = 0;
-        __m512 sum_vec = _mm512_setzero_ps();
-        for (; i + 16 < num_dimensions; i+=16) {
-            __m512 vec1 = _mm512_load_ps(&vector1[i]);
-            __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&vector2[i])));
-            __m512 vec_scale = _mm512_load_ps(&scaling_factors[i]);
-            __m512 diff = _mm512_sub_ps(vec1, vec2);
-            __m512 tmp = _mm512_mul_ps(diff, diff);
-            sum_vec = _mm512_fmadd_ps(tmp, vec_scale, sum_vec);
-        }
-        DISTANCE_TYPE distance = _mm512_reduce_add_ps(sum_vec);
-        //DISTANCE_TYPE distance = 0;
+        // __m512 sum_vec = _mm512_setzero_ps();
+        // for (; i + 16 < num_dimensions; i+=16) {
+        //     __m512 vec1 = _mm512_load_ps(&vector1[i]);
+        //     __m512 vec2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_load_si128((__m128i*)&vector2[i])));
+        //     __m512 vec_scale = _mm512_load_ps(&scaling_factors[i]);
+        //     __m512 diff = _mm512_sub_ps(vec1, vec2);
+        //     __m512 tmp = _mm512_mul_ps(diff, diff);
+        //     sum_vec = _mm512_fmadd_ps(tmp, vec_scale, sum_vec);
+        // }
+        // DISTANCE_TYPE distance = _mm512_reduce_add_ps(sum_vec);
+        DISTANCE_TYPE distance = 0;
         #pragma clang loop vectorize(enable)
         for (; i < num_dimensions; ++i) {
             float diff = vector1[i] - (float)vector2[i];
