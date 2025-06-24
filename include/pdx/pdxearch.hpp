@@ -69,16 +69,16 @@ protected:
     DimensionsOrder dimension_order = SEQUENTIAL;
     // Evaluating the pruning threshold is so fast that we can allow smaller fetching sizes
     // to avoid more data access. Super useful in architectures with low bandwidth at L3/DRAM like Intel SPR
-    // static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[24] = {
-    //         4, 4, 8, 8, 8, 16, 16, 32, 32, 32, 32,
-    //         64, 64, 64, 64, 128, 128, 128, 128, 256,
-    //         256, 512, 1024, 2048
-    // };
-    static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[21] = {
-        16, 16, 16, 16, 32, 32, 32, 32,
-        64, 64, 64, 64, 128, 128, 128, 128, 256,
-        256, 512, 1024, 2048
+    static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[24] = {
+            4, 4, 8, 8, 8, 16, 16, 32, 32, 32, 32,
+            64, 64, 64, 64, 128, 128, 128, 128, 256,
+            256, 512, 1024, 2048
     };
+    // static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[21] = {
+    //     16, 16, 16, 16, 32, 32, 32, 32,
+    //     64, 64, 64, 64, 128, 128, 128, 128, 256,
+    //     256, 512, 1024, 2048
+    // };
 
     size_t H_DIM_SIZE = 64;
 
