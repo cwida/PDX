@@ -536,6 +536,9 @@ protected:
         ResetPruningDistances(n_vectors);
         uint32_t n_tuples_to_prune = 0;
         if (!is_positional_pruning) GetPruningThreshold(k, heap);
+// #ifdef BENCHMARK_TIME
+//         this->end_to_end_clock.Tic();
+// #endif
         while (
                 // TODO: Re-add condition, I am just testing the kernel efficiency fairly
                 //1.0 * n_tuples_to_prune < tuples_needed_to_exit &&
@@ -547,9 +550,6 @@ protected:
             //processed_bytes += (last_dimension_to_fetch - current_dimension_idx) * n_vectors;
             if (dimension_order == SEQUENTIAL){
                 if constexpr (q == Quantization::ASYMMETRIC_LEP_U8) {
-// #ifdef BENCHMARK_TIME
-//                    this->end_to_end_clock.Tic();
-// #endif
                     distance_computer::Vertical(
                         query, data, n_vectors, n_vectors, current_dimension_idx,
                         last_dimension_to_fetch, pruning_distances,
@@ -603,6 +603,9 @@ protected:
             n_tuples_to_prune = 0;
             EvaluatePruningPredicateScalar(n_tuples_to_prune, n_vectors);
         }
+// #ifdef BENCHMARK_TIME
+//         this->end_to_end_clock.Toc();
+// #endif
     }
 
     // We scan only the not-yet pruned vectors
@@ -619,9 +622,9 @@ protected:
         size_t current_vertical_dimension = current_dimension_idx;
         size_t current_horizontal_dimension = 0;
         //std::cout << n_vectors_not_pruned << "\n";
-#ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Tic();
-#endif
+// #ifdef BENCHMARK_TIME
+//         this->end_to_end_clock.Tic();
+// #endif
         //std::cout << "Entering with " << (1.0f * n_vectors_not_pruned) / n_vectors * 100  << " left " << "\n";
         while (
                 pdx_data.num_horizontal_dimensions &&
@@ -678,6 +681,13 @@ protected:
                             H_DIM_SIZE,
                             quant.cur_scaling_factors + offset_query
                     );
+                    // size_t tmp_i = 0;
+                    // #pragma clang loop vectorize(enable)
+                    // for (; tmp_i < H_DIM_SIZE; ++tmp_i) {
+                    //
+                    //     float diff = (query + offset_query)[tmp_i] - (float)(data + data_pos)[tmp_i];
+                    //     pruning_distances[v_idx] += diff * diff * (quant.cur_scaling_factors + offset_query)[tmp_i];
+                    // }
                 }
             }
             if constexpr (q != Quantization::ASYMMETRIC_U8 && q != Quantization::ASYMMETRIC_LEP_U8) {
@@ -703,9 +713,9 @@ protected:
             EvaluatePruningPredicateOnPositionsArray(cur_n_vectors_not_pruned);
         }
         // GO THROUGH THE REST IN THE VERTICAL
-#ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Toc();
-#endif
+// #ifdef BENCHMARK_TIME
+//         this->end_to_end_clock.Toc();
+// #endif
         while (
                 n_vectors_not_pruned &&
                 current_vertical_dimension < pdx_data.num_vertical_dimensions
@@ -1036,8 +1046,14 @@ public:
         } else {
             vectorgroups_to_visit = ivf_nprobe;
         }
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         this->GetVectorgroupsAccessOrderIVF(quant.transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
-
+#ifdef BENCHMARK_TIME
+        this->end_to_end_clock.Toc();
+#endif
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
@@ -1047,9 +1063,6 @@ public:
             first_vectorgroup.for_bases, first_vectorgroup.scale_factors,
             first_vectorgroup.for_bases_exceptions, first_vectorgroup.scale_factors_exceptions
         );
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-#endif
         Start(quant.asymmetric_query, first_vectorgroup.data, first_vectorgroup.num_embeddings, k, first_vectorgroup.indices);
         for (size_t vectorgroup_idx = 1; vectorgroup_idx < vectorgroups_to_visit; ++vectorgroup_idx) {
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
@@ -1064,17 +1077,11 @@ public:
 //             this->end_to_end_clock.Tic();
 // #endif
             Prune(quant.asymmetric_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
-// #ifdef BENCHMARK_TIME
-//             this->end_to_end_clock.Toc();
-// #endif
             if (n_vectors_not_pruned){
                 MergeIntoHeap<true>(vectorgroup.indices, n_vectors_not_pruned, k, this->best_k);
             }
         }
         //std::cout << "\n\n";
-// #ifdef BENCHMARK_TIME
-//         this->end_to_end_clock.Toc();
-// #endif
         return BuildResultSet(k);
     }
 
@@ -1097,7 +1104,9 @@ public:
             vectorgroups_to_visit = ivf_nprobe;
         }
         this->GetVectorgroupsAccessOrderIVF(quant.transformed_raw_query, pdx_data, ivf_nprobe, vectorgroups_indices);
-
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+#endif
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];
         VECTORGROUP_TYPE& first_vectorgroup = pdx_data.vectorgroups[vectorgroups_indices[0]];
@@ -1107,9 +1116,6 @@ public:
             first_vectorgroup.for_bases, first_vectorgroup.scale_factors,
             nullptr, nullptr
         );
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-#endif
         // size_t big_vgs = 0;
         // size_t big_vgs_threshold = 512;
         // if (first_vectorgroup.num_embeddings > big_vgs_threshold) {
