@@ -465,13 +465,42 @@ public:
             const int32_t * dim_clip_value,
             const float * scaling_factors
     ){
-        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=4) {
+        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx+=1) {
             uint32_t dimension_idx = dim_idx;
             if constexpr (USE_DIMENSIONS_REORDER){
                 dimension_idx = indices_dimensions[dim_idx];
             }
             size_t offset_to_dimension_start = dimension_idx * total_vectors;
             size_t i = 0;
+
+            if constexpr (!SKIP_PRUNED){
+                float32x4_t vec_a = vdupq_n_f32(query[dimension_idx]);
+                float32x4_t vec_c = vdupq_n_f32(scaling_factors[dimension_idx]);
+                for (; i+8 <= total_vectors; i+=8) {
+                    float32x4_t res_low = vld1q_f32(&distances_p[i]);
+                    float32x4_t res_high = vld1q_f32(&distances_p[i + 4]);
+
+                    // From uint8 to float32
+                    uint8x8_t u8_vec_b = vld1_u8(data + offset_to_dimension_start + i);
+
+                    uint16x8_t u16_vec_b = vmovl_u8(u8_vec_b);
+                    float32x4_t vec_b_low = vcvtq_f32_u32(vmovl_u16(vget_low_u16(u16_vec_b)));
+                    float32x4_t vec_b_high = vcvtq_f32_u32(vmovl_u16(vget_high_u16(u16_vec_b)));
+
+                    float32x4_t diff_vec_low = vsubq_f32(vec_a, vec_b_low);
+                    float32x4_t diff_vec_high = vsubq_f32(vec_a, vec_b_high);
+
+                    // Using MUL
+                    float32x4_t tmp_low = vmulq_f32(diff_vec_low, diff_vec_low);
+                    float32x4_t tmp_high = vmulq_f32(diff_vec_high, diff_vec_high);
+                    res_low = vfmaq_f32(res_low, tmp_low, vec_c);
+                    res_high = vfmaq_f32(res_high, tmp_high, vec_c);
+
+                    vst1q_f32(&distances_p[i], res_low);
+                    vst1q_f32(&distances_p[i+4], res_high);
+                }
+            }
+
 #pragma clang loop vectorize(enable)
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
@@ -490,14 +519,17 @@ public:
 
                 // L2
                 // Auto-vectorizes correctly in NEON
-                float to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
-                float to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
-                float to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
-                float to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
-                distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scaling_factors[dimension_idx]) +
-                                           (to_multiply_b * to_multiply_b * scaling_factors[dimension_idx + 1]) +
-                                           (to_multiply_c * to_multiply_c * scaling_factors[dimension_idx + 2]) +
-                                           (to_multiply_d * to_multiply_d * scaling_factors[dimension_idx + 3]);
+                // float to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + (vector_idx * 4)];
+                // float to_multiply_b = query[dimension_idx + 1] - data[offset_to_dimension_start + (vector_idx * 4) + 1];
+                // float to_multiply_c = query[dimension_idx + 2] - data[offset_to_dimension_start + (vector_idx * 4) + 2];
+                // float to_multiply_d = query[dimension_idx + 3] - data[offset_to_dimension_start + (vector_idx * 4) + 3];
+                // distances_p[vector_idx] += (to_multiply_a * to_multiply_a * scaling_factors[dimension_idx]) +
+                //                            (to_multiply_b * to_multiply_b * scaling_factors[dimension_idx + 1]) +
+                //                            (to_multiply_c * to_multiply_c * scaling_factors[dimension_idx + 2]) +
+                //                            (to_multiply_d * to_multiply_d * scaling_factors[dimension_idx + 3]);
+
+                float to_multiply_a = query[dimension_idx] - data[offset_to_dimension_start + vector_idx];
+                distances_p[vector_idx] += to_multiply_a * to_multiply_a * scaling_factors[dimension_idx];
 
 
                 // IP Idea
@@ -627,23 +659,6 @@ public:
             //
             //     float32x4_t vec_c_orig_0 = vdupq_n_f32(scaling_factors[dimension_idx]);
             //     float32x4_t vec_c_orig_1 = vdupq_n_f32(scaling_factors[dimension_idx + 1]);
-            //
-            //     // Loading data that corresponds to exceptions:
-            //     // Query
-            //     float32x4_t exc_query_0 = vdupq_n_f32(exceptions_query[dimension_idx]);
-            //     float32x4_t exc_query_1 = vdupq_n_f32(exceptions_query[dimension_idx + 1]);
-            //     // Scaling Factors
-            //     float32x4_t exc_scaling_0 = vdupq_n_f32(scaling_factors_exceptions[dimension_idx]);
-            //     float32x4_t exc_scaling_1 = vdupq_n_f32(scaling_factors_exceptions[dimension_idx + 1]);
-            //     // Data itself
-            //     size_t exc_start_0 = dimension_idx * n_exceptions;
-            //     size_t exc_start_1 = (dimension_idx + 1) * n_exceptions;
-            //     uint16_t exc_offset_0 = 0;
-            //     uint16_t exc_offset_1 = 0;
-            //
-            //     float bad_term_0 = query[dimension_idx] * query[dimension_idx] * scaling_factors[dimension_idx];
-            //     float bad_term_1 = query[dimension_idx + 1] * query[dimension_idx + 1] * scaling_factors[dimension_idx + 1];
-            //
             //     for (; i+8 <= total_vectors; i+=8) {
             //         float32x4_t res_low = vld1q_f32(&distances_p[i]);
             //         float32x4_t res_high = vld1q_f32(&distances_p[i + 4]);
@@ -680,7 +695,6 @@ public:
             //
             //         vst1q_f32(&distances_p[i], res_low);
             //         vst1q_f32(&distances_p[i+4], res_high);
-            //
             //     }
             // }
             #pragma clang loop vectorize(enable)

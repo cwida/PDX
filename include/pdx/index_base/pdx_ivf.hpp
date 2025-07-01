@@ -48,8 +48,18 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
-        num_vertical_dimensions = num_dimensions;
-        num_horizontal_dimensions = 0;
+        num_horizontal_dimensions = (uint32_t)(num_dimensions * PROPORTION_VERTICAL_DIM);
+        num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
+        if (num_horizontal_dimensions % 64 != 0) {
+            num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
+            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
+        }
+        // TODO: UNCOMMENT WHEN GOING BACK TO FULL VERTICAL
+        // num_vertical_dimensions = num_dimensions;
+        // num_horizontal_dimensions = 0;
+        std::cout << "Vertical dims: " << num_vertical_dimensions << "\n";
+        std::cout << "Horizontal dims: " << num_horizontal_dimensions << "\n";
+
         next_value += sizeof(uint32_t);
         num_vectorgroups = ((uint32_t *) next_value)[0];
         next_value += sizeof(uint32_t);
@@ -107,7 +117,7 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
-        num_horizontal_dimensions = (uint32_t)(num_dimensions * 0.75);
+        num_horizontal_dimensions = (uint32_t)(num_dimensions * PROPORTION_VERTICAL_DIM);
         num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
         if (num_horizontal_dimensions % 64 != 0) {
             num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
@@ -186,7 +196,7 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
-        num_horizontal_dimensions = (uint32_t)(num_dimensions * 0.75);
+        num_horizontal_dimensions = (uint32_t)(num_dimensions * PROPORTION_VERTICAL_DIM);
         num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
         if (num_horizontal_dimensions % 64 != 0) {
             num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
@@ -267,7 +277,7 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
-        num_horizontal_dimensions = (uint32_t)(num_dimensions * 0.75);
+        num_horizontal_dimensions = (uint32_t)(num_dimensions * PROPORTION_VERTICAL_DIM);
         num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
         if (num_horizontal_dimensions % 64 != 0) {
             num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
@@ -400,7 +410,7 @@ public:
 //            for (size_t d = 0; d < num_dimensions; d+=4){
 //                next_value += AlignValue<uint32_t, 8>(BW * vectorgroup.num_embeddings * 4) / 8;
 //            }
-            next_value += (int)(AlignValue<uint32_t, 1024>(vectorgroup.num_embeddings * num_dimensions) * 0.75); // 6 / 8
+            next_value += (int)(AlignValue<uint32_t, 1024>(vectorgroup.num_embeddings * num_dimensions) * PROPORTION_VERTICAL_DIM); // 6 / 8
         }
         // Indices
         for (size_t i = 0; i < num_vectorgroups; ++i) {

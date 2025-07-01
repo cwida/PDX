@@ -45,7 +45,12 @@ def generate_ground_truth(dataset, KNNS=(10, 100), normalize=False):
 
 if __name__ == "__main__":
     ks = [10, 100]
-    generate_ground_truth('word2vec-300', ks, normalize=True)
+    # generate_ground_truth('word2vec-300', ks, normalize=True)
+
+    generate_ground_truth('gooaq-distilroberta-768-normalized', ks, normalize=True)
+    generate_ground_truth('agnews-mxbai-1024-euclidean', ks, normalize=True)
+    generate_ground_truth('coco-nomic-768-normalized', ks, normalize=True)
+    generate_ground_truth('simplewiki-openai-3072-normalized', ks, normalize=True)
 
     # generate_ground_truth('openai-1536-angular', ks)
     # generate_ground_truth('msong-420', ks)

@@ -13,6 +13,8 @@ namespace PDX {
         return ((n + (val - 1)) / val) * val;
     }
 
+    static inline float PROPORTION_VERTICAL_DIM = 0.75;
+
     enum DimensionsOrder {
         SEQUENTIAL,
         DISTANCE_TO_MEANS,

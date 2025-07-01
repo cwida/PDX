@@ -75,7 +75,11 @@ public:
             "deep-image-96-angular",
             "instructorxl-arxiv-768",
             "openai-1536-angular",
-            "word2vec-300"
+            "word2vec-300",
+            "gooaq-distilroberta-768-normalized",
+            "agnews-mxbai-1024-euclidean",
+            "coco-nomic-768-normalized",
+            "simplewiki-openai-3072-normalized"
     };
 
     inline static std::unordered_map<std::string, float> BSA_MULTIPLIERS_M = {
@@ -100,6 +104,10 @@ public:
             {"instructorxl-arxiv-768", 12},
             {"openai-1536-angular", 16},
             {"word2vec-300", 12},
+            {"gooaq-distilroberta-768-normalized", 16},
+            {"agnews-mxbai-1024-euclidean", 16},
+            {"coco-nomic-768-normalized", 16},
+            {"simplewiki-openai-3072-normalized", 16}
     };
 
     inline static std::unordered_map<std::string, uint8_t> PDX_EXPONENTS = {
@@ -114,7 +122,7 @@ public:
 
     inline static size_t IVF_PROBES[] = {
         //4000, 3980, 3967, 2048, 1024, 512, 256,224,192,160,144,128,
-        8192, 4096, 3072, 2048, 1536, 1024, 512, 256,224,192,160,144,128,
+        8192, 4096, 3072, 2048, 1536, 1024, 512, 384, 256,224,192,160,144,128,
         112,96,80,64,56, 48, 40,
         32,28, 26,24, 22,20, 18,16, 14,12, 10,8,6,4,2, 1
     };
@@ -138,7 +146,7 @@ public:
     inline static float EPSILON0 = 2.1; //2.1;
     inline static float SELECTIVITY_THRESHOLD = 0.80; // more than 20% pruned to pass
     inline static bool VERIFY_RESULTS = true;
-    inline static uint8_t KNN = 10;
+    inline static uint8_t KNN = 100;
 
     template<bool MEASURE_RECALL, PDX::Quantization q=PDX::F32>
     static void VerifyResult(float &recalls, const std::vector<PDX::KNNCandidate<q>> &result, size_t knn,

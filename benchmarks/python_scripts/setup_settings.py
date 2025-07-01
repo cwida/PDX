@@ -64,7 +64,11 @@ DATASETS = [
     'deep-image-96-angular',
     'instructorxl-arxiv-768',
     'openai-1536-angular',
-    'word2vec-300'
+    'word2vec-300',
+    'gooaq-distilroberta-768-normalized',
+    'agnews-mxbai-1024-euclidean',
+    'coco-nomic-768-normalized',
+    'simplewiki-openai-3072-normalized'
 ]
 
 DIMENSIONALITIES = {
@@ -88,7 +92,11 @@ DIMENSIONALITIES = {
     'deep-image-96-angular': 96,
     'instructorxl-arxiv-768': 768,
     'openai-1536-angular': 1536,
-    'word2vec-300': 300
+    'word2vec-300': 300,
+    'gooaq-distilroberta-768-normalized': 768,
+    'agnews-mxbai-1024-euclidean': 1024,
+    'coco-nomic-768-normalized': 768,
+    'simplewiki-openai-3072-normalized': 3072
 }
 
 DATA_EXPONENTS = {

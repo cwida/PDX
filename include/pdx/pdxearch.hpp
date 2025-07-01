@@ -1006,10 +1006,10 @@ public:
             current_vectorgroup = vectorgroups_indices[vectorgroup_idx];
             VECTORGROUP_TYPE& vectorgroup = pdx_data.vectorgroups[current_vectorgroup];
             current_scaling_factor = 1.0f;
-            quant.PrepareQuery(
-                vectorgroup.for_bases, vectorgroup.scale_factors,
-                nullptr, nullptr
-                );
+            // quant.PrepareQuery(
+            //     vectorgroup.for_bases, vectorgroup.scale_factors,
+            //     nullptr, nullptr
+            //     );
             //total_bytes += vectorgroup.num_embeddings * pdx_data.num_dimensions;
             Warmup(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, selectivity_threshold, this->best_k);
             Prune(quant.quantized_query, vectorgroup.data, vectorgroup.num_embeddings, k, this->best_k);
@@ -1171,6 +1171,10 @@ public:
         this->best_k = std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t vectorgroups_to_visit = pdx_data.num_vectorgroups;
         GetDimensionsAccessOrder(query, pdx_data.means);
+#ifdef BENCHMARK_TIME
+        this->ResetClocks();
+        this->end_to_end_clock.Tic();
+#endif
         // TODO: This should probably not be evaluated here
         if (pdx_data.is_ivf) {
             if (ivf_nprobe == 0){
@@ -1190,10 +1194,6 @@ public:
             // If there is no index, we just access the vectorgroups in order
             GetVectorgroupsAccessOrderRandom();
         }
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
         // PDXearch core
         current_dimension_idx = 0;
         current_vectorgroup = vectorgroups_indices[0];

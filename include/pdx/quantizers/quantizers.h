@@ -282,7 +282,7 @@ public:
 
             // Scale factor is global in symmetric kernel
             cur_scaling_factors[i] = 1.0f;
-            int rounded = std::round(pre_scaled_query[i] * scale_factors[0] - for_bases[i]);
+            int rounded = std::round((pre_scaled_query[i] - for_bases[i]) * scale_factors[0]);
             dim_clip_value[i] = rounded;
             if (rounded > MAX_VALUE || rounded < 0) {
                     quantized_query[i] = 0;

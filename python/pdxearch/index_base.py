@@ -62,10 +62,6 @@ class BaseIndexPDXIVF:
         use_lep = kwargs.get('lep', False)
         use_exceptions = kwargs.get('use_exceptions', False)
         use_global_params = kwargs.get('use_global_params', False)
-        if use_global_params:
-            data_max = data.max()
-            data_min = data.min()
-            data_range = data_max - data_min
         self.partitions = []
         self.means = data.mean(axis=0, dtype=np.float32)
         self.centroids = np.array([], dtype=np.float32)
@@ -73,6 +69,12 @@ class BaseIndexPDXIVF:
             self.centroids = self.core_index.index.quantizer.reconstruct_n(0, self.core_index.index.nlist)
             if centroids_preprocessor is not None:
                 centroids_preprocessor.preprocess(self.centroids, inplace=True)
+        if use_global_params:
+            data_max = data.max()
+            data_min = data.min()
+            data_range = data_max - data_min
+            data = data - data_min
+            for_bases = np.full(self.ndim, data_min, dtype=np.float32)
         for list_id in range(self.core_index.index.nlist):
             num_list_embeddings, list_ids = self.core_index.get_inverted_list_metadata(list_id)
             partition = Partition()
@@ -132,14 +134,14 @@ class BaseIndexPDXIVF:
                     if use_global_params: # U8
                         # Global scaling
                         lep_min = 0
-                        lep_max = 127 # TODO: Fix for Intel can only by max of 127
-                        # Uncomment to use per-partition scaling factor (not helpful)
+                        lep_max = 255 # TODO: Fix for Intel can only by max of 127
                         global_scale_factor = float(lep_max) / data_range
                         pre_data = pre_data * global_scale_factor
                         pre_data = pre_data.round(decimals=0).astype(dtype=np.int32)
-                        for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
+                        # for_bases = np.min(pre_data, axis=0).astype(dtype=np.int32)
                         scale_factors_data = np.full(self.ndim, global_scale_factor, dtype=np.float32)
-                        for_data = pre_data - for_bases
+                        # for_data = pre_data - for_bases
+                        for_data = pre_data
                         data_norms = np.linalg.norm(pre_data, axis=1)
                     elif not use_exceptions: # ASSYMMETRIC_U8
                         # Scaling per dimension which needs adjustments on the L2 calculation
@@ -318,7 +320,6 @@ class BaseIndexPDXIVF:
                 partition.scale_factors = scale_factors_data.astype(dtype=np.float32)
                 partition.data_norms = data_norms.astype(dtype=np.float32)
 
-
                 if use_exceptions:
                     partition.exceptions_n = int(exceptions_n) * 2 # Because exceptions_n is the number on each side
                     if partition.exceptions_n > 0:
@@ -362,12 +363,14 @@ class BaseIndexPDXIVF:
         data.extend(np.int32(self.ndim).tobytes("C"))
         data.extend(np.int32(self.num_partitions).tobytes("C"))
 
-        h_dims = int(self.ndim * 0.75)
+        VERTICAL_PROPORTION_DIM = 0.75
+
+        h_dims = int(self.ndim * VERTICAL_PROPORTION_DIM)
         v_dims = self.ndim - h_dims
         if h_dims % 64 != 0:
             h_dims = round(h_dims / 64) * 64
             v_dims = self.ndim - h_dims
-
+        h_dims_block = kwargs.get('h_dims_block', 64)
         tmp_columns = np.arange(self.ndim, dtype=np.uint16)
 
         for i in range(self.num_partitions):
@@ -385,26 +388,31 @@ class BaseIndexPDXIVF:
                 # if i % 100 == 0:
                 #     print(f"{i}/{self.num_partitions} partitions processed")
                 for p in range(len(self.partitions[i].blocks)):
+                    assert h_dims % 4 == 0
+                    assert v_dims % 4 == 0
+                    assert h_dims + v_dims == self.ndim
+                    assert h_dims > v_dims
+                    assert h_dims % 64 == 0
                     if _type == 'pdx':
-                        data.extend(self.partitions[i].blocks[p].tobytes("F"))  # PDX
+                        vertical_block = self.partitions[i].blocks[p][:, :v_dims]
+                        rows, _ = vertical_block.shape
+                        data.extend(vertical_block.tobytes("F"))  # PDX vertical block
+                        pdx_64_block = self.partitions[i].blocks[p][:, v_dims:].reshape(rows, -1, h_dims_block).transpose(1, 0, 2).reshape(-1)
+                        data.extend(pdx_64_block.tobytes("C")) # PDX horizontal block to improve sequential access
                     elif _type == 'pdx-v4-h':
-                        assert h_dims % 4 == 0
-                        assert v_dims % 4 == 0
-                        assert h_dims + v_dims == self.ndim
-                        assert h_dims > v_dims
-                        assert h_dims % 64 == 0
                         tmp_block = self.partitions[i].blocks[p][:, :v_dims]
                         rows, _ = tmp_block.shape
                         lep_bw = kwargs.get('lep_bw', 8)
                         if lep_bw == 8 or lep_bw == 7:
                             pdx_4_block = tmp_block.reshape(rows, -1, 4).transpose(1, 0, 2).reshape(-1)
+                            pass
                         else:
-                            # We are reshaping with 2 dimensions together so that the unpacking is better
+                            # We are reshaping with 2 dimensions together so that the 4-bit unpacking is better
                             pdx_4_block = tmp_block.reshape(rows, -1, 2).transpose(1, 0, 2).reshape(-1)
-                        h_dims_block = kwargs.get('h_dims_block', 64)
                         assert h_dims % h_dims_block == 0
                         if lep_bw == 8 or lep_bw == 7:  # Vertical Dimensions
-                            data.extend(pdx_4_block.tobytes("C")) # Fully decomposed now, was C
+                            data.extend(pdx_4_block.tobytes("C"))
+                            # data.extend(tmp_block.tobytes("F"))
                         else:
                             # For now, we only support 4-bit width
                             total_values = len(pdx_4_block)
