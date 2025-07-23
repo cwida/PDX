@@ -13,7 +13,7 @@ Download the .hdf5 data here: https://drive.google.com/drive/folders/1f76UCrU52N
 if __name__ == "__main__":
     dataset_name = 'agnews-mxbai-1024-euclidean.hdf5'
     num_dimensions = 1024
-    nprobe = 24
+    nprobe = 64
     knn = 100
     print(f'Running example: PDXearch + ADSampling (Two-Level IVF Flat)\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
