@@ -75,7 +75,7 @@ For more details on the available examples and how to use your own data, refer t
 We present single-threaded **benchmarks** against FAISS+AVX512 on an `r7iz.xlarge` (Intel Sapphire Rapids) instance. 
 
 ### Two-Level IVF (IVF<sub>2</sub>) ![](https://img.shields.io/badge/Fastest%20search%20on%20PDX-red)
-IVF<sub>2</sub> tackles a bottleneck of IVF indexes: finding the nearest centroids. By clustering the original IVF centroids, PDX can quickly scan them (thanks to pruning) without sacrificing recall. This achieves significant throughput when paired with `8-bit` quantization.
+IVF<sub>2</sub> tackles a bottleneck of IVF indexes: finding the nearest centroids. By clustering the original IVF centroids, PDX can quickly scan them (thanks to pruning) without sacrificing recall. This achieves significant throughput improvements when paired with `8-bit` quantization.
 
 <p align="center">
         <img src="./benchmarks/results/ivf2-intel.png" alt="PDX Layout" style="{max-height: 150px}">
@@ -90,9 +90,6 @@ Here, PDX, paired with the pruning algorithm ADSampling on `float32`, achieves s
 <p align="center">
         <img src="./benchmarks/results/ivf-intel.png" alt="PDX Layout" style="{max-height: 150px}">
 </p>
-
-> [!NOTE]   
-> On these benchmarks, FAISS and PDX are scanning exactly the same index. 
 
 
 ### Exhaustive search + IVF
@@ -118,17 +115,20 @@ By creating random clusters with the PDX layout, you can still accelerate exhaus
 Even without pruning, PDX distance kernels can be faster than SIMD ones in most CPU microarchitectures. For detailed information, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). You can also try it yourself in our playground [here](./benchmarks/bench_kernels).
 
 ## The Data Layout
-We have evolved our layout from the one presented in our publication, further adapting it to work with `8-bit` and (in the future) `1-bit` vectors. 
+PDX is a transposed layout (a.k.a. columnar, vertical, decomposed layout), which means that the same dimensions of different vectors are stored sequentially. This decomposition occurs within a block. Blocks can be clusters in an IVF index.
+
+We have evolved our layout from the one presented in our publication to reduce I/O, and adapting it to work with `8-bit` and (in the future) `1-bit` vectors. 
 
 ### `float32`
-On `float32`, the first 25% dimensions are fully decomposed. We refer to this as the "vertical block." The rest (75%) are decomposed into subvectors of 64 dimensions. We refer to this as the "horizontal block." The vertical block is used for efficient pruning, and the horizontal block is accessed on the candidates that were not pruned. This horizontal block is still decomposed every 64 dimensions. The idea behind this is that we still have a chance to prune the few remaining candidates every 64 dimensions.
+For `float32`, the first 25% of the dimensions are fully decomposed. We refer to this as the "vertical block." The rest (75%) are decomposed into subvectors of 64 dimensions. We refer to this as the "horizontal block." The vertical block is used for efficient pruning, and the horizontal block is accessed on the candidates that were not pruned. This horizontal block is still decomposed every 64 dimensions. The idea behind this is that we still have a chance to prune the few remaining candidates every 64 dimensions. 
+
+The following image shows this layout. Storage is sequential from left to right, and from top to bottom.
 <p align="center">
         <img src="./benchmarks/results/layout-f32.png" alt="PDX Layout F32" style="{max-height: 150px}">
 </p>
 
 ### `8 bits`
-Smaller data types are not friendly to PDX as we have must accumulate distances on wider types, resulting in asymmetry. We can work around this by changing the PDX layout.
-On `8 bits`, the vertical block is decomposed every 4 dimensions. This allows us to use dot product instructions (`VPDPBUSD` in [x86](https://www.officedaytime.com/simd512e/simdimg/si.php?f=vpdpbusd) and `UDOT/SDOT` in [NEON]((https://developer.arm.com/documentation/102651/a/What-are-dot-product-intructions-))) to calculate L2 or IP kernels while still benefiting from PDX. The horizontal block remains decomposed every 64 dimensions. 
+Smaller data types are not friendly to PDX, as we must accumulate distances on wider types, resulting in asymmetry. We can work around this by changing the PDX layout. For `8 bits`, the vertical block is decomposed every 4 dimensions. This allows us to use dot product instructions (`VPDPBUSD` in [x86](https://www.officedaytime.com/simd512e/simdimg/si.php?f=vpdpbusd) and `UDOT/SDOT` in [NEON](https://developer.arm.com/documentation/102651/a/What-are-dot-product-intructions-)) to calculate L2 or IP kernels while still benefiting from PDX. The horizontal block remains decomposed every 64 dimensions. 
 <p align="center">
         <img src="./benchmarks/results/layout-u8.png" alt="PDX Layout F32" style="{max-height: 150px}">
 </p>
