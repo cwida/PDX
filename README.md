@@ -115,9 +115,9 @@ By creating random clusters with the PDX layout, you can still accelerate exhaus
 Even without pruning, PDX distance kernels can be faster than SIMD ones in most CPU microarchitectures. For detailed information, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). You can also try it yourself in our playground [here](./benchmarks/bench_kernels).
 
 ## The Data Layout
-PDX is a transposed layout (a.k.a. columnar, vertical, decomposed layout), which means that the same dimensions of different vectors are stored sequentially. This decomposition occurs within a block. Blocks can be clusters in an IVF index.
+PDX is a transposed layout (a.k.a. columnar, or decomposed layout), which means that the same dimensions of different vectors are stored sequentially. This decomposition occurs within a block. Blocks can be clusters in an IVF index.
 
-We have evolved our layout from the one presented in our publication to reduce I/O, and adapting it to work with `8-bit` and (in the future) `1-bit` vectors. 
+We have evolved our layout from the one presented in our publication to reduce random access, and adapting it to work with `8-bit` and (in the future) `1-bit` vectors. 
 
 ### `float32`
 For `float32`, the first 25% of the dimensions are fully decomposed. We refer to this as the "vertical block." The rest (75%) are decomposed into subvectors of 64 dimensions. We refer to this as the "horizontal block." The vertical block is used for efficient pruning, and the horizontal block is accessed on the candidates that were not pruned. This horizontal block is still decomposed every 64 dimensions. The idea behind this is that we still have a chance to prune the few remaining candidates every 64 dimensions. 
@@ -138,6 +138,7 @@ For Hamming/Jaccard kernels, we use a layout decomposed every 8 dimensions (natu
 
 ## Roadmap
 - Incorporate a faster random rotation algorithm. This is currently the bottleneck of IVF<sub>2</sub>.
+- Add PDX to the [VIBE benchmark](https://vector-index-bench.github.io/).
 - Adaptive quantization on 8-bit and 4-bit.
 - PDX in graph-based indexes.
 - Add a testing framework.
