@@ -122,10 +122,16 @@ We have evolved our layout from the one presented in our publication, further ad
 
 ### `float32`
 On `float32`, the first 25% dimensions are fully decomposed. We refer to this as the "vertical block." The rest (75%) are decomposed into subvectors of 64 dimensions. We refer to this as the "horizontal block." The vertical block is used for efficient pruning, and the horizontal block is accessed on the candidates that were not pruned. This horizontal block is still decomposed every 64 dimensions. The idea behind this is that we still have a chance to prune the few remaining candidates every 64 dimensions.
+<p align="center">
+        <img src="./benchmarks/results/layout-f32.png" alt="PDX Layout F32" style="{max-height: 150px}">
+</p>
 
-### `int8`
+### `8 bits`
 Smaller data types are not friendly to PDX as we have must accumulate distances on wider types, resulting in asymmetry. We can work around this by changing the PDX layout.
-On `int8`, the vertical block is decomposed every 4 dimensions. This allows us to use the `VPDPBUSD` instruction to calculate L2 or IP kernels while still benefiting from PDX. The horizontal block remains decomposed every 64 dimensions. 
+On `8 bits`, the vertical block is decomposed every 4 dimensions. This allows us to use dot product instructions (`VPDPBUSD` in [x86](https://www.officedaytime.com/simd512e/simdimg/si.php?f=vpdpbusd) and `UDOT/SDOT` in [NEON]((https://developer.arm.com/documentation/102651/a/What-are-dot-product-intructions-))) to calculate L2 or IP kernels while still benefiting from PDX. The horizontal block remains decomposed every 64 dimensions. 
+<p align="center">
+        <img src="./benchmarks/results/layout-u8.png" alt="PDX Layout F32" style="{max-height: 150px}">
+</p>
 
 ### `binary`
 For Hamming/Jaccard kernels, we use a layout decomposed every 8 dimensions (naturally grouped into bytes). The population count accumulation can be done in `bytes`. If d > 256, we flush the popcounts into a wider type every 32 words (corresponding to 256 dimensions). This has not been implemented in this repository yet, but you can find some promising benchmarks [here](https://github.com/lkuffo/binary-index). 
