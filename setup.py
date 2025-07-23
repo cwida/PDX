@@ -40,6 +40,7 @@ if is_linux:
 
 if is_macos:
     compile_args.append("-std=c++17")
+    compile_args.append("-mmacosx-version-min=10.13")
     compile_args.append("-O3")
     compile_args.append("-march=native")
     compile_args.append("-fPIC")
@@ -89,7 +90,7 @@ long_description = ""
 
 setup(
     name="pdxearch",
-    version="0.1",
+    version="0.2",
     packages=["pdxearch"],
     package_dir={"pdxearch": "python/pdxearch"},
     description=description,

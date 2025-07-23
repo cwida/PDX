@@ -1,5 +1,5 @@
-#ifndef EMBEDDINGSEARCH_BENCHMARK_UTILS_HPP
-#define EMBEDDINGSEARCH_BENCHMARK_UTILS_HPP
+#ifndef PDX_BENCHMARK_UTILS_HPP
+#define PDX_BENCHMARK_UTILS_HPP
 
 #include <cstdint>
 #include <fcntl.h>
@@ -15,7 +15,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <filesystem>
-#include "vector_searcher.hpp"
+#include "../common.hpp"
 
 
 struct BenchmarkMetadata {
@@ -40,8 +40,6 @@ public:
     inline static std::string NARY_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/nary/";
     inline static std::string PDX_ADSAMPLING_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/adsampling_pdx/";
     inline static std::string NARY_ADSAMPLING_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/adsampling_nary/";
-    inline static std::string PDX_BSA_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/bsa_pdx/";
-    inline static std::string NARY_BSA_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/bsa_nary/";
     inline static std::string GROUND_TRUTH_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/ground_truth/";
     inline static std::string PURESCAN_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/purescan/";
     inline static std::string QUERIES_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/queries/";
@@ -74,40 +72,41 @@ public:
             "gist-960-euclidean",
             "deep-image-96-angular",
             "instructorxl-arxiv-768",
-            "openai-1536-angular"
-    };
-
-    inline static std::unordered_map<std::string, float> BSA_MULTIPLIERS_M = {
-            {"random-xs-20-angular", 16},
-            {"random-s-100-euclidean", 14},
-            {"har-561", 8},
-            {"nytimes-16-angular", 14},
-            {"nytimes-256-angular", 14},
-            {"mnist-784-euclidean", 9},
-            {"fashion-mnist-784-euclidean", 10},
-            {"glove-25-angular", 16},
-            {"glove-50-angular", 12},
-            {"glove-100-angular", 12},
-            {"glove-200-angular", 16},
-            {"sift-128-euclidean", 8},
-            {"trevi-4096", 12},
-            {"msong-420", 12},
-            {"contriever-768", 12},
-            {"stl-9216", 12},
-            {"gist-960-euclidean", 8},
-            {"deep-image-96-angular", 8},
-            {"instructorxl-arxiv-768", 12},
-            {"openai-1536-angular", 16},
+            "openai-1536-angular",
+            "word2vec-300",
+            "gooaq-distilroberta-768-normalized",
+            "agnews-mxbai-1024-euclidean",
+            "coco-nomic-768-normalized",
+            "simplewiki-openai-3072-normalized",
+            "imagenet-align-640-normalized",
+            "yandex-200-cosine",
+            "imagenet-clip-512-normalized",
+            "laion-clip-512-normalized",
+            "codesearchnet-jina-768-cosine",
+            "yi-128-ip",
+            "landmark-dino-768-cosine",
+            "landmark-nomic-768-normalized",
+            "arxiv-nomic-768-normalized",
+            "ccnews-nomic-768-normalized",
+            "celeba-resnet-2048-cosine",
+            "llama-128-ip",
+            "yahoo-minilm-384-normalized"
     };
 
     inline static size_t IVF_PROBES[] = {
-        512, 256,224,192,160,144,128,
+        //4000, 3980, 3967, 2048, 1024, 512, 256,224,192,160,144,128,
+        8192, 4096, 3072, 2048, 1536, 1024, 512, 384, 256,224,192,160,144,128,
         112,96,80,64,56, 48, 40,
-        32,28, 26,24, 22,20, 18,16, 14,12, 10,8,6,4,2
+        32,28, 26,24, 22,20, 18,16, 14,12, 10,8,6,4,2, 1
+    };
+
+    inline static int POW_10[10] = {
+            1, 10, 100, 1000, 10000,
+            100000, 1000000, 10000000, 100000000, 1000000000
     };
 
     inline static size_t IVF_PROBES_PHASES[] = {
-            512,256,128, 64, 32, 16, 8, 4, 2
+            512,256,128, 64, 32, 16, 8, 4, 2,
     };
 
     inline static float SELECTIVITY_THRESHOLDS[] = {
@@ -117,21 +116,21 @@ public:
 
 
     inline static size_t NUM_MEASURE_RUNS = 1;
-    inline static float EPSILON0 = 2.1;
+    inline static float EPSILON0 = 1.5; //2.1;
     inline static float SELECTIVITY_THRESHOLD = 0.80; // more than 20% pruned to pass
     inline static bool VERIFY_RESULTS = true;
-    inline static uint8_t KNN = 10;
+    inline static uint8_t KNN = 100;
 
-    // TODO: Sometimes 1.0 recall is not achievable due to ambiguity on results
-    template<bool MEASURE_RECALL>
-    static void VerifyResult(float &recalls, const std::vector<KNNCandidate> &result, size_t knn,
+    inline static uint8_t GROUND_TRUTH_MAX_K = 100; // To properly skip on the ground truth file (do not change)
+
+    template<bool MEASURE_RECALL, PDX::Quantization q=PDX::F32>
+    static void VerifyResult(float &recalls, const std::vector<PDX::KNNCandidate<q>> &result, size_t knn,
                              const uint32_t *int_ground_truth, size_t n_query) {
         if constexpr (MEASURE_RECALL) {
             size_t true_positives = 0;
             for (size_t j = 0; j < knn; ++j) {
-                //std::cout << result[j].index << "\n";
                 for (size_t m = 0; m < knn; ++m) {
-                    if (result[j].index == int_ground_truth[m + n_query * knn]) {
+                    if (result[j].index == int_ground_truth[m + n_query * GROUND_TRUTH_MAX_K]) {
                         true_positives++;
                         break;
                     }
@@ -140,7 +139,7 @@ public:
             recalls += 1.0 * true_positives / knn;
         } else {
             for (size_t j = 0; j < knn; ++j) {
-                if (result[j].index != int_ground_truth[j + n_query * knn]) {
+                if (result[j].index != int_ground_truth[j + n_query * GROUND_TRUTH_MAX_K]) {
                     std::cout << "WRONG RESULT!\n";
                     break;
                 }
@@ -229,4 +228,4 @@ public:
 
 BenchmarkUtils BENCHMARK_UTILS;
 
-#endif //EMBEDDINGSEARCH_BENCHMARK_UTILS_HPP
+#endif //PDX_BENCHMARK_UTILS_HPP

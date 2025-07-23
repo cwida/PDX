@@ -8,15 +8,17 @@
 
 #include <iostream>
 #include "utils/file_reader.hpp"
-#include "pdx/index_base/pdx_ivf.hpp"
-#include "pdx/bond.hpp"
+#include "index_base/pdx_ivf.hpp"
+#include "pruners/bond.hpp"
+#include "pdxearch.hpp"
 #include "utils/benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
     std::string arg_dataset;
     size_t arg_ivf_nprobe = 0;
     std::string ALGORITHM = "pdx-bond";
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::DISTANCE_TO_MEANS_IMPROVED;
+    PDX::DimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
+    DIMENSION_ORDER = PDX::DIMENSION_ZONES;
     if (argc > 1){
         arg_dataset = argv[1];
     }
@@ -32,18 +34,10 @@ int main(int argc, char *argv[]) {
         //     DECREASING_IMPROVED,
         //     DIMENSION_ZONES 
         // };
-        DIMENSION_ORDER = static_cast<PDX::PDXearchDimensionsOrder>(atoi(argv[3]));
-        if (DIMENSION_ORDER == PDX::DISTANCE_TO_MEANS_IMPROVED){
-            ALGORITHM = "pdx-bond";
-        }
-        else if (DIMENSION_ORDER == PDX::DISTANCE_TO_MEANS){
+        DIMENSION_ORDER = static_cast<PDX::DimensionsOrder>(atoi(argv[3]));
+        ALGORITHM = "pdx-bond";
+        if (DIMENSION_ORDER == PDX::DISTANCE_TO_MEANS){
             ALGORITHM = "pdx-bond-dtm";
-        }
-        else if (DIMENSION_ORDER == PDX::DECREASING_IMPROVED){
-            ALGORITHM = "pdx-bond-dec";
-        }
-        else if (DIMENSION_ORDER == PDX::SEQUENTIAL){
-            ALGORITHM = "pdx-bond-sec";
         }
         else if (DIMENSION_ORDER == PDX::DIMENSION_ZONES){
             ALGORITHM = "pdx-bond-dz";
@@ -66,18 +60,26 @@ int main(int argc, char *argv[]) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlat pdx_data = PDX::IndexPDXIVFFlat();
+        PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::F32>();
 
         pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-ivf");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
-        NUM_QUERIES = ((uint32_t *)query)[0];
-        float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN));
+        NUM_QUERIES = 100; // ((uint32_t *)query)[0];
+        float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_100_norm");
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
-        PDX::PDXBondSearcher searcher = PDX::PDXBondSearcher(pdx_data, SELECTIVITY_THRESHOLD, 1, 0, DIMENSION_ORDER);
+        auto pruner = PDX::BondPruner(pdx_data.num_dimensions);
+        PDX::PDXearch searcher = PDX::PDXearch(pdx_data, pruner, 0, DIMENSION_ORDER);
 
-        for (size_t ivf_nprobe : BenchmarkUtils::IVF_PROBES) {
+        std::vector<size_t> nprobes_to_use;
+        if (arg_ivf_nprobe > 0) {
+            nprobes_to_use = {arg_ivf_nprobe};
+        } else {
+            nprobes_to_use.assign(std::begin(BenchmarkUtils::IVF_PROBES), std::end(BenchmarkUtils::IVF_PROBES));
+        }
+
+        for (size_t ivf_nprobe : nprobes_to_use) {
             if (pdx_data.num_vectorgroups < ivf_nprobe) {
                 continue;
             }

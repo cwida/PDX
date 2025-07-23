@@ -8,19 +8,21 @@
 
 #include <iostream>
 #include "utils/file_reader.hpp"
-#include "pdx/index_base/pdx_ivf.hpp"
-#include "pdx/bond.hpp"
+#include "index_base/pdx_ivf.hpp"
+#include "pruners/bond.hpp"
+#include "pdxearch.hpp"
 #include "utils/benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
     std::string arg_dataset;
-    PDX::PDXearchDimensionsOrder DIMENSION_ORDER = PDX::DISTANCE_TO_MEANS_IMPROVED;
+    PDX::DimensionsOrder DIMENSION_ORDER = PDX::DISTANCE_TO_MEANS_IMPROVED;
+    DIMENSION_ORDER = PDX::DISTANCE_TO_MEANS_IMPROVED;
     std::string ALGORITHM = "pdx-bond";
     if (argc > 1){
         arg_dataset = argv[1];
     }
     if (argc > 2){
-        DIMENSION_ORDER = static_cast<PDX::PDXearchDimensionsOrder>(atoi(argv[2]));
+        DIMENSION_ORDER = static_cast<PDX::DimensionsOrder>(atoi(argv[2]));
         if (DIMENSION_ORDER == PDX::DISTANCE_TO_MEANS_IMPROVED){
             ALGORITHM = "pdx-bond";
         }
@@ -55,20 +57,22 @@ int main(int argc, char *argv[]) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVFFlat pdx_data = PDX::IndexPDXIVFFlat();
+        PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::F32>();
 
         pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-flat");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
-        NUM_QUERIES = ((uint32_t *)query)[0];
-        float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_" + std::to_string(KNN));
+        NUM_QUERIES = 100;
+        float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_100_norm");
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
 
-        PDX::IndexPDXIVFFlat nary_data = PDX::IndexPDXIVFFlat();
+        PDX::IndexPDXIVF nary_data = PDX::IndexPDXIVF<PDX::F32>();
 
         std::vector<PhasesRuntime> runtimes;
         runtimes.resize(NUM_MEASURE_RUNS * NUM_QUERIES);
-        PDX::PDXBondSearcher searcher = PDX::PDXBondSearcher(pdx_data, SELECTIVITY_THRESHOLD, 0, 0, DIMENSION_ORDER);
+
+        auto pruner = PDX::BondPruner(pdx_data.num_dimensions);
+        PDX::PDXearch searcher = PDX::PDXearch(pdx_data, pruner, 0, DIMENSION_ORDER);
 
         float recalls = 0;
         if (VERIFY_RESULTS){

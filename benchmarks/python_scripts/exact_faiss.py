@@ -24,7 +24,7 @@ if __name__ == '__main__':
         searcher.fit(data)
 
         for _ in range(N_MEASURE_RUNS):
-            for q in queries:
+            for q in queries[:100]:
                 q = np.ascontiguousarray(q)
                 clock.tic()
                 searcher.query(q, KNN)

@@ -1,0 +1,8 @@
+numpy
+pandas
+faiss-cpu
+h5py
+
+# Micro-kernels:
+cppyy
+cppyy-backend
