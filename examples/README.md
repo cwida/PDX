@@ -1,5 +1,5 @@
 # Examples
-`pdx_simple.py` shows a plug-ang-play example that creates a random collection with scikit-learn. The rest of the examples read vectors from the `.hdf5` format.
+`pdx_simple.py` shows a plug-ang-play example that creates a random collection with scikit-learn. The rest of the examples read vectors from the `.hdf5` format. For reliable benchmarking we recommend using our C++ [benchmarking suite](/BENCHMARKING.md).
 
 ## Downloading the data
 Our examples look for `.hdf5` files in `/benchmarks/datasets/downloaded`. These datasets follow the convention used in the [ANN-Benchmarks](https://github.com/erikbern/ann-benchmarks/) project. One `.hdf5` file with two datasets: `train` and `test`. We have a few ways in which you can download the data we used:
