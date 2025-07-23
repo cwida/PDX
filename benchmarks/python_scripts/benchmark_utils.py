@@ -2,11 +2,12 @@ import time
 import os
 import csv
 import math
+import numpy as np
 
 SOURCE_DIR = os.getcwd()
 ARCHITECTURE = os.environ.get('PDX_ARCH', 'DEFAULT')
 RESULTS_DIRECTORY = os.path.join(SOURCE_DIR, "benchmarks", "results", ARCHITECTURE)
-KNN = 10
+KNN = 100
 N_MEASURE_RUNS = 1
 
 IVF_NPROBES = [
@@ -74,6 +75,8 @@ def save_results(runtimes: list, results_path, metadata):
     all_avg_runtime = all_sum_runtime / len(runtimes)
     avg_runtime = sum_runtime / accounted_queries
     print(metadata.get('dataset'), " --------------")
+    print('Total avg:', np.average(np.array(runtimes)))
+    print('Total median:', np.median(np.array(runtimes)))
     print('avg:', avg_runtime)
     print('max:', max_runtime)
     print('min:', min_runtime)

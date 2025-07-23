@@ -13,14 +13,9 @@ def generate_ground_truth(dataset, KNNS=(10, 100), normalize=False):
     # test = test[:N_QUERIES]
     print('N. Queries', N_QUERIES)
 
-    # random_rotation, _ = np.linalg.qr(np.random.randn(420, 420).astype(np.float32))
-    # train = np.dot(train, random_rotation)
-    # test = np.dot(test, random_rotation)
-
     if normalize:
         train = preprocessing.normalize(train, axis=1, norm='l2')
         test = preprocessing.normalize(test, axis=1, norm='l2')
-
 
     algo = BruteForceSKLearn("euclidean", njobs=-1)
     algo.fit(train)
@@ -47,10 +42,24 @@ if __name__ == "__main__":
     ks = [10, 100]
     # generate_ground_truth('word2vec-300', ks, normalize=True)
 
-    generate_ground_truth('gooaq-distilroberta-768-normalized', ks, normalize=True)
-    generate_ground_truth('agnews-mxbai-1024-euclidean', ks, normalize=True)
-    generate_ground_truth('coco-nomic-768-normalized', ks, normalize=True)
-    generate_ground_truth('simplewiki-openai-3072-normalized', ks, normalize=True)
+    # generate_ground_truth('gooaq-distilroberta-768-normalized', ks, normalize=True)
+    # generate_ground_truth('agnews-mxbai-1024-euclidean', ks, normalize=True)
+    # generate_ground_truth('coco-nomic-768-normalized', ks, normalize=True)
+    # generate_ground_truth('simplewiki-openai-3072-normalized', ks, normalize=True)
+
+    # generate_ground_truth('imagenet-align-640-normalized', ks, normalize=True)
+    # generate_ground_truth('yandex-200-cosine', ks, normalize=True)
+    # generate_ground_truth('imagenet-clip-512-normalized', ks, normalize=True)
+    # generate_ground_truth('laion-clip-512-normalized', ks, normalize=True)
+    # generate_ground_truth('codesearchnet-jina-768-cosine', ks, normalize=True)
+    # generate_ground_truth('yi-128-ip', ks, normalize=True)
+    # generate_ground_truth('landmark-dino-768-cosine', ks, normalize=True)
+    # generate_ground_truth('landmark-nomic-768-normalized', ks, normalize=True)
+    # generate_ground_truth('arxiv-nomic-768-normalized', ks, normalize=True)
+    # generate_ground_truth('ccnews-nomic-768-normalized', ks, normalize=True)
+    # generate_ground_truth('celeba-resnet-2048-cosine', ks, normalize=True)
+    # generate_ground_truth('llama-128-ip', ks, normalize=True)
+    generate_ground_truth('yahoo-minilm-384-normalized', ks, normalize=True)
 
     # generate_ground_truth('openai-1536-angular', ks)
     # generate_ground_truth('msong-420', ks)

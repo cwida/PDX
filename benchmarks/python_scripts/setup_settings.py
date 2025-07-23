@@ -16,6 +16,9 @@ SEMANTIC_GROUND_TRUTH_PATH = os.path.join(SOURCE_DIR, "benchmarks", "gt")
 
 CORE_INDEXES = os.path.join(SOURCE_DIR, "benchmarks", "core_indexes")
 CORE_INDEXES_FAISS = os.path.join(CORE_INDEXES, "faiss")
+CORE_INDEXES_FAISS_U8 = os.path.join(CORE_INDEXES, "faiss_sq8")
+CORE_INDEXES_FAISS_L0 = os.path.join(CORE_INDEXES, "faiss_l0")
+CORE_INDEXES_LORANN = os.path.join(CORE_INDEXES, "lorann")
 
 PURESCAN_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "purescan")
 
@@ -23,17 +26,16 @@ QUERIES_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "queries")
 
 NARY_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "nary")
 NARY_ADSAMPLING_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "adsampling_nary")
-NARY_BSA_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "bsa_nary")
 
 PDX_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "pdx")
 PDX_ADSAMPLING_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "adsampling_pdx")
-PDX_BSA_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "bsa_pdx")
 
 directories = [
     RAW_DATA, GROUND_TRUTH_DATA, PURESCAN_DATA,
-    NARY_DATA, NARY_ADSAMPLING_DATA, NARY_BSA_DATA,
-    PDX_DATA, PDX_ADSAMPLING_DATA, PDX_BSA_DATA,
-    CORE_INDEXES, CORE_INDEXES_FAISS, QUERIES_DATA,
+    NARY_DATA, NARY_ADSAMPLING_DATA,
+    PDX_DATA, PDX_ADSAMPLING_DATA,
+    CORE_INDEXES, CORE_INDEXES_FAISS, CORE_INDEXES_FAISS_U8,
+    CORE_INDEXES_FAISS_L0, CORE_INDEXES_LORANN, QUERIES_DATA,
     SEMANTIC_GROUND_TRUTH_PATH
 ]
 
@@ -43,16 +45,6 @@ for needed_directory in directories:
 
 # Datasets to set up and use
 DATASETS = [
-    # 'random-xs-20-angular',
-    # 'random-s-100-euclidean',
-    # 'nytimes-256-angular',
-    # 'mnist-784-euclidean',
-    # 'glove-25-angular',
-    # 'glove-100-angular',
-    # 'trevi-4096',
-    # 'stl-9216',
-    # 'har-561',
-
     'nytimes-16-angular',
     'fashion-mnist-784-euclidean',
     'glove-50-angular',
@@ -68,7 +60,20 @@ DATASETS = [
     'gooaq-distilroberta-768-normalized',
     'agnews-mxbai-1024-euclidean',
     'coco-nomic-768-normalized',
-    'simplewiki-openai-3072-normalized'
+    'simplewiki-openai-3072-normalized',
+    'imagenet-align-640-normalized',
+    'yandex-200-cosine',
+    'imagenet-clip-512-normalized',
+    'laion-clip-512-normalized',
+    'codesearchnet-jina-768-cosine',
+    'yi-128-ip',
+    'landmark-dino-768-cosine',
+    'landmark-nomic-768-normalized',
+    'arxiv-nomic-768-normalized',
+    'ccnews-nomic-768-normalized',
+    'celeba-resnet-2048-cosine',
+    'llama-128-ip',
+    'yahoo-minilm-384-normalized'
 ]
 
 DIMENSIONALITIES = {
@@ -96,7 +101,20 @@ DIMENSIONALITIES = {
     'gooaq-distilroberta-768-normalized': 768,
     'agnews-mxbai-1024-euclidean': 1024,
     'coco-nomic-768-normalized': 768,
-    'simplewiki-openai-3072-normalized': 3072
+    'simplewiki-openai-3072-normalized': 3072,
+    'imagenet-align-640-normalized': 640,
+    'yandex-200-cosine': 200,
+    'imagenet-clip-512-normalized': 512,
+    'laion-clip-512-normalized': 512,
+    'codesearchnet-jina-768-cosine': 768,
+    'yi-128-ip': 128,
+    'landmark-dino-768-cosine': 768,
+    'landmark-nomic-768-normalized': 768,
+    'arxiv-nomic-768-normalized': 768,
+    'ccnews-nomic-768-normalized': 768,
+    'celeba-resnet-2048-cosine': 2048,
+    'llama-128-ip': 128,
+    'yahoo-minilm-384-normalized': 384
 }
 
 DATA_EXPONENTS = {

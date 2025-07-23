@@ -2,38 +2,42 @@ import os
 import zipfile
 from setup_settings import RAW_DATA, DATA_DIRECTORY, DATASETS
 from setup_ground_truth import generate_ground_truth
-from setup_adsampling import generate_adsampling_ivf
-from setup_bsa import generate_bsa_ivf
+from setup_adsampling import generate_adsampling_ivf, generate_adsampling_ivf_global8,  generate_adsampling_imi_global8, generate_adsampling_imi
 from setup_bond import generate_bond_ivf, generate_bond_flat
-from setup_core_index import generate_core_ivf
+from setup_core_index import generate_core_ivf, generate_core_imi
 from setup_test_data import generate_test_data
-from setup_purescan import generate_synthetic_data
 
 DOWNLOAD = False  # Download raw HDF5 data
 GENERATE_GT = False  # Creates ground truth with sklearn
-GENERATE_IVF = False  # Creates IVF indexes with FAISS
-GENERATE_SYNTHETIC = False  # Generates synthetic collections of vectors for the kernels experiment
-KNN = [10]
+GENERATE_IVF = True # Creates IVF indexes with FAISS
+KNN = [100]
 ALGORITHMS = [  # Choose the pruning algorithms for which indexes are going to be created
     'adsampling',
-    # 'bsa',
     # 'bond'
+]
+DATASETS_TO_USE = [
+    'openai-1536-angular',
+    'agnews-mxbai-1024-euclidean',
+    'instructorxl-arxiv-768',
+    'simplewiki-openai-3072-normalized',
+    'msong-420',
+    'llama-128-ip',
 ]
 if __name__ == "__main__":
     if DOWNLOAD:
         import gdown
+        # All datasets: ~60GB compressed, ~80GB uncompressed
         gdown.download(
-            'https://drive.google.com/file/d/1I8pbwGDCSe3KqfIegAllwoP5q6F4ohj2/view?usp=sharing',
+            'https://drive.google.com/file/d/1ei6DV0goMyInp_wFcrbJG3KV40mAPfAa/view?usp=sharing',
             os.path.join(DATA_DIRECTORY, 'datasets_hdf5.zip'),
             fuzzy=True
         )
         with zipfile.ZipFile(os.path.join(DATA_DIRECTORY, 'datasets_hdf5.zip'), 'r') as zip_ref:
             zip_ref.extractall(RAW_DATA)
 
-    if GENERATE_SYNTHETIC:
-        generate_synthetic_data()
-
-    for dataset in DATASETS:
+    # If you don't define some datasets we will try to use all of them
+    if not len(DATASETS_TO_USE): DATASETS_TO_USE = DATASETS
+    for dataset in DATASETS_TO_USE:
         print('\n================ PROCESSING:', dataset, '================')
         if GENERATE_GT:
             print('==== Generating ground truth...')
@@ -43,21 +47,22 @@ if __name__ == "__main__":
         generate_test_data(dataset)
 
         if GENERATE_IVF:
-            print('==== Creating Core IVF index with FAISS (this might take a while)...')
-            generate_core_ivf(dataset)
+            print('==== Creating Core IMI index with FAISS (this might take a while)...')
+            generate_core_imi(dataset)
 
         if 'adsampling' in ALGORITHMS:
-            print('==== Generating ADSampling  [PDX & N-ary]...')
+            print('==== Generating ADSampling...')
             generate_adsampling_ivf(dataset)
+            generate_adsampling_imi(dataset)
 
-        if 'bsa' in ALGORITHMS:
-            print('==== Generating BSA [PDX & N-ary] (this might take a while)...')
-            generate_bsa_ivf(dataset)
+            print('==== Generating ADSampling SQ8...')
+            generate_adsampling_ivf_global8(dataset)
+            generate_adsampling_imi_global8(dataset)
 
         # Generate BOND Data
         if 'bond' in ALGORITHMS:
             print('==== Generating BOND IVF [PDX]')
             generate_bond_ivf(dataset)
-            print('==== Generating BOND Flat [PDX] (for exact-search)')
+            print('==== Generating BOND Flat (for exact-search)')
             generate_bond_flat(dataset)
 

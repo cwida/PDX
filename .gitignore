@@ -37,12 +37,12 @@ __pycache__/
 /examples/indexes/
 
 venv
+.venv
 /build/
 /cmake-build-debug/
 /cmake-build-release/
 /cmake-build*/
 /.idea/
-/faiss/
 /dummy/
 /Testing/
 /bin/
@@ -53,18 +53,21 @@ pdxearch.egg-info
 
 *.dat
 
+/benchmarks/core_indexes/faiss/*
+/benchmarks/core_indexes/lorann/*
+/benchmarks/core_indexes/faiss_sq8/*
+!/benchmarks/core_indexes/faiss/*.json
+
+/benchmarks/core_indexes/faiss_l0/*
+!/benchmarks/core_indexes/faiss_l0/*.json
+
 /benchmarks/datasets/adsampling_nary
-/benchmarks/datasets/adsampling_dsm
 /benchmarks/datasets/adsampling_pdx
-/benchmarks/datasets/bsa_nary
-/benchmarks/datasets/bsa_pdx
 /benchmarks/datasets/downloaded
 /benchmarks/datasets/nary
 /benchmarks/datasets/pdx
 /benchmarks/datasets/purescan
 /benchmarks/datasets/queries
-/benchmarks/datasets/bond_dsm
-/benchmarks/datasets/bsa_dsm
 
 .DS_Store
 
@@ -82,15 +85,14 @@ cmake_install.cmake
 
 /benchmarks/milvus/volumes/
 /benchmarks/python_scripts/indexes
-/benchmarks/core_indexes
+
 /benchmarks/BenchmarkNaryIVFADSampling
 /benchmarks/BenchmarkNaryIVFADSamplingSIMD
 /benchmarks/BenchmarkPDXADSampling
+/benchmarks/BenchmarkIMIADSampling
 /benchmarks/BenchmarkASYM_U8PDXADSampling
 /benchmarks/BenchmarkU8PDXADSampling
 /benchmarks/BenchmarkLEP8PDXADSampling
-/benchmarks/BenchmarkNaryIVFBSASIMD
-/benchmarks/BenchmarkPDXBSA
 /benchmarks/BenchmarkPDXIVFBOND
 /benchmarks/BenchmarkPDXBOND
 /benchmarks/BenchmarkPDXLinearScan

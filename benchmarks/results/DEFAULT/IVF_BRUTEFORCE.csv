@@ -1,2 +1,0 @@
-dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
-nytimes-16-angular,brute-force,0.844,0.981792,0.792084,0.99053,512,0,10,10000,0,1,0.9101,32.98,0.7921

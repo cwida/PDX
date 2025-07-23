@@ -38,7 +38,9 @@ def get_ground_truth_filename(file, k, norm=True):
     return f"{file}_{k}.json"
 
 
-def get_core_index_filename(file, norm=True):
+def get_core_index_filename(file, norm=True, balanced=False):
+    if balanced:
+        return f"ivf_{file}_norm.index.balanced"
     if norm:
         return f"ivf_{file}_norm.index"
     return f"ivf_{file}.index"

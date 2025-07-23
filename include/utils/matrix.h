@@ -11,7 +11,7 @@
 #include <Eigen/Eigen/Dense>
 
 /******************************************************************
- * Eigen Matrix wrapper for ADSampling and BSA data transformations
+ * Eigen Matrix wrapper for ADSampling data transformations
  ******************************************************************/
 template <typename T>
 class Matrix {

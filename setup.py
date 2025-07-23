@@ -90,7 +90,7 @@ long_description = ""
 
 setup(
     name="pdxearch",
-    version="0.1",
+    version="0.2",
     packages=["pdxearch"],
     package_dir={"pdxearch": "python/pdxearch"},
     description=description,

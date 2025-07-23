@@ -21,7 +21,24 @@ if __name__ == "__main__":
     # generate_test_data('instructorxl-arxiv-768')
     # generate_test_data('gist-960-euclidean')
     # generate_test_data('contriever-768')
-    generate_test_data('gooaq-distilroberta-768-normalized')
-    generate_test_data('agnews-mxbai-1024-euclidean')
-    generate_test_data('coco-nomic-768-normalized')
-    generate_test_data('simplewiki-openai-3072-normalized')
+    # generate_test_data('gooaq-distilroberta-768-normalized')
+    # generate_test_data('agnews-mxbai-1024-euclidean')
+    # generate_test_data('coco-nomic-768-normalized')
+    # generate_test_data('simplewiki-openai-3072-normalized')
+
+    generate_test_data('imagenet-align-640-normalized')
+
+    generate_test_data('yandex-200-cosine')
+    generate_test_data('imagenet-clip-512-normalized')
+    generate_test_data('laion-clip-512-normalized')
+    generate_test_data('codesearchnet-jina-768-cosine')
+
+    generate_test_data('yi-128-ip')
+    generate_test_data('landmark-dino-768-cosine')
+    generate_test_data('landmark-nomic-768-normalized')
+    generate_test_data('arxiv-nomic-768-normalized')
+
+    generate_test_data('ccnews-nomic-768-normalized')
+    generate_test_data('celeba-resnet-2048-cosine')
+    generate_test_data('llama-128-ip')
+    generate_test_data('yahoo-minilm-384-normalized')
