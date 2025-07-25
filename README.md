@@ -1,5 +1,5 @@
 <h1 align="center">
-  PDX: A Transposed Data Layout for Vector Search
+  PDX: A Transposed Data Layout for Similarity Search
 <div align="center">
     <a href="https://arxiv.org/pdf/2503.04422"><img src="https://img.shields.io/badge/Paper-SIGMOD'25%3A_PDX-blue" alt="Paper" /></a>
     <a href="https://github.com/cwida/PDX/blob/main/LICENSE"><img src="https://img.shields.io/github/license/cwida/PDX?cacheSeconds=3600" alt="License" /></a>
@@ -75,7 +75,7 @@ For more details on the available examples and how to use your own data, refer t
 We present single-threaded **benchmarks** against FAISS+AVX512 on an `r7iz.xlarge` (Intel Sapphire Rapids) instance. 
 
 ### Two-Level IVF (IVF<sub>2</sub>) ![](https://img.shields.io/badge/Fastest%20search%20on%20PDX-red)
-IVF<sub>2</sub> tackles a bottleneck of IVF indexes: finding the nearest centroids. By clustering the original IVF centroids, PDX can quickly scan them (thanks to pruning) without sacrificing recall. This achieves significant throughput improvements when paired with `8-bit` quantization.
+IVF<sub>2</sub> tackles a bottleneck of IVF indexes: finding the nearest centroids. By clustering the original IVF centroids, we can use PDX to quickly scan them (thanks to pruning) without sacrificing recall. This achieves significant throughput improvements when paired with `8-bit` quantization.
 
 <p align="center">
         <img src="./benchmarks/results/ivf2-intel.png" alt="PDX Layout" style="{max-height: 150px}">
@@ -115,9 +115,9 @@ By creating random clusters with the PDX layout, you can still accelerate exhaus
 Even without pruning, PDX distance kernels can be faster than SIMD ones in most CPU microarchitectures. For detailed information, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). You can also try it yourself in our playground [here](./benchmarks/bench_kernels).
 
 ## The Data Layout
-PDX is a transposed layout (a.k.a. columnar, or decomposed layout), which means that the same dimensions of different vectors are stored sequentially. This decomposition occurs within a block. Blocks can be clusters in an IVF index.
+PDX is a transposed layout (a.k.a. columnar, or decomposed layout), which means that the same dimensions of different vectors are stored sequentially. This decomposition occurs within a block (e.g., a cluster in an IVF index). 
 
-We have evolved our layout from the one presented in our publication to reduce random access, and adapting it to work with `8-bit` and (in the future) `1-bit` vectors. 
+We have evolved our layout from the one presented in our publication to reduce random access, and adapted it to work with `8-bit` and (in the future) `1-bit` vectors. 
 
 ### `float32`
 For `float32`, the first 25% of the dimensions are fully decomposed. We refer to this as the "vertical block." The rest (75%) are decomposed into subvectors of 64 dimensions. We refer to this as the "horizontal block." The vertical block is used for efficient pruning, and the horizontal block is accessed on the candidates that were not pruned. This horizontal block is still decomposed every 64 dimensions. The idea behind this is that we still have a chance to prune the few remaining candidates every 64 dimensions. 
@@ -153,7 +153,7 @@ For Hamming/Jaccard kernels, we use a layout decomposed every 8 dimensions (natu
 To run our benchmark suite in C++, refer to [BENCHMARKING.md](./BENCHMARKING.md).
 
 ## Citation
-If you use PDX for you research, consider citing us:
+If you use PDX for your research, consider citing us:
 
 ```
 @article{kuffo2025pdx,
