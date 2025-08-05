@@ -4,6 +4,7 @@ requires = [
     "wheel",
     "cmake>=3.22",
     "pybind11",
-    "numpy"
+    "numpy",
+    "scipy"
 ]
 build-backend = "setuptools.build_meta"

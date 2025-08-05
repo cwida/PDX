@@ -31,7 +31,8 @@ if __name__ == "__main__":
 
     print('Restoring')
     del index
-    index = IndexPDXADSamplingIVFFlat()   # TODO: Restoring should be a utility and static method that instantiate the appropiate class
+    # TODO: Restoring should be a utility and static method that instantiate the appropiate class
+    index = IndexPDXADSamplingIVFFlat()
     index.restore(index_path, matrix_path)
 
     print(f'{len(queries)} queries with PDX')
@@ -45,6 +46,5 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
     results = index.search(queries[0], knn, nprobe=nprobe)
-    for result in results:
-        print(result.index, result.distance)
+    print(results)
 

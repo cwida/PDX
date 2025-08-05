@@ -33,9 +33,8 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
     # To check results of first query
-    # results = index.search(queries[0], knn)
-    # for result in results:
-    #     print(result.index, result.distance)
+    results = index.search(queries[0], knn)
+    print(results)
 
     print(f'{len(queries)} queries with FAISS')
     # We need to normalize the queries
@@ -52,4 +51,4 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('FAISS med. time:', np.median(np.array(times)))
     # To check results of first query
-    # print(faiss_index.search(np.array([queries[0]]), k=knn))
+    print(faiss_index.search(np.array([queries[0]]), k=knn))

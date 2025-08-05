@@ -45,35 +45,31 @@ for needed_directory in directories:
 
 # Datasets to set up and use
 DATASETS = [
-    'nytimes-16-angular',
-    'fashion-mnist-784-euclidean',
-    'glove-50-angular',
-    'glove-200-angular',
-    'sift-128-euclidean',
-    'msong-420',
-    'contriever-768',
-    'gist-960-euclidean',
-    'deep-image-96-angular',
-    'instructorxl-arxiv-768',
-    'openai-1536-angular',
-    'word2vec-300',
-    'gooaq-distilroberta-768-normalized',
-    'agnews-mxbai-1024-euclidean',
-    'coco-nomic-768-normalized',
-    'simplewiki-openai-3072-normalized',
-    'imagenet-align-640-normalized',
-    'yandex-200-cosine',
-    'imagenet-clip-512-normalized',
-    'laion-clip-512-normalized',
-    'codesearchnet-jina-768-cosine',
-    'yi-128-ip',
-    'landmark-dino-768-cosine',
-    'landmark-nomic-768-normalized',
-    'arxiv-nomic-768-normalized',
-    'ccnews-nomic-768-normalized',
-    'celeba-resnet-2048-cosine',
-    'llama-128-ip',
-    'yahoo-minilm-384-normalized'
+    "sift-128-euclidean",
+    "yi-128-ip",
+    "llama-128-ip",
+    "glove-200-angular",
+    "yandex-200-cosine",
+    "word2vec-300",
+    "yahoo-minilm-384-normalized",
+    "msong-420",
+    "imagenet-clip-512-normalized",
+    "laion-clip-512-normalized",
+    "imagenet-align-640-normalized",
+    "codesearchnet-jina-768-cosine",
+    "landmark-dino-768-cosine",
+    "landmark-nomic-768-normalized",
+    "arxiv-nomic-768-normalized",
+    "ccnews-nomic-768-normalized",
+    "coco-nomic-768-normalized",
+    "contriever-768",
+    "instructorxl-arxiv-768",
+    "gooaq-distilroberta-768-normalized",
+    "gist-960-euclidean",
+    "agnews-mxbai-1024-euclidean",
+    "openai-1536-angular",
+    "celeba-resnet-2048-cosine",
+    "simplewiki-openai-3072-normalized"
 ]
 
 DIMENSIONALITIES = {
@@ -115,12 +111,4 @@ DIMENSIONALITIES = {
     'celeba-resnet-2048-cosine': 2048,
     'llama-128-ip': 128,
     'yahoo-minilm-384-normalized': 384
-}
-
-DATA_EXPONENTS = {
-    'msong-420': 3,
-    'sift-128-euclidean': 0,
-    'instructorxl-arxiv-768': 3,
-    'openai-1536-angular': 3,
-    'gist-960-euclidean': 2
 }

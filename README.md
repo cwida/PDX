@@ -16,7 +16,7 @@
 ### PDX benefits:
 
 - ⚡ Up to [**10x faster**](#two-level-ivf-ivf2-) **IVF searches** than FAISS+AVX512.
-- ⚡ Up to [**50x faster**](#exhaustive-search--ivf) **exhaustive search**.
+- ⚡ Up to [**30x faster**](#exhaustive-search--ivf) **exhaustive search**.
 - ⚡ Up to **2x** faster **raw distance kernels**.
 
 <hr/>
@@ -41,6 +41,7 @@ Pruning is especially effective for large embeddings (`d > 512`) and when target
 ## Try PDX
 Try PDX with your data using our Python bindings and [examples](/examples). We have implemented PDX on Flat (`float32`) and Quantized (`8-bit`) **IVF indexes** and **exhaustive search** settings.
 ### Prerequisites
+- PDX is available for x86_64 (with AVX512), ARM, and Apple silicon
 - Python 3.11 or higher
 - [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) with Python Bindings
 - Clang++17 or higher
@@ -53,14 +54,26 @@ git clone https://github.com/cwida/PDX
 git submodule init
 git submodule update
 ```
-2. Install Python dependencies and the bindings. 
+
+2. *[Optional]* Install [FFTW](https://www.fftw.org/fftw3_doc/Installation-on-Unix.html) (for higher throughput)
+```sh
+wget https://www.fftw.org/fftw-3.3.10.tar.gz
+tar -xvzf fftw-3.3.10.tar.gz
+cd fftw-3.3.10
+./configure --enable-float --enable-shared  
+sudo make
+sudo make install
+ldconfig
+```
+
+3. Install Python dependencies and the bindings. 
 ```sh
 export CXX="/usr/bin/clang++-18"  # Set proper CXX first
 pip install -r requirements.txt
 python setup.py clean --all
 python -m pip install .
 ```
-3. Run the examples under `/examples`
+4. Run the examples under `/examples`
 ```sh
 # Creates an IVF index with FAISS on random data
 # Then, it compares the search performance of PDXearch and FAISS
@@ -81,9 +94,6 @@ IVF<sub>2</sub> tackles a bottleneck of IVF indexes: finding the nearest centroi
         <img src="./benchmarks/results/ivf2-intel.png" alt="PDX Layout" style="{max-height: 150px}">
 </p>
 
-> [!NOTE]   
-> IVF<sub>2</sub> is so fast scanning the vectors that the bottleneck is the random rotation of the query vector needed for ADSampling. We are planning to improve this in a future release.
-
 ### Vanilla IVF
 Here, PDX, paired with the pruning algorithm ADSampling on `float32`, achieves significant speedups.
 
@@ -98,9 +108,6 @@ An exhaustive search scans all the vectors in the collection. Having an IVF inde
 <p align="center">
         <img src="./benchmarks/results/ivf-exhaustive-intel.png" alt="PDX Layout" style="{max-height: 150px}">
 </p>
-
-> [!NOTE]   
-> On these datasets, the exhaustive search with SQ8 (8-bit quantization) achieves > 0.9999 recall.
 
 The key observation here is that thanks to the underlying IVF index, the exhaustive search starts with the most promising clusters. A tight threshold is found early on, which enables the quick pruning of most candidates.
 
@@ -137,13 +144,11 @@ Smaller data types are not friendly to PDX, as we must accumulate distances on w
 For Hamming/Jaccard kernels, we use a layout decomposed every 8 dimensions (naturally grouped into bytes). The population count accumulation can be done in `bytes`. If d > 256, we flush the popcounts into a wider type every 32 words (corresponding to 256 dimensions). This has not been implemented in this repository yet, but you can find some promising benchmarks [here](https://github.com/lkuffo/binary-index). 
 
 ## Roadmap
-- Incorporate a faster random rotation algorithm. This is currently the bottleneck of IVF<sub>2</sub>.
 - Add PDX to the [VIBE benchmark](https://vector-index-bench.github.io/).
-- Adaptive quantization on 8-bit and 4-bit.
-- PDX in graph-based indexes.
-- Add a testing framework.
+- Benchmark filtering capabilities in PDX.
+- Add unit tests.
 - Implement multi-threading capabilities.
-- Benchmark updates and filtering capabilities in PDX.
+- Adaptive quantization on 8-bit and 4-bit.
 - Create a documentation.
 
 > [!IMPORTANT]   

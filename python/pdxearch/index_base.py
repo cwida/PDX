@@ -115,19 +115,22 @@ class BaseIndexPDXIMI:
     def _materialize_index(self, _type='pdx', **kwargs):
         data = bytearray()
         data.extend(np.int32(self.ndim).tobytes("C"))
-        data.extend(np.int32(self.num_partitions).tobytes("C"))
-        data.extend(np.int32(self.num_partitions_l0).tobytes("C"))
 
         h_dims = int(self.ndim * PDXConstants.VERTICAL_PROPORTION_DIM)
         v_dims = self.ndim - h_dims
         if h_dims % PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING != 0:
-            h_dims = round(h_dims / PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING) * PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING
+            h_dims = math.floor((h_dims / PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING) + 0.5) * PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING
             v_dims = self.ndim - h_dims
         h_dims_block = kwargs.get('h_dims_block', PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING)
         if v_dims == 0:
             h_dims = PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING
             v_dims = self.ndim - h_dims
 
+        data.extend(np.int32(v_dims).tobytes("C"))
+        data.extend(np.int32(h_dims).tobytes("C"))
+
+        data.extend(np.int32(self.num_partitions).tobytes("C"))
+        data.extend(np.int32(self.num_partitions_l0).tobytes("C"))
         # L0
         for i in range(self.num_partitions_l0):
             data.extend(np.int32(self.partitions_l0[i].num_embeddings).tobytes("C"))
@@ -265,21 +268,23 @@ class BaseIndexPDXIVF:
     def _materialize_index(self, _type='pdx', **kwargs):
         data = bytearray()
         data.extend(np.int32(self.ndim).tobytes("C"))
-        data.extend(np.int32(self.num_partitions).tobytes("C"))
 
         h_dims = int(self.ndim * PDXConstants.VERTICAL_PROPORTION_DIM)
         v_dims = self.ndim - h_dims
         if h_dims % PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING != 0:
-            h_dims = round(h_dims / PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING) * PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING
+            h_dims = math.floor((h_dims / PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING) + 0.5) * PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING
             v_dims = self.ndim - h_dims
         h_dims_block = kwargs.get('h_dims_block', PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING)
         if v_dims == 0:
             h_dims = PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING
             v_dims = self.ndim - h_dims
+        data.extend(np.int32(v_dims).tobytes("C"))
+        data.extend(np.int32(h_dims).tobytes("C"))
+
+        data.extend(np.int32(self.num_partitions).tobytes("C"))
 
         for i in range(self.num_partitions):
             data.extend(np.int32(self.partitions[i].num_embeddings).tobytes("C"))
-
         for i in range(self.num_partitions):
             for p in range(len(self.partitions[i].blocks)):
                 assert h_dims % PDXConstants.X4_GROUPING == 0
@@ -390,16 +395,20 @@ class BaseIndexPDXFlat:
     def _materialize_index(self, _type='pdx', **kwargs):
         data = bytearray()
         data.extend(np.int32(self.ndim).tobytes("C"))
-        data.extend(np.int32(self.num_partitions).tobytes("C"))
+
         h_dims = int(self.ndim * PDXConstants.VERTICAL_PROPORTION_DIM)
         v_dims = self.ndim - h_dims
         if h_dims % PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING != 0:
-            h_dims = round(h_dims / PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING) * PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING
+            h_dims = math.floor((h_dims / PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING) + 0.5) * PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING
             v_dims = self.ndim - h_dims
         h_dims_block = kwargs.get('h_dims_block', PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING)
         if v_dims == 0:
             h_dims = PDXConstants.HORIZONTAL_DIMENSIONS_GROUPING
             v_dims = self.ndim - h_dims
+        data.extend(np.int32(v_dims).tobytes("C"))
+        data.extend(np.int32(h_dims).tobytes("C"))
+
+        data.extend(np.int32(self.num_partitions).tobytes("C"))
 
         for i in range(self.num_partitions):
             data.extend(np.int32(self.partitions[i].num_embeddings).tobytes("C"))

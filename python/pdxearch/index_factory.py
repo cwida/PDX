@@ -25,7 +25,7 @@ class IndexPDXIMI(BaseIndexPDXIMI):
     def __init__(
             self,
             *,
-            ndim: int = 0,
+            ndim: int = 128,
             metric: str = "l2sq",
             nbuckets: int = 256,
             nbuckets_l0: int = 64,
@@ -64,12 +64,15 @@ class IndexPDXIMI(BaseIndexPDXIMI):
     def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
         return self.pdx_index.search(q, knn, nprobe)
 
+    def set_pruning_confidence(self, confidence: float):
+        self.pdx_index.set_pruning_confidence(confidence)
+
 
 class IndexPDXIMISQ8(BaseIndexPDXIMI):
     def __init__(
             self,
             *,
-            ndim: int = 0,
+            ndim: int = 128,
             metric: str = "l2sq",
             nbuckets: int = 256,
             nbuckets_l0: int = 64,
@@ -108,11 +111,17 @@ class IndexPDXIMISQ8(BaseIndexPDXIMI):
     def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
         return self.pdx_index.search(q, knn, nprobe)
 
+    def set_pruning_confidence(self, confidence: float):
+        self.pdx_index.set_pruning_confidence(confidence)
+
 
 class IndexPDXADSamplingIVFFlat(BaseIndexPDXIVF):
     def __init__(
             self,
-            *, ndim: int = 0, metric: str = "l2sq", nbuckets: int = 256, normalize: bool = True
+            *, ndim: int = 128,
+            metric: str = "l2sq",
+            nbuckets: int = 256,
+            normalize: bool = True
     ) -> None:
         super().__init__(ndim, metric, nbuckets, normalize)
         self.preprocessor = ADSampling(ndim)
@@ -146,10 +155,16 @@ class IndexPDXADSamplingIVFFlat(BaseIndexPDXIVF):
     def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
         return self.pdx_index.search(q, knn, nprobe)
 
+    def set_pruning_confidence(self, confidence: float):
+        self.pdx_index.set_pruning_confidence(confidence)
+
 class IndexPDXBONDIVFFlat(BaseIndexPDXIVF):
     def __init__(
             self,
-            *, ndim: int = 0, metric: str = "l2sq", nbuckets: int = 256, normalize: bool = True
+            *, ndim: int = 128,
+            metric: str = "l2sq",
+            nbuckets: int = 256,
+            normalize: bool = True
     ) -> None:
         super().__init__(ndim, metric, nbuckets, normalize)
         self.preprocessor = Preprocessor()
@@ -179,7 +194,10 @@ class IndexPDXBONDIVFFlat(BaseIndexPDXIVF):
 
 class IndexPDXBONDFlat(BaseIndexPDXFlat):
     def __init__(
-            self, *, ndim: int = 0, metric: str = "l2sq", normalize: bool = True
+            self, *,
+            ndim: int = 128,
+            metric: str = "l2sq",
+            normalize: bool = True
     ) -> None:
         super().__init__(ndim=ndim, metric=metric, normalize=normalize)
         self.preprocessor = Preprocessor()
@@ -208,7 +226,7 @@ class IndexPDXBONDFlat(BaseIndexPDXFlat):
 
 
 class IndexPDXADSamplingFlat(BaseIndexPDXFlat):
-    def __init__(self, *, ndim: int = 0, metric: str = "l2sq", normalize: bool = True) -> None:
+    def __init__(self, *, ndim: int = 128, metric: str = "l2sq", normalize: bool = True) -> None:
         super().__init__(ndim=ndim, metric=metric, normalize=normalize)
         self.preprocessor = ADSampling(ndim)
         self.pdx_index = _IndexADSamplingFlat()
@@ -236,9 +254,12 @@ class IndexPDXADSamplingFlat(BaseIndexPDXFlat):
     def search(self, q: np.ndarray, knn: int):
         return self.pdx_index.search(q, knn)
 
+    def set_pruning_confidence(self, confidence: float):
+        self.pdx_index.set_pruning_confidence(confidence)
+
 
 class IndexPDXFlat(BaseIndexPDXFlat):
-    def __init__(self, *, ndim: int = 0, metric: str = "l2sq", normalize: bool = True) -> None:
+    def __init__(self, *, ndim: int = 128, metric: str = "l2sq", normalize: bool = True) -> None:
         super().__init__(ndim, metric, normalize)
         self.pdx_index = _IndexPDXFlat()
         self.preprocessor = Preprocessor()

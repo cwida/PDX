@@ -48,20 +48,10 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
-        num_horizontal_dimensions = (uint32_t)(num_dimensions * PROPORTION_VERTICAL_DIM);
-        num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        if (num_horizontal_dimensions % 64 != 0) {
-            num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
-            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        }
-        if (num_vertical_dimensions == 0) {
-            num_horizontal_dimensions = 64;
-            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        }
-        // std::cout << "Vertical dims: " << num_vertical_dimensions << "\n";
-        // std::cout << "Horizontal dims: " << num_horizontal_dimensions << "\n";
+        num_vertical_dimensions = ((uint32_t *) input)[1];
+        num_horizontal_dimensions = ((uint32_t *) input)[2];
 
-        next_value += sizeof(uint32_t);
+        next_value += sizeof(uint32_t) * 3;
         num_vectorgroups = ((uint32_t *) next_value)[0];
         next_value += sizeof(uint32_t);
         auto *nums_embeddings = (uint32_t *) next_value;
@@ -121,19 +111,10 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
-        num_horizontal_dimensions = (uint32_t)(num_dimensions * PROPORTION_VERTICAL_DIM);
-        num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        if (num_horizontal_dimensions % 64 != 0) {
-            num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
-            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        }
-        if (num_vertical_dimensions == 0) {
-            num_horizontal_dimensions = 64;
-            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        }
-        // std::cout << "Vertical dims: " << num_vertical_dimensions << "\n";
-        // std::cout << "Horizontal dims: " << num_horizontal_dimensions << "\n";
-        next_value += sizeof(uint32_t);
+        num_vertical_dimensions = ((uint32_t *) input)[1];
+        num_horizontal_dimensions = ((uint32_t *) input)[2];
+
+        next_value += sizeof(uint32_t) * 3;
         num_vectorgroups = ((uint32_t *) next_value)[0];
         next_value += sizeof(uint32_t);
         auto *nums_embeddings = (uint32_t *) next_value;

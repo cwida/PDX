@@ -1,6 +1,7 @@
 import math
 import os
 import numpy as np
+import scipy
 import faiss
 from examples_utils import TicToc, read_hdf5_data
 from pdxearch.index_factory import IndexPDXIMISQ8
@@ -36,15 +37,13 @@ if __name__ == "__main__":
     clock = TicToc()
     results = []
     for i in range(len(queries)):
-        q = np.ascontiguousarray(queries[i])
         clock.tic()
-        index.search(q, knn, nprobe=nprobe)
+        index.search(queries[i], knn, nprobe=nprobe)
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
     # To check results of first query
-    # results = index.search(np.ascontiguousarray(queries[0]), knn, nprobe=nprobe)
-    # for result in results:
-    #     print(result.index, result.distance)
+    results = index.search(np.ascontiguousarray(queries[1]), knn, nprobe=nprobe)
+    print(results)
 
     print(f'{len(queries)} queries with FAISS F32')
     times = []
@@ -58,6 +57,8 @@ if __name__ == "__main__":
         index.core_index.index.search(q, k=knn)
         times.append(clock.toc())
     print('FAISS med. time:', np.median(np.array(times)))
+    # To check results of first query
+    print(index.core_index.index.search(np.array([queries[1]]), k=knn))
 
     # Scalar Quantization in FAISS is EXTREMELY slow in ARM due to lack of SIMD
     # print('Training FAISS SQ8')

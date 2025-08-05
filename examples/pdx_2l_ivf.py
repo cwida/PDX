@@ -41,9 +41,8 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
     # To check results of first query
-    # results = index.search(np.ascontiguousarray(queries[0]), knn, nprobe=nprobe)
-    # for result in results:
-    #     print(result.index, result.distance)
+    results = index.search(np.ascontiguousarray(queries[0]), knn, nprobe=nprobe)
+    print(results)
 
     print(f'{len(queries)} queries with FAISS')
     times = []
@@ -58,4 +57,4 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('FAISS med. time:', np.median(np.array(times)))
     # To check results of first query
-    # print(index.core_index.index.search(np.array([queries[0]]), k=knn))
+    print(index.core_index.index.search(np.array([queries[0]]), k=knn))
