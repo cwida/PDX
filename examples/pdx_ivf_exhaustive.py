@@ -16,7 +16,7 @@ if __name__ == "__main__":
     knn = 100
     print(f'Running example: PDXearch + ADSampling (Exhaustive with IVFFlat)\n- D={num_dimensions}\n- k={knn}\n- nprobe=ALL\n- dataset={dataset_name}')
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
-    nbuckets = 2 * math.ceil(math.sqrt(len(train)))
+    nbuckets = 1 * math.ceil(math.sqrt(len(train)))
 
     index = IndexPDXADSamplingIVFFlat(ndim=num_dimensions, nbuckets=nbuckets)
     print('Preprocessing')
@@ -42,9 +42,8 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
     # To check results of first query
-    # results = index.search(queries[0], knn, nprobe=0)
-    # for result in results:
-    #     print(result.index, result.distance)
+    results = index.search(queries[0], knn, nprobe=0)
+    print(results)
 
     print(f'{len(queries)} queries with FAISS')
     times = []
@@ -60,6 +59,6 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('FAISS med. time:', np.median(np.array(times)))
     # To check results of first query
-    # print(faiss_index.search(np.array([queries[0]]), k=knn))
+    print(faiss_index.search(np.array([queries[0]]), k=knn))
 
 

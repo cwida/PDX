@@ -53,21 +53,11 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
-        num_horizontal_dimensions = (uint32_t)(num_dimensions * PROPORTION_VERTICAL_DIM);
-        num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        if (num_horizontal_dimensions % 64 != 0) {
-            num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
-            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        }
-        if (num_vertical_dimensions == 0) {
-            num_horizontal_dimensions = 64;
-            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        }
+        num_vertical_dimensions = ((uint32_t *) input)[1];
+        num_horizontal_dimensions = ((uint32_t *) input)[2];
 
-        // std::cout << "Vertical dims: " << num_vertical_dimensions << "\n";
-        // std::cout << "Horizontal dims: " << num_horizontal_dimensions << "\n";
 
-        next_value += sizeof(uint32_t);
+        next_value += sizeof(uint32_t) * 3;
         num_vectorgroups = ((uint32_t *) next_value)[0];
         next_value += sizeof(uint32_t);
 
@@ -77,7 +67,6 @@ public:
         // L0 load
         auto *nums_embeddings_l0 = (uint32_t *) next_value;
         next_value += num_vectorgroups_l0 * sizeof(uint32_t);
-        // std::cout << "N buckets L0: " << num_vectorgroups_l0 << "\n";
 
         vectorgroups_l0.resize(num_vectorgroups_l0);
 
@@ -92,12 +81,10 @@ public:
             vectorgroup_l0.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup_l0.num_embeddings;
         }
-        // std::cout << "Finished loading L0\n";
 
         auto *nums_embeddings = (uint32_t *) next_value;
         next_value += num_vectorgroups * sizeof(uint32_t);
         vectorgroups.resize(num_vectorgroups);
-        // std::cout << "N buckets L1: " << num_vectorgroups << "\n";
         for (size_t i = 0; i < num_vectorgroups; ++i) {
             VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.num_embeddings = nums_embeddings[i];
@@ -149,20 +136,10 @@ public:
     void Load(char *input) {
         char *next_value = input;
         num_dimensions = ((uint32_t *) input)[0];
-        num_horizontal_dimensions = (uint32_t)(num_dimensions * PROPORTION_VERTICAL_DIM);
-        num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        if (num_horizontal_dimensions % 64 != 0) {
-            num_horizontal_dimensions = static_cast<int>(std::round(num_horizontal_dimensions / 64.0)) * 64;
-            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        }
-        if (num_vertical_dimensions == 0) {
-            num_horizontal_dimensions = 64;
-            num_vertical_dimensions = num_dimensions - num_horizontal_dimensions;
-        }
-        // std::cout << "Dims: " << num_dimensions << "\n";
-        // std::cout << "Vertical dims: " << num_vertical_dimensions << "\n";
-        // std::cout << "Horizontal dims: " << num_horizontal_dimensions << "\n";
-        next_value += sizeof(uint32_t);
+        num_vertical_dimensions = ((uint32_t *) input)[1];
+        num_horizontal_dimensions = ((uint32_t *) input)[2];
+
+        next_value += sizeof(uint32_t) * 3;
         num_vectorgroups = ((uint32_t *) next_value)[0];
         next_value += sizeof(uint32_t);
         num_vectorgroups_l0 = ((uint32_t *) next_value)[0];
@@ -171,7 +148,6 @@ public:
         // L0 load
         auto *nums_embeddings_l0 = (uint32_t *) next_value;
         next_value += num_vectorgroups_l0 * sizeof(uint32_t);
-        // std::cout << "N buckets L0: " << num_vectorgroups_l0 << "\n";
 
         vectorgroups_l0.resize(num_vectorgroups_l0);
 
@@ -186,13 +162,11 @@ public:
             vectorgroup_l0.indices = (uint32_t *) next_value;
             next_value += sizeof(uint32_t) * vectorgroup_l0.num_embeddings;
         }
-        // std::cout << "Finished loading L0\n";
 
         // L1 load
         auto *nums_embeddings = (uint32_t *) next_value;
         next_value += num_vectorgroups * sizeof(uint32_t);
         vectorgroups.resize(num_vectorgroups);
-        // std::cout << "N buckets L1: " << num_vectorgroups << "\n";
         for (size_t i = 0; i < num_vectorgroups; ++i) {
             VECTORGROUP_TYPE &vectorgroup = vectorgroups[i];
             vectorgroup.num_embeddings = nums_embeddings[i];

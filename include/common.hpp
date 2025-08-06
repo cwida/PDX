@@ -8,12 +8,14 @@
 
 namespace PDX {
 
+    static inline float PROPORTION_VERTICAL_DIM = 0.75;
+    static inline size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;
+    static constexpr size_t PDX_VECTOR_SIZE = 64;
+
     template<class T, T val=8>
     static constexpr uint32_t AlignValue(T n) {
         return ((n + (val - 1)) / val) * val;
     }
-
-    static inline float PROPORTION_VERTICAL_DIM = 0.75;
 
     enum DimensionsOrder {
         SEQUENTIAL,
@@ -42,8 +44,6 @@ namespace PDX {
         ASYMMETRIC_U8,
         ASYMMETRIC_LEP_U8
     };
-
-    static constexpr size_t PDX_VECTOR_SIZE = 64;
 
     // TODO: Do the same for indexes?
     template<Quantization q>

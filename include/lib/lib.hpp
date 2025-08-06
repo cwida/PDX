@@ -29,47 +29,58 @@ class IndexADSamplingIMISQ8 {
     using Pruner = ADSamplingPruner<U8>;
     using Searcher = PDXearch<U8, Index>;
 
-    public:
-        Index index = Index();
-        std::unique_ptr<Searcher> searcher = nullptr;
-        constexpr static float epsilon0 = 1.5;
+public:
+    Index index = Index();
+    std::unique_ptr<Searcher> searcher = nullptr;
+    constexpr static float epsilon0 = 1.5;
 
-        void Load(const py::bytes& data, const py::array_t<float>& _matrix){
-            py::buffer_info info(py::buffer(data).request());
-            auto data_ = static_cast<char*>(info.ptr);
-            index.Load(data_);
+    void Load(const py::bytes& data, const py::array_t<float>& _matrix){
+        py::buffer_info info(py::buffer(data).request());
+        auto data_ = static_cast<char*>(info.ptr);
+        index.Load(data_);
 
-            auto matrix_buf = _matrix.request();
-            auto matrix_ptr = static_cast<float*>(matrix_buf.ptr);
-            Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(matrix_ptr, index.num_dimensions, index.num_dimensions);
-            matrix = matrix.inverse();
-            Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix);
-            searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+        auto matrix_buf = _matrix.request();
+        auto matrix_ptr = static_cast<float*>(matrix_buf.ptr);
+        Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix_ptr);
+        searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+    }
+
+    void Restore(const std::string &path, const std::string &matrix_path){
+        index.Restore(path);
+        float * _matrix = MmapFile32(matrix_path);
+        Pruner pruner = Pruner(index.num_dimensions, epsilon0, _matrix);
+        searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+    }
+
+    void SetPruningConfidence(float confidence) const {
+        searcher->pruner.SetEpsilon0(confidence);
+    }
+
+    std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
+        return searcher->Search(q, k);
+    }
+
+    // Serialize return value
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_Search(const py::array_t<float>& q, uint32_t k, uint32_t n_probe) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
         }
-
-        void Restore(const std::string &path, const std::string &matrix_path){
-            index.Restore(path);
-            float * _matrix = MmapFile32(matrix_path); // TODO: Fix and put in same index file
-            Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, index.num_dimensions, index.num_dimensions);
-            matrix = matrix.inverse();
-            Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix);
-            searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+        auto query = static_cast<float*>(buf.ptr);
+        searcher->SetNProbe(n_probe);
+        std::vector<KNNCandidate> results = searcher->Search(query, k);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
         }
-
-        std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
-            return searcher->Search(q, k);
-        }
-
-        // Serialize return value
-        std::vector<KNNCandidate> _py_Search(const py::array_t<float>& q, uint32_t k, uint32_t n_probe) const {
-            auto buf = q.request();  // Get buffer info
-            if (buf.ndim != 1) {
-                throw std::runtime_error("Input should be a 1-D NumPy array");
-            }
-            auto query = static_cast<float*>(buf.ptr);
-            searcher->SetNProbe(n_probe);
-            return searcher->Search(query, k);
-        }
+        return {ids, distances};
+    }
 };
 
 class IndexADSamplingIMIFlat {
@@ -79,47 +90,58 @@ class IndexADSamplingIMIFlat {
     using Pruner = ADSamplingPruner<F32>;
     using Searcher = PDXearch<F32, Index>;
 
-    public:
-        Index index = Index();
-        std::unique_ptr<Searcher> searcher = nullptr;
-        constexpr static float epsilon0 = 1.5;
+public:
+    Index index = Index();
+    std::unique_ptr<Searcher> searcher = nullptr;
+    constexpr static float epsilon0 = 1.5;
 
-        void Load(const py::bytes& data, const py::array_t<float>& _matrix){
-            py::buffer_info info(py::buffer(data).request());
-            auto data_ = static_cast<char*>(info.ptr);
-            index.Load(data_);
+    void Load(const py::bytes& data, const py::array_t<float>& _matrix){
+        py::buffer_info info(py::buffer(data).request());
+        auto data_ = static_cast<char*>(info.ptr);
+        index.Load(data_);
 
-            auto matrix_buf = _matrix.request();
-            auto matrix_ptr = static_cast<float*>(matrix_buf.ptr);
-            Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(matrix_ptr, index.num_dimensions, index.num_dimensions);
-            matrix = matrix.inverse();
-            Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix);
-            searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+        auto matrix_buf = _matrix.request();
+        auto matrix_ptr = static_cast<float*>(matrix_buf.ptr);
+        Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix_ptr);
+        searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+    }
+
+    void Restore(const std::string &path, const std::string &matrix_path){
+        index.Restore(path);
+        float * _matrix = MmapFile32(matrix_path);
+        Pruner pruner = Pruner(index.num_dimensions, epsilon0, _matrix);
+        searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+    }
+
+    void SetPruningConfidence(float confidence) const {
+        searcher->pruner.SetEpsilon0(confidence);
+    }
+
+    std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
+        return searcher->Search(q, k);
+    }
+
+    // Serialize return value
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_Search(const py::array_t<float>& q, uint32_t k, uint32_t n_probe) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
         }
-
-        void Restore(const std::string &path, const std::string &matrix_path){
-            index.Restore(path);
-            float * _matrix = MmapFile32(matrix_path); // TODO: Fix and put in same index file
-            Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, index.num_dimensions, index.num_dimensions);
-            matrix = matrix.inverse();
-            Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix);
-            searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+        auto query = static_cast<float*>(buf.ptr);
+        searcher->SetNProbe(n_probe);
+        std::vector<KNNCandidate> results = searcher->Search(query, k);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
         }
-
-        std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
-            return searcher->Search(q, k);
-        }
-
-        // Serialize return value
-        std::vector<KNNCandidate> _py_Search(const py::array_t<float>& q, uint32_t k, uint32_t n_probe) const {
-            auto buf = q.request();  // Get buffer info
-            if (buf.ndim != 1) {
-                throw std::runtime_error("Input should be a 1-D NumPy array");
-            }
-            auto query = static_cast<float*>(buf.ptr);
-            searcher->SetNProbe(n_probe);
-            return searcher->Search(query, k);
-        }
+        return {ids, distances};
+    }
 };
 
 class IndexADSamplingIVFFlat {
@@ -129,48 +151,59 @@ class IndexADSamplingIVFFlat {
     using Pruner = ADSamplingPruner<F32>;
     using Searcher = PDXearch<F32>;
     
-    public:
-        Index index = Index();
-        std::unique_ptr<Searcher> searcher = nullptr;
-        constexpr static float epsilon0 = 1.5;
+public:
+    Index index = Index();
+    std::unique_ptr<Searcher> searcher = nullptr;
+    constexpr static float epsilon0 = 1.5;
 
-        void Load(const py::bytes& data, const py::array_t<float>& _matrix){
-            py::buffer_info info(py::buffer(data).request());
-            auto data_ = static_cast<char*>(info.ptr);
-            index.Load(data_);
+    void Load(const py::bytes& data, const py::array_t<float>& _matrix){
+        py::buffer_info info(py::buffer(data).request());
+        auto data_ = static_cast<char*>(info.ptr);
+        index.Load(data_);
 
-            auto matrix_buf = _matrix.request();
-            auto matrix_ptr = static_cast<float*>(matrix_buf.ptr);
-            Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(matrix_ptr, index.num_dimensions, index.num_dimensions);
-            matrix = matrix.inverse();
-            Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix);
-            searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+        auto matrix_buf = _matrix.request();
+        auto matrix_ptr = static_cast<float*>(matrix_buf.ptr);
+        Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix_ptr);
+        searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+    }
+
+    void Restore(const std::string &path, const std::string &matrix_path){
+        index.Restore(path);
+        float * _matrix = MmapFile32(matrix_path);
+        Pruner pruner = Pruner(index.num_dimensions, epsilon0, _matrix);
+        searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+    }
+
+    void SetPruningConfidence(float confidence) const {
+        searcher->pruner.SetEpsilon0(confidence);
+    }
+
+    std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
+        return searcher->Search(q, k);
+    }
+
+    // Serialize return value
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_Search(const py::array_t<float>& q, uint32_t k, uint32_t n_probe) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
         }
-
-        void Restore(const std::string &path, const std::string &matrix_path){
-            index.Restore(path);
-            float * _matrix = MmapFile32(matrix_path); // TODO: Fix and put in same index file
-            Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, index.num_dimensions, index.num_dimensions);
-            matrix = matrix.inverse();
-            Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix);
-            searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+        auto query = static_cast<float*>(buf.ptr);
+        searcher->SetNProbe(n_probe);
+        std::vector<KNNCandidate> results = searcher->Search(query, k);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
         }
-
-        std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
-            return searcher->Search(q, k);
-        }
-
-        // Serialize return value
-        std::vector<KNNCandidate> _py_Search(const py::array_t<float>& q, uint32_t k, uint32_t n_probe) const {
-            auto buf = q.request();  // Get buffer info
-            if (buf.ndim != 1) {
-                throw std::runtime_error("Input should be a 1-D NumPy array");
-            }
-            auto query = static_cast<float*>(buf.ptr);
-            searcher->SetNProbe(n_probe);
-            return searcher->Search(query, k);
-        }
-    };
+        return {ids, distances};
+    }
+};
 
 class IndexBONDIVFFlat {
     using KNNCandidate = KNNCandidate<F32>;
@@ -178,51 +211,62 @@ class IndexBONDIVFFlat {
     using Pruner = BondPruner<F32>;
     using Searcher = PDXearch<F32, Index, Global8Quantizer<F32>, L2, BondPruner<F32>>;
 
-    public:
-        Index index = Index();
-        std::unique_ptr<Searcher> searcher = nullptr;
+public:
+    Index index = Index();
+    std::unique_ptr<Searcher> searcher = nullptr;
 
-        void Load(const py::bytes& data){
-            py::buffer_info info(py::buffer(data).request());
-            auto data_ = static_cast<char*>(info.ptr);
-            index.Load(data_);
+    void Load(const py::bytes& data){
+        py::buffer_info info(py::buffer(data).request());
+        auto data_ = static_cast<char*>(info.ptr);
+        index.Load(data_);
 #if false && defined(__AVX512FP16__)
-            // In Intel architectures with low bandwidth at L3/DRAM, the DISTANCE_TO_MEANS criteria performs better
-            pruner = Pruner(index.num_dimensions);
-            searcher = std::make_unique<Searcher>(index, pruner, 0, DISTANCE_TO_MEANS);
+        // In Intel architectures with low bandwidth at L3/DRAM, the DISTANCE_TO_MEANS criteria performs better
+        pruner = Pruner(index.num_dimensions);
+        searcher = std::make_unique<Searcher>(index, pruner, 0, DISTANCE_TO_MEANS);
 #else
-            Pruner pruner = Pruner(index.num_dimensions);
-            searcher = std::make_unique<Searcher>(index, pruner, 0, DIMENSION_ZONES);
+        Pruner pruner = Pruner(index.num_dimensions);
+        searcher = std::make_unique<Searcher>(index, pruner, 0, DIMENSION_ZONES);
 #endif
-        }
+    }
 
-        void Restore(const std::string &path){
-            index.Restore(path);
+    void Restore(const std::string &path){
+        index.Restore(path);
 #if false && defined(__AVX512FP16__)
-            // In Intel architectures with low bandwidth at L3/DRAM, the DISTANCE_TO_MEANS criteria performs better
-            pruner = Pruner(index.num_dimensions);
-            searcher = std::make_unique<Searcher>(index, pruner, 0, DISTANCE_TO_MEANS);
+        // In Intel architectures with low bandwidth at L3/DRAM, the DISTANCE_TO_MEANS criteria performs better
+        pruner = Pruner(index.num_dimensions);
+        searcher = std::make_unique<Searcher>(index, pruner, 0, DISTANCE_TO_MEANS);
 #else
-            Pruner pruner = Pruner(index.num_dimensions);
-            searcher = std::make_unique<Searcher>(index, pruner, 0, DIMENSION_ZONES);
+        Pruner pruner = Pruner(index.num_dimensions);
+        searcher = std::make_unique<Searcher>(index, pruner, 0, DIMENSION_ZONES);
 #endif
-        }
+    }
 
-        std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
-            return searcher->Search(q, k);
-        }
+    std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
+        return searcher->Search(q, k);
+    }
 
-        // Serialize return value
-        std::vector<KNNCandidate> _py_Search(const py::array_t<float>& q, uint32_t k, uint32_t n_probe) const {
-            auto buf = q.request();  // Get buffer info
-            if (buf.ndim != 1) {
-                throw std::runtime_error("Input should be a 1-D NumPy array");
-            }
-            auto query = static_cast<float*>(buf.ptr);
-            searcher->SetNProbe(n_probe);
-            return searcher->Search(query, k);
+    // Serialize return value
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_Search(const py::array_t<float>& q, uint32_t k, uint32_t n_probe) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
         }
-    };
+        auto query = static_cast<float*>(buf.ptr);
+        searcher->SetNProbe(n_probe);
+        std::vector<KNNCandidate> results = searcher->Search(query, k);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+};
 
 class IndexBONDFlat {
     using KNNCandidate = KNNCandidate<F32>;
@@ -252,13 +296,24 @@ public:
     }
 
     // Serialize return value
-    std::vector<KNNCandidate> _py_Search(const py::array_t<float>& q, uint32_t k) const {
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_Search(const py::array_t<float>& q, uint32_t k) const {
         auto buf = q.request();  // Get buffer info
         if (buf.ndim != 1) {
             throw std::runtime_error("Input should be a 1-D NumPy array");
         }
         auto query = static_cast<float*>(buf.ptr);
-        return searcher->Search(query, k);
+        std::vector<KNNCandidate> results = searcher->Search(query, k);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
     }
 };
 
@@ -269,48 +324,58 @@ class IndexADSamplingFlat {
     using Pruner = ADSamplingPruner<F32>;
     using Searcher = PDXearch<F32>;
 
-    public:
-        Index index = Index();
-        std::unique_ptr<Searcher> searcher = nullptr;
-        constexpr static float epsilon0 = 1.5;
+public:
+    Index index = Index();
+    std::unique_ptr<Searcher> searcher = nullptr;
+    constexpr static float epsilon0 = 1.5;
 
-        void Load(const py::bytes& data, const py::array_t<float>& _matrix){
-            py::buffer_info info(py::buffer(data).request());
-            auto data_ = static_cast<char*>(info.ptr);
-            index.Load(data_);
+    void Load(const py::bytes& data, const py::array_t<float>& _matrix){
+        py::buffer_info info(py::buffer(data).request());
+        auto data_ = static_cast<char*>(info.ptr);
+        index.Load(data_);
 
-            auto matrix_buf = _matrix.request();
-            auto matrix_ptr = static_cast<float*>(matrix_buf.ptr);
-            Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(matrix_ptr, index.num_dimensions, index.num_dimensions);
-            matrix = matrix.inverse();
+        auto matrix_buf = _matrix.request();
+        auto matrix_ptr = static_cast<float*>(matrix_buf.ptr);
+        Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix_ptr);
+        searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+    }
 
-            Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix);
-            searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
-        }
+    void Restore(const std::string &path, const std::string &matrix_path){
+        index.Restore(path);
+        float * _matrix = MmapFile32(matrix_path);
+        Pruner pruner = Pruner(index.num_dimensions, epsilon0, _matrix);
+        searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
+    }
 
-        void Restore(const std::string &path, const std::string &matrix_path){
-            index.Restore(path);
-            float * _matrix = MmapFile32(matrix_path); // TODO: Should be inside same index file?
-            Eigen::MatrixXf matrix = Eigen::Map<Eigen::MatrixXf>(_matrix, index.num_dimensions, index.num_dimensions);
-            matrix = matrix.inverse();
-            Pruner pruner = Pruner(index.num_dimensions, epsilon0, matrix);
-            searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
-        }
+    void SetPruningConfidence(float confidence) const {
+        searcher->pruner.SetEpsilon0(confidence);
+    }
 
-        std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
-            return searcher->Search(q, k);
-        }
+    std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
+        return searcher->Search(q, k);
+    }
 
         // Serialize return value
-        std::vector<KNNCandidate> _py_Search(const py::array_t<float>& q, uint32_t k) const {
-            auto buf = q.request();  // Get buffer info
-            if (buf.ndim != 1) {
-                throw std::runtime_error("Input should be a 1-D NumPy array");
-            }
-            auto query = static_cast<float*>(buf.ptr);
-            return searcher->Search(query, k);
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_Search(const py::array_t<float>& q, uint32_t k) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
         }
-    };
+        auto query = static_cast<float*>(buf.ptr);
+        std::vector<KNNCandidate> results = searcher->Search(query, k);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+};
 
 class IndexPDXFlat {
     using KNNCandidate = KNNCandidate<F32>;
@@ -318,38 +383,49 @@ class IndexPDXFlat {
     using Pruner = BondPruner<F32>;
     using Searcher = PDXearch<F32, Index, Global8Quantizer<F32>, L2, BondPruner<F32>>;
 
-    public:
-        Index index = Index();
-        std::unique_ptr<Searcher> searcher = nullptr;
+public:
+    Index index = Index();
+    std::unique_ptr<Searcher> searcher = nullptr;
 
-        void Load(const py::bytes& data){
-            py::buffer_info info(py::buffer(data).request());
-            auto data_ = static_cast<char*>(info.ptr);
-            index.Load(data_);
-            Pruner pruner = Pruner(index.num_dimensions);
-            searcher = std::make_unique<Searcher>(index, pruner, 0, SEQUENTIAL);
-        }
+    void Load(const py::bytes& data){
+        py::buffer_info info(py::buffer(data).request());
+        auto data_ = static_cast<char*>(info.ptr);
+        index.Load(data_);
+        Pruner pruner = Pruner(index.num_dimensions);
+        searcher = std::make_unique<Searcher>(index, pruner, 0, SEQUENTIAL);
+    }
 
-        void Restore(const std::string &path){
-            index.Restore(path);
-            Pruner pruner = Pruner(index.num_dimensions);
-            searcher = std::make_unique<Searcher>(index, pruner, 0, SEQUENTIAL);
-        }
+    void Restore(const std::string &path){
+        index.Restore(path);
+        Pruner pruner = Pruner(index.num_dimensions);
+        searcher = std::make_unique<Searcher>(index, pruner, 0, SEQUENTIAL);
+    }
 
-        std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
-            return searcher->LinearScan(q, k);
-        }
+    std::vector<KNNCandidate> Search(float *q, uint32_t k) const {
+        return searcher->LinearScan(q, k);
+    }
 
         // Serialize return value
-        std::vector<KNNCandidate> _py_Search(const py::array_t<float>& q, uint32_t k) const {
-            auto buf = q.request();  // Get buffer info
-            if (buf.ndim != 1) {
-                throw std::runtime_error("Input should be a 1-D NumPy array");
-            }
-            auto query = static_cast<float*>(buf.ptr);
-            return searcher->LinearScan(query, k);
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_Search(const py::array_t<float>& q, uint32_t k) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
         }
-    };
+        auto query = static_cast<float*>(buf.ptr);
+        std::vector<KNNCandidate> results = searcher->Search(query, k);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+};
 
 } // namespace PDX
 

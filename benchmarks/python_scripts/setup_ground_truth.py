@@ -39,7 +39,7 @@ def generate_ground_truth(dataset, KNNS=(10, 100), normalize=False):
 
 
 if __name__ == "__main__":
-    ks = [10, 100]
+    ks = [100]
     # generate_ground_truth('word2vec-300', ks, normalize=True)
 
     # generate_ground_truth('gooaq-distilroberta-768-normalized', ks, normalize=True)

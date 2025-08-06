@@ -10,7 +10,7 @@ PDXearch (pruned search) + ADSampling with an IVF index (built with FAISS)
 This example uses a random collection of vectors
 """
 if __name__ == "__main__":
-    num_dimensions = 1024
+    num_dimensions = 768
     num_embeddings = 1_000_000
     num_query_embeddings = 100
     knn = 100
@@ -40,9 +40,8 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
     # To check results...
-    # results = index.search(queries[0], knn, nprobe=nprobe)
-    # for result in results:
-    #     print(result.index, result.distance)
+    results = index.search(queries[0], knn, nprobe=nprobe)
+    print(results)
 
     times = []
     clock = TicToc()
@@ -58,6 +57,6 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('FAISS med. time:', np.median(np.array(times)))
     # To check results...
-    # print(index.core_index.index.search(np.array([queries[0]]), k=knn))
+    print(index.core_index.index.search(np.array([queries[0]]), k=knn))
 
 

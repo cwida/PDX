@@ -11,13 +11,13 @@ Recall is controled with nprobe parameter
 Download the .hdf5 data here: https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing
 """
 if __name__ == "__main__":
-    dataset_name = 'msong-420.hdf5'
-    num_dimensions = 420
-    nprobe = 128
+    dataset_name = 'agnews-mxbai-1024-euclidean.hdf5'
+    num_dimensions = 1024
+    nprobe = 64
     knn = 100
     print(f'Running example: PDXearch + ADSampling (IVFFlat)\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
-    nbuckets = 4 * math.ceil(math.sqrt(len(train)))
+    nbuckets = 1 * math.ceil(math.sqrt(len(train)))
 
     index = IndexPDXADSamplingIVFFlat(ndim=num_dimensions, nbuckets=nbuckets, normalize=True)
     print('Preprocessing')
@@ -41,9 +41,8 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
     # To check results of first query
-    # results = index.search(np.ascontiguousarray(queries[0]), knn, nprobe=nprobe)
-    # for result in results:
-    #     print(result.index, result.distance)
+    results = index.search(np.ascontiguousarray(queries[0]), knn, nprobe=nprobe)
+    print(results)
 
     print(f'{len(queries)} queries with FAISS')
     times = []
@@ -58,6 +57,6 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('FAISS med. time:', np.median(np.array(times)))
     # To check results of first query
-    # print(index.core_index.index.search(np.array([queries[0]]), k=knn))
+    print(index.core_index.index.search(np.array([queries[0]]), k=knn))
 
 

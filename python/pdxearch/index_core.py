@@ -16,10 +16,10 @@ class PartitionsUtils:
         num_centroids = len(centroids)
         data.extend(np.int32(num_centroids).tobytes("C"))
         data.extend(centroids.tobytes("C"))
-        for labels in labels:
-            labels_n = len(labels)
+        for l in labels:
+            labels_n = len(l)
             data.extend(np.int32(labels_n).tobytes("C"))
-            data.extend(labels.tobytes("C"))
+            data.extend(l.tobytes("C"))
         with open(path + '.bin', "wb") as file:
             file.write(bytes(data))
 

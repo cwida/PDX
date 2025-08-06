@@ -53,49 +53,36 @@ public:
     }
 
     inline static std::string DATASETS[] = {
-            "random-xs-20-angular",
-            "random-s-100-euclidean",
-            "har-561",
-            "nytimes-16-angular",
-            "nytimes-256-angular",
-            "mnist-784-euclidean",
-            "fashion-mnist-784-euclidean",
-            "glove-25-angular",
-            "glove-50-angular",
-            "glove-100-angular",
-            "glove-200-angular",
-            "sift-128-euclidean",
-            "trevi-4096",
-            "msong-420",
-            "contriever-768",
-            "stl-9216",
-            "gist-960-euclidean",
-            "deep-image-96-angular",
-            "instructorxl-arxiv-768",
-            "openai-1536-angular",
-            "word2vec-300",
-            "gooaq-distilroberta-768-normalized",
-            "agnews-mxbai-1024-euclidean",
-            "coco-nomic-768-normalized",
-            "simplewiki-openai-3072-normalized",
-            "imagenet-align-640-normalized",
-            "yandex-200-cosine",
-            "imagenet-clip-512-normalized",
-            "laion-clip-512-normalized",
-            "codesearchnet-jina-768-cosine",
-            "yi-128-ip",
-            "landmark-dino-768-cosine",
-            "landmark-nomic-768-normalized",
-            "arxiv-nomic-768-normalized",
-            "ccnews-nomic-768-normalized",
-            "celeba-resnet-2048-cosine",
-            "llama-128-ip",
-            "yahoo-minilm-384-normalized"
+        "sift-128-euclidean",
+        "yi-128-ip",
+        "llama-128-ip",
+        "glove-200-angular",
+        "yandex-200-cosine",
+        "word2vec-300",
+        "yahoo-minilm-384-normalized",
+        "msong-420",
+        "imagenet-clip-512-normalized",
+        "laion-clip-512-normalized",
+        "imagenet-align-640-normalized",
+        "codesearchnet-jina-768-cosine",
+        "landmark-dino-768-cosine",
+        "landmark-nomic-768-normalized",
+        "arxiv-nomic-768-normalized",
+        "ccnews-nomic-768-normalized",
+        "coco-nomic-768-normalized",
+        "contriever-768",
+        "instructorxl-arxiv-768",
+        "gooaq-distilroberta-768-normalized",
+        "gist-960-euclidean",
+        "agnews-mxbai-1024-euclidean",
+        "openai-1536-angular",
+        "celeba-resnet-2048-cosine",
+        "simplewiki-openai-3072-normalized"
     };
 
     inline static size_t IVF_PROBES[] = {
         //4000, 3980, 3967, 2048, 1024, 512, 256,224,192,160,144,128,
-        8192, 4096, 3072, 2048, 1536, 1024, 512, 384, 256,224,192,160,144,128,
+        2048, 1536, 1024, 512, 384, 256,224,192,160,144,128,
         112,96,80,64,56, 48, 40,
         32,28, 26,24, 22,20, 18,16, 14,12, 10,8,6,4,2, 1
     };
@@ -126,9 +113,18 @@ public:
     template<bool MEASURE_RECALL, PDX::Quantization q=PDX::F32>
     static void VerifyResult(float &recalls, const std::vector<PDX::KNNCandidate<q>> &result, size_t knn,
                              const uint32_t *int_ground_truth, size_t n_query) {
+        std::unordered_set<uint32_t> seen;
+        for (const auto& val : result) {
+            if (!seen.insert(val.index).second) {
+                throw std::runtime_error("Duplicates detected in the result set! This is likely a bug on PDXearch");
+            }
+        }
+        if (result.size() < knn) {
+            std::cerr << "WARNING: Result set is not complete! Set a higher `nbuckets` parameter (Only got " << result.size() << " results)" << std::endl;
+        }
         if constexpr (MEASURE_RECALL) {
             size_t true_positives = 0;
-            for (size_t j = 0; j < knn; ++j) {
+            for (size_t j = 0; j < result.size(); ++j) {
                 for (size_t m = 0; m < knn; ++m) {
                     if (result[j].index == int_ground_truth[m + n_query * GROUND_TRUTH_MAX_K]) {
                         true_positives++;
@@ -158,11 +154,6 @@ public:
         size_t min_runtime = std::numeric_limits<size_t>::max();
         size_t max_runtime = std::numeric_limits<size_t>::min();
         size_t sum_runtimes = 0;
-        size_t sum_phases = 0;
-        size_t sum_phase_nearest_bucket = 0;
-        size_t sum_phase_bounds_evaluation = 0;
-        size_t sum_phase_distance_calculation = 0;
-        size_t sum_phase_query_preprocessing = 0;
         size_t all_min_runtime = std::numeric_limits<size_t>::max();
         size_t all_max_runtime = std::numeric_limits<size_t>::min();
         size_t all_sum_runtimes = 0;

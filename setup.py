@@ -1,12 +1,9 @@
 import os
 import sys
-import subprocess
-import platform
-
-import pybind11
+import ctypes.util
 from setuptools import setup
 
-from pybind11.setup_helpers import Pybind11Extension, build_ext
+from pybind11.setup_helpers import Pybind11Extension
 
 #
 # This setup.py was based on USearch setup.py (https://github.com/unum-cloud/usearch/blob/main/setup.py)
@@ -24,6 +21,10 @@ is_linux: bool = sys.platform == "linux"
 is_macos: bool = sys.platform == "darwin"
 is_windows: bool = sys.platform == "win32"
 
+has_fftw = ctypes.util.find_library("fftw3f") is not None
+if has_fftw:
+    macros_args.append(("HAS_FFTW", "1"))
+
 if is_windows:
     raise Exception('Windows not yet implemented')
 
@@ -37,6 +38,9 @@ if is_linux:
     compile_args.append("-fdiagnostics-color=always")
     compile_args.append("-Wl,--unresolved-symbols=ignore-in-shared-libs")
     link_args.append("-static-libstdc++")
+    if has_fftw:
+        # link_args.append("-lfftw3")
+        link_args.append("-lfftw3f")
 
 if is_macos:
     compile_args.append("-std=c++17")
@@ -48,6 +52,9 @@ if is_macos:
     compile_args.append("arm64")  # TODO: Currently not supporting non-ARM Macs
     compile_args.append("-Wl,")
     compile_args.append("-Wno-unknown-pragmas")
+    if has_fftw:
+        # link_args.append("-lfftw3")
+        link_args.append("-lfftw3f")
 
 
 ext_modules = [
@@ -56,7 +63,7 @@ ext_modules = [
         sources=["python/lib.cpp"],
         extra_compile_args=compile_args,
         extra_link_args=link_args,
-        # define_macros=macros_args,
+        define_macros=macros_args,
         language="c++",
     ),
 ]
@@ -73,7 +80,8 @@ install_requires = [
     "wheel",
     "cmake>=3.22",
     "pybind11",
-    "numpy"
+    "numpy",
+    "scipy"
 ]
 
 # Taken from Usearch setup.py (https://github.com/unum-cloud/usearch/blob/main/setup.py)

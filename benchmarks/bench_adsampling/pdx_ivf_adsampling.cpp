@@ -45,15 +45,13 @@ int main(int argc, char *argv[]) {
         }
         PDX::IndexPDXIVF<PDX::F32> pdx_data = PDX::IndexPDXIVF<PDX::F32>();
         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf");
-        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-matrix");
-        Eigen::MatrixXf matrix = Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(_matrix, pdx_data.num_dimensions, pdx_data.num_dimensions);
+        float * matrix_p = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-matrix");
         float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
         NUM_QUERIES = 1000;
         float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_100_norm");
         auto *int_ground_truth = (uint32_t *)ground_truth;
         query += 1; // skip number of embeddings
-
-        PDX::ADSamplingPruner pruner = PDX::ADSamplingPruner<PDX::F32>(pdx_data.num_dimensions, EPSILON0, matrix);
+        PDX::ADSamplingPruner pruner = PDX::ADSamplingPruner<PDX::F32>(pdx_data.num_dimensions, EPSILON0, matrix_p);
         PDX::PDXearch searcher = PDX::PDXearch<PDX::F32>(pdx_data, pruner, 1, DIMENSION_ORDER);
 
         std::vector<size_t> nprobes_to_use;
