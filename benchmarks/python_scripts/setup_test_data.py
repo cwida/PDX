@@ -15,7 +15,6 @@ def generate_test_data(dataset):
 
 
 if __name__ == "__main__":
-    # generate_test_data('fashion-mnist-784-euclidean')
     # generate_test_data('word2vec-300')
     # generate_test_data('msong-420')
     # generate_test_data('instructorxl-arxiv-768')

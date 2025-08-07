@@ -10,9 +10,9 @@ Example to store the PDX index and the metadata in a file and how to use it late
 Download the .hdf5 data here: https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing
 """
 if __name__ == "__main__":
-    dataset_name = 'fashion-mnist-784-euclidean.hdf5'
-    num_dimensions = 784
-    nprobe = 16
+    dataset_name = 'yahoo-minilm-384-normalized.hdf5'
+    num_dimensions = 384
+    nprobe = 32
     knn = 10
     print(f'Running example: Persisting PDXADSamplingIVF Index\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
 
