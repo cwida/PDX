@@ -66,14 +66,8 @@ if __name__ == "__main__":
     # generate_ground_truth('instructorxl-arxiv-768', ks)
     # generate_ground_truth('sift-128-euclidean', ks)
     # generate_ground_truth('gist-960-euclidean', ks)
-    # generate_ground_truth('har-561', ks)
     #
-    # generate_ground_truth('fashion-mnist-784-euclidean', ks)
-    # generate_ground_truth('mnist-784-euclidean', ks)
-    # generate_ground_truth('nytimes-16-angular', ks)
-    # generate_ground_truth('glove-50-angular', ks)
     # generate_ground_truth('glove-200-angular', ks)
     #
-    # generate_ground_truth('deep-image-96-angular', ks)
     # generate_ground_truth('contriever-768', ks)
 

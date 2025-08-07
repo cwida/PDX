@@ -310,7 +310,6 @@ if __name__ == "__main__":
     # dataset = 'openai-1536-angular'
     # dataset = 'agnews-mxbai-1024-euclidean'
     # dataset = 'arxiv-nomic-768-normalized'
-    # dataset = 'fashion-mnist-784-euclidean'
     # dataset = 'simplewiki-openai-3072-normalized'
     # dataset = 'ccnews-nomic-768-normalized'
     # dataset = 'celeba-resnet-2048-cosine'
