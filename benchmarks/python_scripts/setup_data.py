@@ -2,9 +2,9 @@ import os
 import zipfile
 from setup_settings import RAW_DATA, DATA_DIRECTORY, DATASETS
 from setup_ground_truth import generate_ground_truth
-from setup_adsampling import generate_adsampling_ivf, generate_adsampling_ivf_global8,  generate_adsampling_imi_global8, generate_adsampling_imi
+from setup_adsampling import generate_adsampling_ivf, generate_adsampling_ivf_global8,  generate_adsampling_ivf2_global8, generate_adsampling_ivf2
 from setup_bond import generate_bond_ivf, generate_bond_flat
-from setup_core_index import generate_core_ivf, generate_core_imi
+from setup_core_index import generate_core_ivf, generate_core_ivf2
 from setup_test_data import generate_test_data
 
 DOWNLOAD = False  # Download raw HDF5 data
@@ -47,17 +47,17 @@ if __name__ == "__main__":
         generate_test_data(dataset)
 
         if GENERATE_IVF:
-            print('==== Creating Core IMI index with FAISS (this might take a while)...')
-            generate_core_imi(dataset)
+            print('==== Creating Core ivf2 index with FAISS (this might take a while)...')
+            generate_core_ivf2(dataset)
 
         if 'adsampling' in ALGORITHMS:
             print('==== Generating ADSampling...')
             generate_adsampling_ivf(dataset)
-            generate_adsampling_imi(dataset)
+            generate_adsampling_ivf2(dataset)
 
             print('==== Generating ADSampling SQ8...')
             generate_adsampling_ivf_global8(dataset)
-            generate_adsampling_imi_global8(dataset)
+            generate_adsampling_ivf2_global8(dataset)
 
         # Generate BOND Data
         if 'bond' in ALGORITHMS:

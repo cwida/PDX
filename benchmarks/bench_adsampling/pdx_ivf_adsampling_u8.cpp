@@ -6,6 +6,7 @@
 #define PDX_USE_EXPLICIT_SIMD = true
 #endif
 
+#include <memory>
 #include <iostream>
 #include "utils/file_reader.hpp"
 #include "index_base/pdx_ivf.hpp"
@@ -44,11 +45,15 @@ int main(int argc, char *argv[]) {
         }
         PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::Quantization::U8>();
         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf-u8");
-        float * _matrix = MmapFile32(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-ivf-u8-matrix");
-        float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
+        std::unique_ptr<char[]> _matrix_ptr = MmapFile(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-ivf-u8-matrix");
+        auto *_matrix = reinterpret_cast<float*>(_matrix_ptr.get());
+
+        std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + dataset);
+        auto *query = reinterpret_cast<float*>(query_ptr.get());
+
         NUM_QUERIES = 1000;
-        float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_100_norm");
-        auto *int_ground_truth = (uint32_t *)ground_truth;
+        std::unique_ptr<char[]> ground_truth = MmapFile(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_100_norm");
+        auto *int_ground_truth = reinterpret_cast<uint32_t*>(ground_truth.get());
         query += 1; // skip number of embeddings
 
         PDX::ADSamplingPruner pruner = PDX::ADSamplingPruner<PDX::U8>(pdx_data.num_dimensions, EPSILON0, _matrix);
@@ -62,7 +67,7 @@ int main(int argc, char *argv[]) {
         }
 
         for (size_t ivf_nprobe : nprobes_to_use) {
-            if (pdx_data.num_vectorgroups < ivf_nprobe){
+            if (pdx_data.num_clusters < ivf_nprobe){
                 continue;
             }
             if (arg_ivf_nprobe > 0 && ivf_nprobe != arg_ivf_nprobe){

@@ -13,7 +13,7 @@ class BondPruner {
     using DISTANCES_TYPE = DistanceType_t<q>;
     using QUANTIZED_VECTOR_TYPE = QuantizedVectorType_t<q>;
     using DATA_TYPE = DataType_t<q>;
-    using VECTORGROUP_TYPE = Vectorgroup<q>;
+    using CLUSTER_TYPE = Cluster<q>;
     using KNNCandidate_t = KNNCandidate<q>;
     using VectorComparator_t = VectorComparator<q>;
 public:

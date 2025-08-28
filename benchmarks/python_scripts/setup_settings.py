@@ -12,7 +12,9 @@ if not os.path.exists(os.path.join(SOURCE_DIR, DATA_DIRECTORY)):
 
 RAW_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "downloaded")
 GROUND_TRUTH_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "ground_truth")
+FILTERED_GROUND_TRUTH_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "ground_truth_filtered")
 SEMANTIC_GROUND_TRUTH_PATH = os.path.join(SOURCE_DIR, "benchmarks", "gt")
+SEMANTIC_FILTERED_GROUND_TRUTH_PATH = os.path.join(SOURCE_DIR, "benchmarks", "gt_filtered")
 
 CORE_INDEXES = os.path.join(SOURCE_DIR, "benchmarks", "core_indexes")
 CORE_INDEXES_FAISS = os.path.join(CORE_INDEXES, "faiss")
@@ -30,13 +32,16 @@ NARY_ADSAMPLING_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "adsampling_nary
 PDX_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "pdx")
 PDX_ADSAMPLING_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "adsampling_pdx")
 
+FILTER_SELECTION_VECTORS = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "selection_vectors")
+
 directories = [
     RAW_DATA, GROUND_TRUTH_DATA, PURESCAN_DATA,
     NARY_DATA, NARY_ADSAMPLING_DATA,
     PDX_DATA, PDX_ADSAMPLING_DATA,
     CORE_INDEXES, CORE_INDEXES_FAISS, CORE_INDEXES_FAISS_U8,
     CORE_INDEXES_FAISS_L0, CORE_INDEXES_LORANN, QUERIES_DATA,
-    SEMANTIC_GROUND_TRUTH_PATH
+    SEMANTIC_GROUND_TRUTH_PATH, FILTER_SELECTION_VECTORS,
+    FILTERED_GROUND_TRUTH_DATA, SEMANTIC_FILTERED_GROUND_TRUTH_PATH
 ]
 
 for needed_directory in directories:

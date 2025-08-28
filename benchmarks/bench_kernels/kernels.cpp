@@ -463,14 +463,15 @@ inline void u8_pdx_ip(
 #endif
 };
 
-template <VectorSearchKernel kernel=F32_SIMD_IP, typename T=float>
+template <VectorSearchKernel kernel=F32_SIMD_IP, bool FILTERED=false, typename T=float>
 std::vector<KNNCandidate<T>> standalone_simd(
     const T *first_vector,
     const T *second_vector,
     const size_t d,
     const size_t num_queries,
     const size_t num_vectors,
-    const size_t knn
+    const size_t knn,
+    const size_t * positions = nullptr
 ) {
     std::vector<KNNCandidate<T>> result(knn * num_queries);
     std::vector<KNNCandidate<T>> all_distances(num_vectors);
@@ -479,6 +480,9 @@ std::vector<KNNCandidate<T>> standalone_simd(
         const T* data = first_vector;
         // Fill all_distances by direct indexing
         for (size_t j = 0; j < num_vectors; ++j) {
+            if constexpr (FILTERED) {
+                data = data + (positions[j] * d);
+            }
             DistanceType_t<T> current_distance;
             if constexpr (kernel == F32_SIMD_IP){
                 current_distance = f32_simd_ip(data, query, d);
@@ -491,7 +495,9 @@ std::vector<KNNCandidate<T>> standalone_simd(
             }
             all_distances[j].index = static_cast<uint32_t>(j);
             all_distances[j].distance = current_distance;
-            data += d;
+            if constexpr (!FILTERED) {
+                data += d;
+            }
         }
 
         // Partial sort to get top-k
@@ -612,6 +618,24 @@ std::vector<KNNCandidate<float>> standalone_f32(
 
         default:
             return standalone_pdx<F32_PDX_IP>(first_vector, second_vector, d, num_queries, num_vectors, knn);
+    }
+}
+
+std::vector<KNNCandidate<uint8_t>> filtered_standalone_u8(
+    const VectorSearchKernel kernel,
+    const uint8_t *first_vector,
+    const uint8_t *second_vector,
+    const size_t d,
+    const size_t num_queries,
+    const size_t num_vectors,
+    const size_t knn,
+    const size_t *positions
+) {
+    switch (kernel) {
+        case U8_SIMD_L2:
+            return standalone_simd<U8_SIMD_L2, true>(first_vector, second_vector, d, num_queries, num_vectors, knn, positions);
+        default:
+            return standalone_simd<U8_SIMD_L2, true>(first_vector, second_vector, d, num_queries, num_vectors, knn, positions);
     }
 }
 

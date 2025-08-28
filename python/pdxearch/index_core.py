@@ -105,7 +105,7 @@ class IVF(PartitionsUtils):
         self.write_centroids_and_labels(self.centroids, self.labels, path)
 
 
-class IMI(PartitionsUtils):
+class IVF2(PartitionsUtils):
     import faiss
     def __init__(
             self,
@@ -114,7 +114,7 @@ class IMI(PartitionsUtils):
             nbuckets: int = 4,
             nbuckets_l0: int = 32
     ) -> None:
-        IMI.faiss.omp_set_num_threads(cpu_count())
+        IVF2.faiss.omp_set_num_threads(cpu_count())
         if metric not in ["l2sq"]:
             raise Exception("Distance metric not supported yet")
         self.ndim = ndim
@@ -128,13 +128,13 @@ class IMI(PartitionsUtils):
 
         match self.metric:
             case "l2sq":
-                quantizer = IMI.faiss.IndexFlatL2(int(self.ndim))
-                quantizer_l0 = IMI.faiss.IndexFlatL2(int(self.ndim))
+                quantizer = IVF2.faiss.IndexFlatL2(int(self.ndim))
+                quantizer_l0 = IVF2.faiss.IndexFlatL2(int(self.ndim))
             case _:
-                quantizer = IMI.faiss.IndexFlatL2(int(self.ndim))
-                quantizer_l0 = IMI.faiss.IndexFlatL2(int(self.ndim))
-        self.index: IMI.faiss.IndexIVFFlat = IMI.faiss.IndexIVFFlat(quantizer, int(self.ndim), int(self.nbuckets))
-        self.index_l0: IMI.faiss.IndexIVFFlat = IMI.faiss.IndexIVFFlat(quantizer_l0, int(self.ndim), int(self.nbuckets_l0))
+                quantizer = IVF2.faiss.IndexFlatL2(int(self.ndim))
+                quantizer_l0 = IVF2.faiss.IndexFlatL2(int(self.ndim))
+        self.index: IVF2.faiss.IndexIVFFlat = IVF2.faiss.IndexIVFFlat(quantizer, int(self.ndim), int(self.nbuckets))
+        self.index_l0: IVF2.faiss.IndexIVFFlat = IVF2.faiss.IndexIVFFlat(quantizer_l0, int(self.ndim), int(self.nbuckets_l0))
 
     def train(self, data, **kwargs):
         self.index.train(data, **kwargs)
@@ -187,13 +187,13 @@ class IMI(PartitionsUtils):
 
     def get_inverted_list_metadata(self, list_id, level=1):
         num_list_embeddings = self.get_inverted_list_size(list_id, level)
-        list_ids = IMI.faiss.rev_swig_ptr(self.get_inverted_list_ids(list_id, level), num_list_embeddings)
+        list_ids = IVF2.faiss.rev_swig_ptr(self.get_inverted_list_ids(list_id, level), num_list_embeddings)
         return num_list_embeddings, list_ids
 
     def persist_core(self, path: str, path_l0: str):
         self.write_centroids_and_labels(self.centroids, self.labels, path)
         self.write_centroids_and_labels(self.centroids_l0, self.labels_l0, path_l0)
-        IMI.faiss.write_index(self.index, path)
+        IVF2.faiss.write_index(self.index, path)
 
 class HNSW:
     pass

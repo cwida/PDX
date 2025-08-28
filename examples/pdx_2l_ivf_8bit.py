@@ -1,10 +1,8 @@
 import math
 import os
 import numpy as np
-import scipy
-import faiss
 from examples_utils import TicToc, read_hdf5_data
-from pdxearch.index_factory import IndexPDXIMISQ8
+from pdxearch.index_factory import IndexPDXIVF2SQ8
 np.random.seed(42)
 
 """
@@ -15,13 +13,13 @@ Download the .hdf5 data here: https://drive.google.com/drive/folders/1f76UCrU52N
 if __name__ == "__main__":
     dataset_name = 'agnews-mxbai-1024-euclidean.hdf5'
     num_dimensions = 1024
-    nprobe = 64
+    nprobe = 128
     knn = 100
     print(f'Running example: PDXearch + ADSampling (Two-Level IVF SQ8)\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
     nbuckets = 4 * math.ceil(math.sqrt(len(train)))
 
-    index = IndexPDXIMISQ8(ndim=num_dimensions, nbuckets=nbuckets, normalize=True)
+    index = IndexPDXIVF2SQ8(ndim=num_dimensions, nbuckets=nbuckets, normalize=True)
     print('Preprocessing')
     index.preprocess(train)
     print('Training')
@@ -31,7 +29,7 @@ if __name__ == "__main__":
     training_sample_idxs.sort()
     index.train(train[training_sample_idxs])
     print('PDXifying')
-    index.add_load(train)
+    index.add(train)
     print(f'{len(queries)} queries with PDX')
     times = []
     clock = TicToc()
@@ -42,7 +40,7 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
     # To check results of first query
-    results = index.search(np.ascontiguousarray(queries[1]), knn, nprobe=nprobe)
+    results = index.search(np.ascontiguousarray(queries[0]), knn, nprobe=nprobe)
     print(results)
 
     print(f'{len(queries)} queries with FAISS F32')
@@ -58,7 +56,7 @@ if __name__ == "__main__":
         times.append(clock.toc())
     print('FAISS med. time:', np.median(np.array(times)))
     # To check results of first query
-    print(index.core_index.index.search(np.array([queries[1]]), k=knn))
+    print(index.core_index.index.search(np.array([queries[0]]), k=knn))
 
     # Scalar Quantization in FAISS is EXTREMELY slow in ARM due to lack of SIMD
     # print('Training FAISS SQ8')

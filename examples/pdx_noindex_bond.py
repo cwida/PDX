@@ -20,7 +20,7 @@ if __name__ == "__main__":
     index = IndexPDXBONDFlat(ndim=num_dimensions)
     print('PDXifying Collection')
     index.preprocess(train)
-    index.add_load(train)
+    index.add(train)
 
     print(f'{len(queries)} queries with PDX')
     times = []

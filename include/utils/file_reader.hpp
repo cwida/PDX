@@ -2,6 +2,7 @@
 #define PDX_UTILS_HPP
 
 #include <cstdint>
+#include <memory>
 #include <fcntl.h>
 #include <fstream>
 #include <cstdio>
@@ -16,50 +17,21 @@
 #endif
 
 /******************************************************************
- * File readers (nothing fancy)
+ * File reader
  ******************************************************************/
-float* MmapFile32(size_t& n_values, const std::string& filename) {
-    size_t file_size;
-    struct stat file_stats;
-    
+inline std::unique_ptr<char[]> MmapFile(const std::string& filename) {
+    struct stat file_stats {};
     int fd = ::open(filename.c_str(), O_RDONLY);
+    if (fd == -1) throw std::runtime_error("Failed to open file");
+
     fstat(fd, &file_stats);
-    file_size = file_stats.st_size;
-    float * file_pointer = new float[file_size / sizeof(float)];
-    std::ifstream input(filename.c_str(), std::ios::binary);
-    input.read((char*) file_pointer, file_size);
-    n_values = file_size / sizeof(float);
-    input.close();
-    return file_pointer;
+    size_t file_size = file_stats.st_size;
+
+    auto data = std::make_unique<char[]>(file_size);
+    std::ifstream input(filename, std::ios::binary);
+    input.read(data.get(), file_size);
+
+    return data;
 }
-
-float* MmapFile32(const std::string& filename) {
-    size_t file_size;
-    struct stat file_stats;
-
-    int fd = ::open(filename.c_str(), O_RDONLY);
-    fstat(fd, &file_stats);
-    file_size = file_stats.st_size;
-    float * file_pointer = new float[file_size/sizeof(float)];
-    std::ifstream input(filename.c_str(), std::ios::binary);
-    input.read((char*) file_pointer, file_size);
-    input.close();
-    return file_pointer;
-}
-
-uint8_t* MmapFile8(size_t& n_values, const std::string& filename) {
-    size_t file_size;
-    struct stat file_stats;
-    int fd = ::open(filename.c_str(), O_RDONLY);
-    fstat(fd, &file_stats);
-    file_size = file_stats.st_size;
-    auto * file_pointer = new uint8_t[file_size / sizeof(uint8_t)];
-    std::ifstream input(filename.c_str(), std::ios::binary);
-    input.read((char*) file_pointer, file_size);
-    n_values = file_size / sizeof(float);
-    input.close();
-    return file_pointer;
-}
-
 
 #endif //PDX_UTILS_HPP

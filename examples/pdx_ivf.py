@@ -29,7 +29,7 @@ if __name__ == "__main__":
     training_sample_idxs.sort()
     index.train(train[training_sample_idxs])
     print('PDXifying')
-    index.add_load(train)
+    index.add(train)
     print(f'{len(queries)} queries with PDX')
     times = []
     clock = TicToc()

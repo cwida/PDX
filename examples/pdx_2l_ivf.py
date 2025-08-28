@@ -2,7 +2,7 @@ import math
 import os
 import numpy as np
 from examples_utils import TicToc, read_hdf5_data
-from pdxearch.index_factory import IndexPDXIMI
+from pdxearch.index_factory import IndexPDXIVF2
 np.random.seed(42)
 
 """
@@ -19,7 +19,7 @@ if __name__ == "__main__":
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
     nbuckets = 4 * math.ceil(math.sqrt(len(train)))
 
-    index = IndexPDXIMI(ndim=num_dimensions, nbuckets=nbuckets, normalize=True)
+    index = IndexPDXIVF2(ndim=num_dimensions, nbuckets=nbuckets, normalize=True)
     print('Preprocessing')
     index.preprocess(train)
     print('Training')
@@ -29,7 +29,7 @@ if __name__ == "__main__":
     training_sample_idxs.sort()
     index.train(train[training_sample_idxs])
     print('PDXifying')
-    index.add_load(train)
+    index.add(train)
     print(f'{len(queries)} queries with PDX')
     times = []
     clock = TicToc()

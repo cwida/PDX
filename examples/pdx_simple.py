@@ -28,7 +28,7 @@ if __name__ == "__main__":
     print('Training IVF')
     index.train(data)  # Train IVF with FAISS
     print('PDXifying')
-    index.add_load(data)  # Add vectors and load PDX index in memory
+    index.add(data)  # Add vectors and load PDX index in memory
     print(f'{len(queries)} queries with PDX')
     times = []
     clock = TicToc()

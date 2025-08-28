@@ -60,6 +60,7 @@ public:
         const uint32_t current_dimension_idx
     ) {
         float ratio = current_dimension_idx == num_dimensions ? 1 : ratios[current_dimension_idx];
+        //return std::numeric_limits<DistanceType_t<Q>>::max();
         return heap.top().distance * ratio;
     }
 
@@ -72,7 +73,10 @@ private:
     Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> matrix;
 
     float GetRatio(const size_t &visited_dimensions) {
-        if(visited_dimensions == (int) num_dimensions) {
+        if (visited_dimensions == 0) {
+            return 1;
+        }
+        if (visited_dimensions == (int) num_dimensions) {
             return 1.0;
         }
         return 1.0 * visited_dimensions / ((int) num_dimensions) *
