@@ -41,8 +41,10 @@ public:
     inline static std::string PDX_ADSAMPLING_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/adsampling_pdx/";
     inline static std::string NARY_ADSAMPLING_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/adsampling_nary/";
     inline static std::string GROUND_TRUTH_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/ground_truth/";
+    inline static std::string FILTERED_GROUND_TRUTH_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/ground_truth_filtered/";
     inline static std::string PURESCAN_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/purescan/";
     inline static std::string QUERIES_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/queries/";
+    inline static std::string SELECTION_VECTOR_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/selection_vectors/";
 
     std::string CPU_ARCHITECTURE = "DEFAULT";
     std::string RESULTS_DIR_PATH = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/results/" + CPU_ARCHITECTURE + "/";
@@ -78,6 +80,24 @@ public:
         "openai-1536-angular",
         "celeba-resnet-2048-cosine",
         "simplewiki-openai-3072-normalized"
+    };
+
+    inline static std::string FILTERED_SELECTIVITIES[] = {
+        "0_000135",
+        "0_001",
+        "0_01",
+        "0_1",
+        "0_2",
+        "0_3",
+        "0_4",
+        "0_5",
+        "0_75",
+        "0_9",
+        "0_95",
+        "0_99",
+        "PART_1",
+        "PART_30",
+        "PART+_1",
     };
 
     inline static size_t IVF_PROBES[] = {

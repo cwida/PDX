@@ -96,14 +96,14 @@ namespace PDX {
     };
 
     template <Quantization q>
-    struct Vectorgroup { // default for U8, U6, U4
+    struct Cluster { // default for U8, U6, U4
         uint32_t num_embeddings{};
         uint32_t *indices = nullptr;
         uint8_t *data = nullptr;
     };
 
     template<>
-    struct Vectorgroup<F32> {
+    struct Cluster<F32> {
         uint32_t num_embeddings{};
         uint32_t *indices = nullptr;
         float *data = nullptr;

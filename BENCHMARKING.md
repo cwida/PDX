@@ -65,8 +65,8 @@ On the [/benchmarks/CMakeLists.txt](/benchmarks/CMakeLists.txt) file, you can fi
 
 - PDX IVF ADSampling: `/benchmarks/BenchmarkPDXADSampling`
 - PDX IVF ADSampling + SQ8: `/benchmarks/BenchmarkU8PDXADSampling`
-- PDX Two-Level IVF ADSampling: `/benchmarks/BenchmarkIMIADSampling`
-- PDX Two Level IVF ADSampling + SQ8: `/benchmarks/BenchmarkU8IMIADSampling`
+- PDX Two-Level IVF ADSampling: `/benchmarks/BenchmarkIVF2ADSampling`
+- PDX Two Level IVF ADSampling + SQ8: `/benchmarks/BenchmarkU8IVF2ADSampling`
 - PDX IVF BOND: `/benchmarks/BenchmarkPDXIVFBOND`
 - FAISS IVF: `/benchmarks/python_scripts/ivf_faiss.py`
 

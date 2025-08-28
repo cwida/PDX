@@ -6,6 +6,7 @@
 #define PDX_USE_EXPLICIT_SIMD = true
 #endif
 
+#include <memory>
 #include <iostream>
 #include "utils/file_reader.hpp"
 #include "index_base/pdx_ivf.hpp"
@@ -63,10 +64,13 @@ int main(int argc, char *argv[]) {
         PDX::IndexPDXIVF pdx_data = PDX::IndexPDXIVF<PDX::F32>();
 
         pdx_data.Restore(BenchmarkUtils::PDX_DATA + dataset + "-ivf");
-        float *query = MmapFile32(BenchmarkUtils::QUERIES_DATA + dataset);
-        NUM_QUERIES = 100; // ((uint32_t *)query)[0];
-        float *ground_truth = MmapFile32(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_100_norm");
-        auto *int_ground_truth = (uint32_t *)ground_truth;
+
+        std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + dataset);
+        auto *query = reinterpret_cast<float*>(query_ptr.get());
+
+        NUM_QUERIES = 1000;
+        std::unique_ptr<char[]> ground_truth = MmapFile(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_100_norm");
+        auto *int_ground_truth = reinterpret_cast<uint32_t*>(ground_truth.get());
         query += 1; // skip number of embeddings
 
         auto pruner = PDX::BondPruner(pdx_data.num_dimensions);
@@ -80,7 +84,7 @@ int main(int argc, char *argv[]) {
         }
 
         for (size_t ivf_nprobe : nprobes_to_use) {
-            if (pdx_data.num_vectorgroups < ivf_nprobe) {
+            if (pdx_data.num_clusters < ivf_nprobe) {
                 continue;
             }
             if (arg_ivf_nprobe > 0 && ivf_nprobe != arg_ivf_nprobe){

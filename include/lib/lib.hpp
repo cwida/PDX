@@ -6,9 +6,10 @@
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <iostream>
+#include <memory>
 #include "utils/file_reader.hpp"
 #include "index_base/pdx_ivf.hpp"
-#include "index_base/pdx_imi.hpp"
+#include "index_base/pdx_ivf2.hpp"
 #include "pdxearch.hpp"
 #include "pruners/bond.hpp"
 #include "pruners/adsampling.hpp"
@@ -22,16 +23,17 @@ namespace py = pybind11;
  ******************************************************************/
 namespace PDX {
 
-class IndexADSamplingIMISQ8 {
+class IndexADSamplingIVF2SQ8 {
 
     using KNNCandidate = KNNCandidate<U8>;
-    using Index = IndexPDXIMI<U8>;
+    using Index = IndexPDXIVF2<U8>;
     using Pruner = ADSamplingPruner<U8>;
     using Searcher = PDXearch<U8, Index>;
 
 public:
     Index index = Index();
     std::unique_ptr<Searcher> searcher = nullptr;
+    std::unique_ptr<char[]> transformation_matrix = nullptr;
     constexpr static float epsilon0 = 1.5;
 
     void Load(const py::bytes& data, const py::array_t<float>& _matrix){
@@ -47,7 +49,8 @@ public:
 
     void Restore(const std::string &path, const std::string &matrix_path){
         index.Restore(path);
-        float * _matrix = MmapFile32(matrix_path);
+        transformation_matrix = MmapFile(matrix_path);
+        auto *_matrix = reinterpret_cast<float*>(transformation_matrix.get());
         Pruner pruner = Pruner(index.num_dimensions, epsilon0, _matrix);
         searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
     }
@@ -81,18 +84,50 @@ public:
         }
         return {ids, distances};
     }
+
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_FilteredSearch(
+        const py::array_t<float>& q, uint32_t k, uint32_t n_probe,
+        const py::array_t<uint32_t>& n_passing_tuples, const py::array_t<uint8_t>& selection_vector
+    ) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
+        }
+        auto query = static_cast<float*>(buf.ptr);
+        auto n_passing_tuples_p = static_cast<uint32_t*>(n_passing_tuples.request().ptr);
+        auto selection_vector_p = static_cast<uint8_t*>(selection_vector.request().ptr);
+
+        PredicateEvaluator pe = PredicateEvaluator(searcher->pdx_data.num_clusters);
+        pe.LoadSelectionVector(n_passing_tuples_p, selection_vector_p);
+
+        searcher->SetNProbe(n_probe);
+        std::vector<KNNCandidate> results = searcher->FilteredSearch(query, k, pe);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+
 };
 
-class IndexADSamplingIMIFlat {
+class IndexADSamplingIVF2Flat {
 
     using KNNCandidate = KNNCandidate<F32>;
-    using Index = IndexPDXIMI<F32>;
+    using Index = IndexPDXIVF2<F32>;
     using Pruner = ADSamplingPruner<F32>;
     using Searcher = PDXearch<F32, Index>;
 
 public:
     Index index = Index();
     std::unique_ptr<Searcher> searcher = nullptr;
+    std::unique_ptr<char[]> transformation_matrix = nullptr;
     constexpr static float epsilon0 = 1.5;
 
     void Load(const py::bytes& data, const py::array_t<float>& _matrix){
@@ -108,7 +143,8 @@ public:
 
     void Restore(const std::string &path, const std::string &matrix_path){
         index.Restore(path);
-        float * _matrix = MmapFile32(matrix_path);
+        transformation_matrix = MmapFile(matrix_path);
+        auto *_matrix = reinterpret_cast<float*>(transformation_matrix.get());
         Pruner pruner = Pruner(index.num_dimensions, epsilon0, _matrix);
         searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
     }
@@ -142,6 +178,37 @@ public:
         }
         return {ids, distances};
     }
+
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_FilteredSearch(
+        const py::array_t<float>& q, uint32_t k, uint32_t n_probe,
+        const py::array_t<uint32_t>& n_passing_tuples, const py::array_t<uint8_t>& selection_vector
+    ) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
+        }
+        auto query = static_cast<float*>(buf.ptr);
+        auto n_passing_tuples_p = static_cast<uint32_t*>(n_passing_tuples.request().ptr);
+        auto selection_vector_p = static_cast<uint8_t*>(selection_vector.request().ptr);
+
+        PredicateEvaluator pe = PredicateEvaluator(searcher->pdx_data.num_clusters);
+        pe.LoadSelectionVector(n_passing_tuples_p, selection_vector_p);
+
+        searcher->SetNProbe(n_probe);
+        std::vector<KNNCandidate> results = searcher->FilteredSearch(query, k, pe);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+
 };
 
 class IndexADSamplingIVFFlat {
@@ -154,6 +221,7 @@ class IndexADSamplingIVFFlat {
 public:
     Index index = Index();
     std::unique_ptr<Searcher> searcher = nullptr;
+    std::unique_ptr<char[]> transformation_matrix = nullptr;
     constexpr static float epsilon0 = 1.5;
 
     void Load(const py::bytes& data, const py::array_t<float>& _matrix){
@@ -169,7 +237,8 @@ public:
 
     void Restore(const std::string &path, const std::string &matrix_path){
         index.Restore(path);
-        float * _matrix = MmapFile32(matrix_path);
+        transformation_matrix = MmapFile(matrix_path);
+        auto *_matrix = reinterpret_cast<float*>(transformation_matrix.get());
         Pruner pruner = Pruner(index.num_dimensions, epsilon0, _matrix);
         searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
     }
@@ -203,6 +272,37 @@ public:
         }
         return {ids, distances};
     }
+
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_FilteredSearch(
+        const py::array_t<float>& q, uint32_t k, uint32_t n_probe,
+        const py::array_t<uint32_t>& n_passing_tuples, const py::array_t<uint8_t>& selection_vector
+    ) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
+        }
+        auto query = static_cast<float*>(buf.ptr);
+        auto n_passing_tuples_p = static_cast<uint32_t*>(n_passing_tuples.request().ptr);
+        auto selection_vector_p = static_cast<uint8_t*>(selection_vector.request().ptr);
+
+        PredicateEvaluator pe = PredicateEvaluator(searcher->pdx_data.num_clusters);
+        pe.LoadSelectionVector(n_passing_tuples_p, selection_vector_p);
+
+        searcher->SetNProbe(n_probe);
+        std::vector<KNNCandidate> results = searcher->FilteredSearch(query, k, pe);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+
 };
 
 class IndexBONDIVFFlat {
@@ -266,6 +366,37 @@ public:
         }
         return {ids, distances};
     }
+
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_FilteredSearch(
+        const py::array_t<float>& q, uint32_t k, uint32_t n_probe,
+        const py::array_t<uint32_t>& n_passing_tuples, const py::array_t<uint8_t>& selection_vector
+    ) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
+        }
+        auto query = static_cast<float*>(buf.ptr);
+        auto n_passing_tuples_p = static_cast<uint32_t*>(n_passing_tuples.request().ptr);
+        auto selection_vector_p = static_cast<uint8_t*>(selection_vector.request().ptr);
+
+        PredicateEvaluator pe = PredicateEvaluator(searcher->pdx_data.num_clusters);
+        pe.LoadSelectionVector(n_passing_tuples_p, selection_vector_p);
+
+        searcher->SetNProbe(n_probe);
+        std::vector<KNNCandidate> results = searcher->FilteredSearch(query, k, pe);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+
 };
 
 class IndexBONDFlat {
@@ -315,6 +446,36 @@ public:
         }
         return {ids, distances};
     }
+
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_FilteredSearch(
+        const py::array_t<float>& q, uint32_t k,
+        const py::array_t<uint32_t>& n_passing_tuples, const py::array_t<uint8_t>& selection_vector
+    ) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
+        }
+        auto query = static_cast<float*>(buf.ptr);
+        auto n_passing_tuples_p = static_cast<uint32_t*>(n_passing_tuples.request().ptr);
+        auto selection_vector_p = static_cast<uint8_t*>(selection_vector.request().ptr);
+
+        PredicateEvaluator pe = PredicateEvaluator(searcher->pdx_data.num_clusters);
+        pe.LoadSelectionVector(n_passing_tuples_p, selection_vector_p);
+
+        std::vector<KNNCandidate> results = searcher->FilteredSearch(query, k, pe);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+
 };
 
 class IndexADSamplingFlat {
@@ -327,6 +488,7 @@ class IndexADSamplingFlat {
 public:
     Index index = Index();
     std::unique_ptr<Searcher> searcher = nullptr;
+    std::unique_ptr<char[]> transformation_matrix = nullptr;
     constexpr static float epsilon0 = 1.5;
 
     void Load(const py::bytes& data, const py::array_t<float>& _matrix){
@@ -342,7 +504,8 @@ public:
 
     void Restore(const std::string &path, const std::string &matrix_path){
         index.Restore(path);
-        float * _matrix = MmapFile32(matrix_path);
+        transformation_matrix = MmapFile(matrix_path);
+        auto *_matrix = reinterpret_cast<float*>(transformation_matrix.get());
         Pruner pruner = Pruner(index.num_dimensions, epsilon0, _matrix);
         searcher = std::make_unique<Searcher>(index, pruner, 1, SEQUENTIAL);
     }
@@ -375,6 +538,36 @@ public:
         }
         return {ids, distances};
     }
+
+    std::pair<py::array_t<uint32_t>, py::array_t<float>>
+    _py_FilteredSearch(
+        const py::array_t<float>& q, uint32_t k,
+        const py::array_t<uint32_t>& n_passing_tuples, const py::array_t<uint8_t>& selection_vector
+    ) const {
+        auto buf = q.request();  // Get buffer info
+        if (buf.ndim != 1) {
+            throw std::runtime_error("Input should be a 1-D NumPy array");
+        }
+        auto query = static_cast<float*>(buf.ptr);
+        auto n_passing_tuples_p = static_cast<uint32_t*>(n_passing_tuples.request().ptr);
+        auto selection_vector_p = static_cast<uint8_t*>(selection_vector.request().ptr);
+
+        PredicateEvaluator pe = PredicateEvaluator(searcher->pdx_data.num_clusters);
+        pe.LoadSelectionVector(n_passing_tuples_p, selection_vector_p);
+
+        std::vector<KNNCandidate> results = searcher->FilteredSearch(query, k, pe);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+
 };
 
 class IndexPDXFlat {

@@ -1,7 +1,7 @@
 import numpy as np
 
 from pdxearch.index_base import (
-    BaseIndexPDXIVF, BaseIndexPDXIMI, BaseIndexPDXFlat
+    BaseIndexPDXIVF, BaseIndexPDXIVF2, BaseIndexPDXFlat
 )
 from pdxearch.preprocessors import (
     ADSampling, Preprocessor
@@ -12,16 +12,18 @@ from pdxearch.compiled import (
     IndexBONDFlat as _IndexBONDFlat,
     IndexADSamplingFlat as _IndexADSamplingFlat,
     IndexPDXFlat as _IndexPDXFlat,
-    IndexADSamplingIMISQ8 as _IndexADSamplingIMISQ8,
-    IndexADSamplingIMIFlat as _IndexADSamplingIMIFlat
+    IndexADSamplingIVF2SQ8 as _IndexADSamplingIVF2SQ8,
+    IndexADSamplingIVF2Flat as _IndexADSamplingIVF2Flat
 )
 from pdxearch.constants import PDXConstants
+
+from pdxearch.predicate_evaluator import PredicateEvaluator
 
 #
 # Python wrappers of the C++ lib
 #
 
-class IndexPDXIMI(BaseIndexPDXIMI):
+class IndexPDXIVF2(BaseIndexPDXIVF2):
     def __init__(
             self,
             *,
@@ -33,15 +35,16 @@ class IndexPDXIMI(BaseIndexPDXIMI):
     ) -> None:
         super().__init__(ndim, metric, nbuckets, nbuckets_l0, normalize)
         self.preprocessor = ADSampling(ndim)
-        self.pdx_index = _IndexADSamplingIMIFlat()
+        self.pdx_index = _IndexADSamplingIVF2Flat()
+        self.pe = PredicateEvaluator()
 
     def preprocess(self, data, inplace: bool = True):
         return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
 
     # Used in Python API (TODO)
     def add_persist(self, data, path: str, matrix_path: str):
-        self.add(data)
-        self.train_add_l0()
+        self._add(data)
+        self._train_add_l0()
         self._to_pdx(data, _type='pdx', use_original_centroids=True)
         self._persist(path)
         self.preprocessor.store_metadata(matrix_path)
@@ -51,9 +54,9 @@ class IndexPDXIMI(BaseIndexPDXIMI):
         self._persist(path)
         self.preprocessor.store_metadata(matrix_path)
 
-    def add_load(self, data):
-        self.add(data)
-        self.train_add_l0()
+    def add(self, data):
+        self._add(data)
+        self._train_add_l0()
         self._to_pdx(data, _type='pdx', use_original_centroids=True)
         self.pdx_index.load(self.materialized_index, self.preprocessor.transformation_matrix)
 
@@ -63,12 +66,20 @@ class IndexPDXIMI(BaseIndexPDXIMI):
 
     def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
         return self.pdx_index.search(q, knn, nprobe)
+
+    def evaluate_predicate(self, passing_tuples_ids):
+        self.pe.evaluate_predicate(passing_tuples_ids, self.core_index.labels)
+
+    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
+        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
+        return self.pdx_index.filtered_search(q, knn, nprobe, self.pe.n_passing_tuples, self.pe.selection_vector)
 
     def set_pruning_confidence(self, confidence: float):
         self.pdx_index.set_pruning_confidence(confidence)
 
 
-class IndexPDXIMISQ8(BaseIndexPDXIMI):
+class IndexPDXIVF2SQ8(BaseIndexPDXIVF2):
     def __init__(
             self,
             *,
@@ -80,15 +91,16 @@ class IndexPDXIMISQ8(BaseIndexPDXIMI):
     ) -> None:
         super().__init__(ndim, metric, nbuckets, nbuckets_l0, normalize)
         self.preprocessor = ADSampling(ndim)
-        self.pdx_index = _IndexADSamplingIMISQ8()
+        self.pdx_index = _IndexADSamplingIVF2SQ8()
+        self.pe = PredicateEvaluator()
 
     def preprocess(self, data, inplace: bool = True):
         return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
 
     # Used in Python API (TODO)
     def add_persist(self, data, path: str, matrix_path: str):
-        self.add(data)
-        self.train_add_l0()
+        self._add(data)
+        self._train_add_l0()
         self._to_pdx(data, _type='pdx-v4-h', quantize=True, use_original_centroids=True)
         self._persist(path)
         self.preprocessor.store_metadata(matrix_path)
@@ -98,9 +110,9 @@ class IndexPDXIMISQ8(BaseIndexPDXIMI):
         self._persist(path)
         self.preprocessor.store_metadata(matrix_path)
 
-    def add_load(self, data):
-        self.add(data)
-        self.train_add_l0()
+    def add(self, data):
+        self._add(data)
+        self._train_add_l0()
         self._to_pdx(data, _type='pdx-v4-h', quantize=True, use_original_centroids=True)
         self.pdx_index.load(self.materialized_index, self.preprocessor.transformation_matrix)
 
@@ -110,6 +122,14 @@ class IndexPDXIMISQ8(BaseIndexPDXIMI):
 
     def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
         return self.pdx_index.search(q, knn, nprobe)
+
+    def evaluate_predicate(self, passing_tuples_ids):
+        self.pe.evaluate_predicate(passing_tuples_ids, self.core_index.labels)
+
+    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
+        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
+        return self.pdx_index.filtered_search(q, knn, nprobe, self.pe.n_passing_tuples, self.pe.selection_vector)
 
     def set_pruning_confidence(self, confidence: float):
         self.pdx_index.set_pruning_confidence(confidence)
@@ -126,12 +146,13 @@ class IndexPDXADSamplingIVFFlat(BaseIndexPDXIVF):
         super().__init__(ndim, metric, nbuckets, normalize)
         self.preprocessor = ADSampling(ndim)
         self.pdx_index = _IndexPDXADSamplingIVFFlat()
+        self.pe = PredicateEvaluator()
 
     def preprocess(self, data, inplace: bool = True):
         return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
 
     def add_persist(self, data, path: str, matrix_path: str):
-        self.add(data)
+        self._add(data)
         # I don't need to pass the centroid preprocessor here, as the centroids are already rotated
         # Because the training was done on the transformed vectors
         self._to_pdx(data, _type='pdx', use_original_centroids=True)
@@ -142,8 +163,8 @@ class IndexPDXADSamplingIVFFlat(BaseIndexPDXIVF):
         self._persist(path)
         self.preprocessor.store_metadata(matrix_path)
 
-    def add_load(self, data):
-        self.add(data)
+    def add(self, data):
+        self._add(data)
         # I don't need to pass the centroid preprocessor here, as the centroids are already rotated
         # Because the training was done on the transformed vectors
         self._to_pdx(data, _type='pdx', use_original_centroids=True)
@@ -154,6 +175,14 @@ class IndexPDXADSamplingIVFFlat(BaseIndexPDXIVF):
 
     def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
         return self.pdx_index.search(q, knn, nprobe)
+
+    def evaluate_predicate(self, passing_tuples_ids):
+        self.pe.evaluate_predicate(passing_tuples_ids, self.core_index.labels)
+
+    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
+        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
+        return self.pdx_index.filtered_search(q, knn, nprobe, self.pe.n_passing_tuples, self.pe.selection_vector)
 
     def set_pruning_confidence(self, confidence: float):
         self.pdx_index.set_pruning_confidence(confidence)
@@ -169,20 +198,21 @@ class IndexPDXBONDIVFFlat(BaseIndexPDXIVF):
         super().__init__(ndim, metric, nbuckets, normalize)
         self.preprocessor = Preprocessor()
         self.pdx_index = _IndexPDXBONDIVFFlat()
+        self.pe = PredicateEvaluator()
 
     def preprocess(self, data, inplace: bool = True):
         return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
 
     def add_persist(self, data, path: str):
-        self.add(data)
+        self._add(data)
         self._to_pdx(data, _type='pdx', use_original_centroids=True, bond=True)
         self._persist(path)
 
     def persist(self, path: str):  # TODO: Rename
         self._persist(path)
 
-    def add_load(self, data):
-        self.add(data)
+    def add(self, data):
+        self._add(data)
         self._to_pdx(data, _type='pdx', use_original_centroids=True, bond=True)
         self.pdx_index.load(self.materialized_index)
 
@@ -191,6 +221,15 @@ class IndexPDXBONDIVFFlat(BaseIndexPDXIVF):
 
     def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
         return self.pdx_index.search(q, knn, nprobe)
+
+    def evaluate_predicate(self, passing_tuples_ids):
+        self.pe.evaluate_predicate(passing_tuples_ids, self.core_index.labels)
+
+    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
+        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
+        return self.pdx_index.filtered_search(q, knn, nprobe, self.pe.n_passing_tuples, self.pe.selection_vector)
+
 
 class IndexPDXBONDFlat(BaseIndexPDXFlat):
     def __init__(
@@ -203,6 +242,7 @@ class IndexPDXBONDFlat(BaseIndexPDXFlat):
         self.preprocessor = Preprocessor()
         self.pdx_index = _IndexBONDFlat()
         self.block_sizes = PDXConstants.PDXEARCH_VECTOR_SIZE
+        self.pe = PredicateEvaluator()
 
     def preprocess(self, data, inplace: bool = True):
         return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
@@ -214,7 +254,7 @@ class IndexPDXBONDFlat(BaseIndexPDXFlat):
     def persist(self, path: str):  # TODO: Rename
         self._persist(path)
 
-    def add_load(self, data):
+    def add(self, data):
         self._to_pdx(data, self.block_sizes, bond=True)
         self.pdx_index.load(self.materialized_index)
 
@@ -224,6 +264,14 @@ class IndexPDXBONDFlat(BaseIndexPDXFlat):
     def search(self, q: np.ndarray, knn: int):
         return self.pdx_index.search(q, knn)
 
+    def evaluate_predicate(self, passing_tuples_ids):
+        self.pe.evaluate_predicate(passing_tuples_ids, [x.indices for x in self.partitions])
+
+    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
+        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
+        return self.pdx_index.filtered_search(q, knn, self.pe.n_passing_tuples, self.pe.selection_vector)
+
 
 class IndexPDXADSamplingFlat(BaseIndexPDXFlat):
     def __init__(self, *, ndim: int = 128, metric: str = "l2sq", normalize: bool = True) -> None:
@@ -231,6 +279,7 @@ class IndexPDXADSamplingFlat(BaseIndexPDXFlat):
         self.preprocessor = ADSampling(ndim)
         self.pdx_index = _IndexADSamplingFlat()
         self.block_sizes = PDXConstants.PDXEARCH_VECTOR_SIZE
+        self.pe = PredicateEvaluator()
 
     def preprocess(self, data: np.array, inplace: bool = True):
         return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
@@ -244,7 +293,7 @@ class IndexPDXADSamplingFlat(BaseIndexPDXFlat):
         self._persist(path)
         self.preprocessor.store_metadata(matrix_path)
 
-    def add_load(self, data):
+    def add(self, data):
         self._to_pdx(data, self.block_sizes)
         self.pdx_index.load(self.materialized_index, self.preprocessor.transformation_matrix)
 
@@ -256,6 +305,14 @@ class IndexPDXADSamplingFlat(BaseIndexPDXFlat):
 
     def set_pruning_confidence(self, confidence: float):
         self.pdx_index.set_pruning_confidence(confidence)
+
+    def evaluate_predicate(self, passing_tuples_ids):
+        self.pe.evaluate_predicate(passing_tuples_ids, [x.indices for x in self.partitions])
+
+    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
+        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
+        return self.pdx_index.filtered_search(q, knn, self.pe.n_passing_tuples, self.pe.selection_vector)
 
 
 class IndexPDXFlat(BaseIndexPDXFlat):
@@ -275,7 +332,7 @@ class IndexPDXFlat(BaseIndexPDXFlat):
     def persist(self, path: str):  # TODO: Rename
         self._persist(path)
 
-    def add_load(self, data):
+    def add(self, data):
         self._to_pdx(data, self.block_sizes, bond=True)
         self.pdx_index.load(self.materialized_index)
 

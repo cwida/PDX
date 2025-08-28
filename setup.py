@@ -93,12 +93,12 @@ cxx_compiler_variable = os.environ.get("CXX")
 if cxx_compiler_variable:
     os.environ["CC"] = cxx_compiler_variable
 
-description = "Pruned Vertical Vector Similarity Search"
+description = "Faster similarity search with PDX: A transposed data layout for vectors"
 long_description = ""
 
 setup(
     name="pdxearch",
-    version="0.2",
+    version="0.3",
     packages=["pdxearch"],
     package_dir={"pdxearch": "python/pdxearch"},
     description=description,

@@ -22,8 +22,9 @@ if __name__ == "__main__":
     print('Preprocessing data')
     index.preprocess(train, inplace=True)
     print('PDXifying')
-    index.add_load(train)
+    index.add(train)
 
+    queries = queries[:100]
     print(f'{len(queries)} queries with PDX')
     times = []
     clock = TicToc()

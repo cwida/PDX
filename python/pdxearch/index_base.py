@@ -2,7 +2,7 @@ import numpy as np
 import sys
 import math
 from typing import List
-from pdxearch.index_core import IVF, IMI
+from pdxearch.index_core import IVF, IVF2
 from pdxearch.constants import PDXConstants
 
 class Partition:
@@ -11,7 +11,7 @@ class Partition:
         self.indices = np.array([])
         self.blocks = []
 
-class BaseIndexPDXIMI:
+class BaseIndexPDXIVF2:
     def __init__(
             self,
             ndim: int,
@@ -32,7 +32,7 @@ class BaseIndexPDXIMI:
         self.for_base = 0.0
         self.scale_factor = 0.0
 
-        self.core_index = IMI(ndim, metric, nbuckets, nbuckets_l0)
+        self.core_index = IVF2(ndim, metric, nbuckets, nbuckets_l0)
 
         self.means: np.array = None
         self.centroids: np.array = np.array([], dtype=np.float32)
@@ -49,10 +49,10 @@ class BaseIndexPDXIMI:
     def train(self, data: np.array, **kwargs):
         self.core_index.train(data, **kwargs)
 
-    def add(self, data: np.array, **kwargs):
+    def _add(self, data: np.array, **kwargs):
         self.core_index.add(data, **kwargs)
 
-    def train_add_l0(self,  **kwargs):
+    def _train_add_l0(self,  **kwargs):
         self.core_index.train_add_l0(**kwargs)
 
     # Separate the data in the PDX blocks
@@ -218,7 +218,7 @@ class BaseIndexPDXIVF:
     def train(self, data: np.array, **kwargs):
         self.core_index.train(data, **kwargs)
 
-    def add(self, data: np.array, **kwargs):
+    def _add(self, data: np.array, **kwargs):
         self.core_index.add(data, **kwargs)
 
     # Separate the data in the PDX blocks
