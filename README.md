@@ -17,7 +17,7 @@
 
 - ⚡ Up to [**10x faster**](#two-level-ivf-ivf2-) **IVF searches** than FAISS+AVX512.
 - ⚡ Up to [**30x faster**](#exhaustive-search--ivf) **exhaustive search**.
-- ⚡ Up to **2x** faster **raw distance kernels**.
+- 🔍 Efficient [**filtered search**](https://github.com/cwida/PDX/issues/7).
 
 <hr/>
 
@@ -144,10 +144,10 @@ Smaller data types are not friendly to PDX, as we must accumulate distances on w
 For Hamming/Jaccard kernels, we use a layout decomposed every 8 dimensions (naturally grouped into bytes). The population count accumulation can be done in `bytes`. If d > 256, we flush the popcounts into a wider type every 32 words (corresponding to 256 dimensions). This has not been implemented in this repository yet, but you can find some promising benchmarks [here](https://github.com/lkuffo/binary-index). 
 
 ## Roadmap
-- Add PDX to the [VIBE benchmark](https://vector-index-bench.github.io/).
-- Benchmark filtering capabilities in PDX.
+- Out-of-core execution (disk-based setting).
 - Add unit tests.
 - Implement multi-threading capabilities.
+- Add PDX to the [VIBE benchmark](https://vector-index-bench.github.io/).
 - Adaptive quantization on 8-bit and 4-bit.
 - Create a documentation.
 
