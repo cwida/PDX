@@ -7,6 +7,7 @@ int main(int argc, char *argv[]) {
     std::string ALGORITHM = "pdx";
     size_t DIMENSION;
     size_t N_VECTORS;
+    std::string dtype = "float32";
     if (argc > 1){
         N_VECTORS = atoi(argv[1]);
     }
@@ -26,7 +27,7 @@ int main(int argc, char *argv[]) {
 
     std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "PURESCAN_PDX_IP.csv";
     std::string filename = std::to_string(N_VECTORS) + "x" +
-                           std::to_string(DIMENSION) + "-pdx-float32";
+                           std::to_string(DIMENSION) + "-pdx-" + dtype;
     std::string dataset = std::to_string(N_VECTORS) + "x" + std::to_string(DIMENSION);
 
     float *raw_data = MmapFile32( BenchmarkUtils::PURESCAN_DATA + filename);

@@ -6,6 +6,10 @@ np.random.seed(42)
 
 # Setup random collections of vectors with PDX and Nary
 def generate_synthetic_data(BLOCK_SIZES=(), dimensions=(), vectors=(), dtype=np.float32):
+    if dtype not in [np.float32]:
+        # for more dtype support, checkout the updates on the `main` branch
+        raise ValueError('dtype must be np.float32')
+
     type_size = np.dtype(dtype).itemsize
     adaptive_block_size = int(256 / type_size)  # 256 bytes can fit in registers across architectures
     print('Block size =', adaptive_block_size)
