@@ -13,6 +13,11 @@
         <img src="./benchmarks/results/openai-intel.png" alt="PDX Layout" style="{max-height: 150px}">
 </p>
 
+PDX makes an IVF index, competitive with HNSW:
+<p align="center">
+        <img src="./benchmarks/results/vshnsw.png" height="250" alt="PDX Layout" style="{max-height: 100px}">
+</p>
+
 ### PDX benefits:
 
 - ⚡ Up to [**10x faster**](#two-level-ivf-ivf2-) **IVF searches** than FAISS+AVX512.
@@ -82,7 +87,7 @@ python ./examples/pdx_simple.py
 For more details on the available examples and how to use your own data, refer to [/examples/README.md](./examples/README.md). 
 
 > [!NOTE]
-> We heavily rely on [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) to create the underlying IVF indexes. 
+> We heavily rely on [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) to create the underlying IVF indexes. To quickly install it you can do: `pip install faiss-cpu`
 
 ## Use Cases and Benchmarks
 We present single-threaded **benchmarks** against FAISS+AVX512 on an `r7iz.xlarge` (Intel Sapphire Rapids) instance. 

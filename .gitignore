@@ -54,6 +54,7 @@ pdxearch.egg-info
 *.dat
 
 /benchmarks/core_indexes/faiss/*
+/benchmarks/core_indexes/usearch/*
 /benchmarks/core_indexes/lorann/*
 /benchmarks/core_indexes/faiss_sq8/*
 !/benchmarks/core_indexes/faiss/*.json

@@ -51,8 +51,8 @@ int main(int argc, char *argv[]) {
             continue;
         }
         PDX::IndexPDXIVF2 pdx_data = PDX::IndexPDXIVF2<PDX::Quantization::U8>();
-        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-imi-u8");
-        std::unique_ptr<char[]> _matrix_ptr = MmapFile(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-imi-u8-matrix");
+        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf2-u8");
+        std::unique_ptr<char[]> _matrix_ptr = MmapFile(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-ivf2-u8-matrix");
         auto *_matrix = reinterpret_cast<float*>(_matrix_ptr.get());
 
         std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + dataset);
