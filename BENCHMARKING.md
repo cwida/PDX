@@ -94,6 +94,9 @@ PDX BOND has an additional second parameter:
 
 **Notes**: Usearch, SKLearn, and FAISS scripts expect the original `.hdf5` files under the `/downloaded` directory.  Furthermore, they require their respective Python packages (`pip install -r ./benchmarks/python_scripts/requirements.txt`).
 
+## Output
+Output is written in a .csv format to the `/benchmarks/results/DEFAULT` directory. Each file contains entries detailing the experiment parameters, such as the dataset, algorithm, kNN, number of queries (`n_queries`), `ivf_nprobe`, and, more importantly, the average runtime per query in ms in the `avg` column. Each benchmarking script will create a file with a different name.
+
 ## Kernels Experiment
 Visit our playground for PDX vs SIMD kernels [here](./benchmarks/bench_kernels)
 
