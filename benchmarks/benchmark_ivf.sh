@@ -22,10 +22,10 @@ for dataset in "${datasets[@]}"
 do
 
 #  echo "IVF MILVUS | $dataset"
-#  ${python_command} ./benchmarks/bench_systems/ivf_milvus.py ${dataset}
+#  ${python_command} ./benchmarks/python_scripts/ivf_milvus.py ${dataset}
 
   echo "IVF FAISS | $dataset"
-  ${python_command} ./benchmarks/bench_systems/ivf_faiss.py ${dataset}
+  ${python_command} ./benchmarks/python_scripts/ivf_faiss.py ${dataset}
 
   echo "Nary IVF LinearScan Scalar | $dataset"
   ./benchmarks/BenchmarkNaryIVFLinearScan ${dataset}

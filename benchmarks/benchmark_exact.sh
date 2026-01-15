@@ -16,12 +16,12 @@ make BenchmarkPDXBOND
 for dataset in "${datasets[@]}"
 do
     echo "Exact SKLearn | $dataset"
-    $python_command ./benchmarks/bench_systems/exact_sklearn.py ${dataset}
+    $python_command ./benchmarks/python_scripts/exact_sklearn.py ${dataset}
     echo "Exact FAISS | $dataset"
-    $python_command ./benchmarks/bench_systems/exact_faiss.py ${dataset}
+    $python_command ./benchmarks/python_scripts/exact_faiss.py ${dataset}
     echo "Exact USearch | $dataset"
 
-    $python_command ./benchmarks/bench_systems/exact_usearch.py ${dataset}
+    $python_command ./benchmarks/python_scripts/exact_usearch.py ${dataset}
 
     echo "PDX LinearScan | $dataset"
     ./benchmarks/BenchmarkPDXLinearScan ${dataset}

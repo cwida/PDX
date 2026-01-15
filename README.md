@@ -75,7 +75,7 @@ python ./examples/pdxearch_simple.py
 For more details on the available examples and how to use your own data, refer to [/examples/README.md](./examples/README.md). 
 
 ### Notes
-- We heavily rely on [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) to create the underlying IVF indexes. 
+- We heavily rely on [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) to create the underlying IVF indexes. To quickly install it you can do: `pip install faiss-cpu`
 - PDX is an ongoing research project. In its current state, it is not production-quality code.
 
 ## Use Cases
