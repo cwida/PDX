@@ -66,13 +66,6 @@ int main(int argc, char *argv[]) {
     std::cout << std::setprecision(16) << distances[N_VECTORS-1] << "\n"; // Dummy print so the compiler does the job
 
     BenchmarkMetadata results_metadata = {
-            dataset,
-            ALGORITHM,
-            NUM_MEASURE_RUNS,
-            NUM_WARMUP_RUNS,
-            1,
-            0,
-            0
-    };
+        dataset, ALGORITHM, NUM_MEASURE_RUNS, 1, 1, 0, 0};
     BenchmarkUtils::SaveResults(runtimes, RESULTS_PATH, results_metadata);
 }

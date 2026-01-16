@@ -122,6 +122,8 @@ These kernels DO NOT do a KNN search query. The only work measured is the distan
 - SIMD+L2: ```/benchmarks/KernelNaryL2```
 - SIMD+IP: ```/benchmarks/KernelNaryIP```
 
+*Only support vector element type of float32, for other types like uint8, checkout the updates on branch `main`*
+
 All these executables have two obligatory parameters:
 - `<n_vector>` and `<dimension>`. These determine the random collection to be used for the test. The values are limited to: `n_vectors=(64 128 512 1024 4096 8192 16384 65536 131072 262144 1048576)`,
   `dimensions=(8 16 32 64 128 192 256 384 512 768 1024 1536 2048 4096 8192)`. 
