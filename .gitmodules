@@ -8,3 +8,6 @@
 [submodule "extern/findFFTW"]
 	path = extern/findFFTW
 	url = https://github.com/egpbos/findfftw.git
+[submodule "extern/SuperKMeans"]
+	path = extern/SuperKMeans
+	url = https://github.com/lkuffo/SuperKMeans
