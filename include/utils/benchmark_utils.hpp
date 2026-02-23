@@ -1,5 +1,4 @@
-#ifndef PDX_BENCHMARK_UTILS_HPP
-#define PDX_BENCHMARK_UTILS_HPP
+#pragma once
 
 #include <cstdint>
 #include <fcntl.h>
@@ -238,5 +237,3 @@ public:
 };
 
 BenchmarkUtils BENCHMARK_UTILS;
-
-#endif //PDX_BENCHMARK_UTILS_HPP

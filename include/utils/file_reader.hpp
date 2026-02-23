@@ -1,5 +1,4 @@
-#ifndef PDX_UTILS_HPP
-#define PDX_UTILS_HPP
+#pragma once
 
 #include <cstdint>
 #include <memory>
@@ -32,4 +31,3 @@ inline std::unique_ptr<char[]> MmapFile(const std::string& filename) {
     return data;
 }
 
-#endif //PDX_UTILS_HPP

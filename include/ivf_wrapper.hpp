@@ -9,25 +9,13 @@
 
 namespace PDX {
 
-
-template <Quantization q>
-class IndexPDXIVF{};
-
-template <>
-class IndexPDXIVF<F32> {
+template <Quantization Q>
+class IndexPDXIVF {
 public:
-	using cluster_t = Cluster<F32>;
+	using cluster_t = Cluster<Q>;
+	using data_t = pdx_data_t<Q>;
 
-    std::unique_ptr<char[]> file_buffer;
-
-	// const uint32_t num_dimensions {};
-	// const uint64_t total_num_embeddings {};
-	// const uint32_t num_clusters {};
-	// const uint32_t num_vertical_dimensions {};
-	// const uint32_t num_horizontal_dimensions {};
-	// std::vector<cluster_t> clusters;
-	// const bool is_normalized {};
-	// std::vector<float> centroids;
+	std::unique_ptr<char[]> file_buffer;
 
 	uint32_t num_dimensions {};
 	uint64_t total_num_embeddings {};
@@ -38,9 +26,14 @@ public:
 	bool is_normalized {};
 	std::vector<float> centroids;
 
-    IndexPDXIVF() = default;
+	// U8-specific quantization parameters
+	float quantization_scale = 1.0f;
+	float quantization_scale_squared = 1.0f;
+	float inverse_quantization_scale_squared = 1.0f;
+	float quantization_base = 0.0f;
 
-    ~IndexPDXIVF() = default;
+	IndexPDXIVF() = default;
+	~IndexPDXIVF() = default;
 
 	IndexPDXIVF(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized)
 	    : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings), num_clusters(num_clusters),
@@ -49,77 +42,6 @@ public:
 	      is_normalized(is_normalized) {
 		clusters.reserve(num_clusters);
 	}
-
-    void Restore(const std::string &filename) {
-        file_buffer = MmapFile(filename);
-        Load(file_buffer.get());
-    }
-
-    void Load(char *input) {
-        char *next_value = input;
-        num_dimensions = ((uint32_t *) input)[0];
-        num_vertical_dimensions = ((uint32_t *) input)[1];
-        num_horizontal_dimensions = ((uint32_t *) input)[2];
-
-        next_value += sizeof(uint32_t) * 3;
-        num_clusters = ((uint32_t *) next_value)[0];
-        next_value += sizeof(uint32_t);
-        auto *nums_embeddings = (uint32_t *) next_value;
-        next_value += num_clusters * sizeof(uint32_t);
-        clusters.reserve(num_clusters);
-        for (size_t i = 0; i < num_clusters; ++i) {
-            clusters.emplace_back(nums_embeddings[i], num_dimensions);
-            memcpy(clusters[i].data, next_value, sizeof(float) * clusters[i].num_embeddings * num_dimensions);
-            next_value += sizeof(float) * clusters[i].num_embeddings * num_dimensions;
-        }
-        for (size_t i = 0; i < num_clusters; ++i) {
-            memcpy(clusters[i].indices, next_value, sizeof(uint32_t) * clusters[i].num_embeddings);
-            next_value += sizeof(uint32_t) * clusters[i].num_embeddings;
-        }
-        next_value += sizeof(float) * num_dimensions; // Skipping means (not used)
-
-        is_normalized = ((char *) next_value)[0];
-        next_value += sizeof(char);
-        next_value += sizeof(char); // Skipping is_ivf field (not used)
-
-        centroids.resize(num_clusters * num_dimensions);
-        memcpy(centroids.data(), (float *) next_value, sizeof(float) * num_clusters * num_dimensions);
-    }
-};
-
-template <>
-class IndexPDXIVF<U8> {
-public:
-	using cluster_t = Cluster<U8>;
-    std::unique_ptr<char[]> file_buffer;
-
-	// const uint32_t num_dimensions {};
-	// const uint64_t total_num_embeddings {};
-	// const uint32_t num_clusters {};
-	// const uint32_t num_vertical_dimensions {};
-	// const uint32_t num_horizontal_dimensions {};
-	// std::vector<cluster_t> clusters;
-	// const bool is_normalized {};
-	// std::vector<float> centroids;
-
-	// const float quantization_scale = 1.0f;
-	// const float quantization_scale_squared = 1.0f;
-	// const float inverse_quantization_scale_squared = 1.0f;
-	// const float quantization_base = 0.0f;
-
-	uint32_t num_dimensions {};
-	uint64_t total_num_embeddings {};
-	uint32_t num_clusters {};
-	uint32_t num_vertical_dimensions {};
-	uint32_t num_horizontal_dimensions {};
-	std::vector<cluster_t> clusters;
-	bool is_normalized {};
-	std::vector<float> centroids;
-
-	float quantization_scale = 1.0f;
-	float quantization_scale_squared = 1.0f;
-	float inverse_quantization_scale_squared = 1.0f;
-	float quantization_base = 0.0f;
 
 	IndexPDXIVF(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized,
 	            float quantization_scale, float quantization_base)
@@ -133,52 +55,53 @@ public:
 		clusters.reserve(num_clusters);
 	}
 
-    IndexPDXIVF() = default;
+	void Restore(const std::string &filename) {
+		file_buffer = MmapFile(filename);
+		Load(file_buffer.get());
+	}
 
-    ~IndexPDXIVF() = default;
+	void Load(char *input) {
+		char *next_value = input;
+		num_dimensions = ((uint32_t *) input)[0];
+		num_vertical_dimensions = ((uint32_t *) input)[1];
+		num_horizontal_dimensions = ((uint32_t *) input)[2];
 
-    void Restore(const std::string &filename) {
-        file_buffer = MmapFile(filename);
-        Load(file_buffer.get());
-    }
+		next_value += sizeof(uint32_t) * 3;
+		num_clusters = ((uint32_t *) next_value)[0];
+		next_value += sizeof(uint32_t);
+		auto *nums_embeddings = (uint32_t *) next_value;
+		next_value += num_clusters * sizeof(uint32_t);
+		clusters.reserve(num_clusters);
+		for (size_t i = 0; i < num_clusters; ++i) {
+			clusters.emplace_back(nums_embeddings[i], num_dimensions);
+			memcpy(clusters[i].data, next_value, sizeof(data_t) * clusters[i].num_embeddings * num_dimensions);
+			next_value += sizeof(data_t) * clusters[i].num_embeddings * num_dimensions;
+		}
+		for (size_t i = 0; i < num_clusters; ++i) {
+			memcpy(clusters[i].indices, next_value, sizeof(uint32_t) * clusters[i].num_embeddings);
+			next_value += sizeof(uint32_t) * clusters[i].num_embeddings;
+		}
+		if constexpr (Q == F32) {
+			next_value += sizeof(float) * num_dimensions; // Skipping means (not used)
+		}
 
-    void Load(char *input) {
-        char *next_value = input;
-        num_dimensions = ((uint32_t *) input)[0];
-        num_vertical_dimensions = ((uint32_t *) input)[1];
-        num_horizontal_dimensions = ((uint32_t *) input)[2];
+		is_normalized = ((char *) next_value)[0];
+		next_value += sizeof(char);
+		next_value += sizeof(char); // Skipping is_ivf field (not used)
 
-        next_value += sizeof(uint32_t) * 3;
-        num_clusters = ((uint32_t *) next_value)[0];
-        next_value += sizeof(uint32_t);
-        auto *nums_embeddings = (uint32_t *) next_value;
-        next_value += num_clusters * sizeof(uint32_t);
-        clusters.reserve(num_clusters);
-        for (size_t i = 0; i < num_clusters; ++i) {
-            clusters.emplace_back(nums_embeddings[i], num_dimensions);
-            memcpy(clusters[i].data, next_value, sizeof(uint8_t) * clusters[i].num_embeddings * num_dimensions);
-            next_value += sizeof(uint8_t) * clusters[i].num_embeddings * num_dimensions;
-        }
-        for (size_t i = 0; i < num_clusters; ++i) {
-            memcpy(clusters[i].indices, next_value, sizeof(uint32_t) * clusters[i].num_embeddings);
-            next_value += sizeof(uint32_t) * clusters[i].num_embeddings;
-        }
-        is_normalized = ((char *) next_value)[0];
-        next_value += sizeof(char);
-        next_value += sizeof(char); // Skipping is_ivf field (not used)
+		centroids.resize(num_clusters * num_dimensions);
+		memcpy(centroids.data(), (float *) next_value, sizeof(float) * num_clusters * num_dimensions);
+		next_value += sizeof(float) * num_clusters * num_dimensions;
 
-        centroids.resize(num_clusters * num_dimensions);
-        memcpy(centroids.data(), (float *) next_value, sizeof(float) * num_clusters * num_dimensions);
-        next_value += sizeof(float) * num_clusters * num_dimensions;
-
-        quantization_base = ((float *) next_value)[0];
-        next_value += sizeof(float);
-        quantization_scale = ((float *) next_value)[0];
-        next_value += sizeof(float);
-
-        quantization_scale_squared = quantization_scale * quantization_scale;
-        inverse_quantization_scale_squared = 1.0f / (quantization_scale * quantization_scale);
-    }
+		if constexpr (Q == U8) {
+			quantization_base = ((float *) next_value)[0];
+			next_value += sizeof(float);
+			quantization_scale = ((float *) next_value)[0];
+			next_value += sizeof(float);
+			quantization_scale_squared = quantization_scale * quantization_scale;
+			inverse_quantization_scale_squared = 1.0f / quantization_scale_squared;
+		}
+	}
 };
 
 template <Quantization Q>

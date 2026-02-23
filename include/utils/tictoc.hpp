@@ -1,5 +1,4 @@
-#ifndef PDX_TICTOC_HPP
-#define PDX_TICTOC_HPP
+#pragma once
 
 
 #include <cstdint>
@@ -17,9 +16,7 @@
 #include <unordered_map>
 #include <filesystem>
 
-/******************************************************************
- * Clock to benchmark algorithms runtime
- ******************************************************************/
+
 class TicToc {
 public:
     size_t accum_time = 0;
@@ -40,5 +37,3 @@ public:
                 end - start).count();
     }
 };
-
-#endif // PDX_TICTOC_HPP
