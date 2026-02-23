@@ -56,5 +56,3 @@ def get_delta_d(ndim):
 if __name__ == '__main__':
     if not os.path.exists(RAW_DATA):
         os.makedirs(RAW_DATA)
-    if not os.path.exists(NARY_DATA):
-        os.makedirs(NARY_DATA)

@@ -61,20 +61,6 @@ PYBIND11_MODULE(compiled, m) {
         .def("search", &PDX::IndexADSamplingIVFFlat::_py_Search, py::arg("q"), py::arg("k"), py::arg("n_probe"))
         .def("filtered_search", &PDX::IndexADSamplingIVFFlat::_py_FilteredSearch, py::arg("q"), py::arg("k"), py::arg("n_probe"), py::arg("n_passing_tuples"), py::arg("selection_vector"));
 
-    py::class_<PDX::IndexBONDIVFFlat>(m, "IndexBONDIVFFlat")
-        .def(py::init<>())
-        .def("restore", &PDX::IndexBONDIVFFlat::Restore, py::arg("path"))
-        .def("load", &PDX::IndexBONDIVFFlat::Load, py::arg("data"))
-        .def("search", &PDX::IndexBONDIVFFlat::_py_Search, py::arg("q"), py::arg("k"), py::arg("n_probe"))
-        .def("filtered_search", &PDX::IndexBONDIVFFlat::_py_FilteredSearch, py::arg("q"), py::arg("k"), py::arg("n_probe"), py::arg("n_passing_tuples"), py::arg("selection_vector"));
-
-    py::class_<PDX::IndexBONDFlat>(m, "IndexBONDFlat")
-        .def(py::init<>())
-        .def("restore", &PDX::IndexBONDFlat::Restore, py::arg("path"))
-        .def("load", &PDX::IndexBONDFlat::Load, py::arg("data"))
-        .def("search", &PDX::IndexBONDFlat::_py_Search, py::arg("q"), py::arg("k"))
-        .def("filtered_search", &PDX::IndexBONDFlat::_py_FilteredSearch, py::arg("q"), py::arg("k"), py::arg("n_passing_tuples"), py::arg("selection_vector"));
-
     py::class_<PDX::IndexADSamplingFlat>(m, "IndexADSamplingFlat")
         .def(py::init<>())
         .def("restore", &PDX::IndexADSamplingFlat::Restore, py::arg("path"), py::arg("matrix_path"))
@@ -83,10 +69,5 @@ PYBIND11_MODULE(compiled, m) {
         .def("search", &PDX::IndexADSamplingFlat::_py_Search, py::arg("q"), py::arg("k"))
         .def("filtered_search", &PDX::IndexADSamplingFlat::_py_FilteredSearch, py::arg("q"), py::arg("k"), py::arg("n_passing_tuples"), py::arg("selection_vector"));
 
-    py::class_<PDX::IndexPDXFlat>(m, "IndexPDXFlat")
-        .def(py::init<>())
-        .def("restore", &PDX::IndexPDXFlat::Restore, py::arg("path"))
-        .def("load", &PDX::IndexPDXFlat::Load, py::arg("data"))
-        .def("search", &PDX::IndexPDXFlat::_py_Search, py::arg("q"), py::arg("k"));
 
 }

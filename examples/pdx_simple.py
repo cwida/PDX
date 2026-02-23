@@ -3,7 +3,7 @@ import numpy as np
 import sklearn.datasets
 from sklearn.model_selection import train_test_split
 from examples_utils import TicToc
-from pdxearch.index_factory import IndexPDXADSamplingIVFFlat, IndexPDXBONDIVFFlat
+from pdxearch.index_factory import IndexPDXADSamplingIVFFlat
 
 """
 PDXearch (pruned search) + ADSampling with an IVF index (built with FAISS)

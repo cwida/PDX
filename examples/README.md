@@ -16,5 +16,4 @@ Our examples look for `.hdf5` files in `/benchmarks/datasets/downloaded`. These 
 - `pdx_ivf.py`: Pruned search + ADSampling with a **vanilla IVF index** (built with FAISS). The recall is controlled with the `nprobe` parameter.
 - `pdx_ivf_exhaustive.py`: Pruned search with ADSampling with a IVF index (built with FAISS). This example explore all the clusters (therefore, it is an exhaustive search). This lets the pruning strategy shine and get **up to 13x speedup**.
 - `pdx_noindex.py`: Pruned search with ADSampling on the entire collection (no index). This produces nearly exact results. 
-- `pdx_noindex_bond.py`: Pruned search with BOND on the entire collection (no index). This produces exact results and does not need a preprocessing of the data.
 - `pdx_persist.py`: Example to store the PDX index and the metadata of ADSampling in a file to use later.

@@ -26,7 +26,7 @@ def generate_adsampling_ivf(dataset_name: str, _type='pdx', normalize=True):
     base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-ivf'))
 
     # Store metadata needed by ADSampling
-    preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-matrix'))
+    preprocessor.store_metadata(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-matrix'))
 
 def generate_adsampling_ivf_global8(dataset_name: str, normalize=True):
     base_idx = BaseIndexPDXIVF(DIMENSIONALITIES[dataset_name], 'l2sq')
@@ -43,7 +43,7 @@ def generate_adsampling_ivf_global8(dataset_name: str, normalize=True):
     base_idx._to_pdx(data, _type='pdx-v4-h', quantize=True, centroids_preprocessor=preprocessor, use_original_centroids=True)
     base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-ivf-u8'))
 
-    preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-ivf-u8-matrix'))
+    preprocessor.store_metadata(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-ivf-u8-matrix'))
 
 def generate_adsampling_ivf2(dataset_name: str, normalize=True):
     base_idx = BaseIndexPDXIVF2(DIMENSIONALITIES[dataset_name], 'l2sq')
@@ -61,7 +61,7 @@ def generate_adsampling_ivf2(dataset_name: str, normalize=True):
     base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-ivf2'))
 
     # Store metadata needed by ADSampling
-    preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-ivf2-matrix'))
+    preprocessor.store_metadata(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-ivf2-matrix'))
 
 def generate_adsampling_ivf2_global8(dataset_name: str, normalize=True):
     base_idx = BaseIndexPDXIVF2(DIMENSIONALITIES[dataset_name], 'l2sq')
@@ -82,7 +82,7 @@ def generate_adsampling_ivf2_global8(dataset_name: str, normalize=True):
     base_idx._to_pdx(data, _type='pdx-v4-h', quantize=True, centroids_preprocessor=preprocessor, use_original_centroids=True)
     base_idx._persist(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-ivf2-u8'))
 
-    preprocessor.store_metadata(os.path.join(NARY_ADSAMPLING_DATA, dataset_name + '-ivf2-u8-matrix'))
+    preprocessor.store_metadata(os.path.join(PDX_ADSAMPLING_DATA, dataset_name + '-ivf2-u8-matrix'))
 
 
 if __name__ == "__main__":

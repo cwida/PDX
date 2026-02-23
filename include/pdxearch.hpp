@@ -13,7 +13,6 @@
 #include "index_base/pdx_ivf.hpp"
 #include "index_base/pdx_ivf2.hpp"
 #include "pruners/adsampling.hpp"
-#include "pruners/bond.hpp"
 
 namespace PDX {
 
@@ -58,10 +57,6 @@ public:
         for (size_t i = 0; i < pdx_data.num_clusters; ++i){
             cluster_offsets[i] = total_embeddings;
             total_embeddings += pdx_data.clusters[i].num_embeddings;
-        }
-        if constexpr(std::is_same_v<Pruner, BondPruner<q>>) {
-            pdx_data.num_horizontal_dimensions = 0;
-            pdx_data.num_vertical_dimensions = pdx_data.num_dimensions;
         }
         quantizer.SetD(pdx_data.num_dimensions);
     }

@@ -10,13 +10,13 @@ include(CTest)
 # include(ExternalProject)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "extern/findFFTW")
-find_package(FFTW QUIET)
-if (FFTW_FLOAT_LIB_FOUND)
-    message(STATUS "FFTW (+float capabilities) found " ${FFTW_INCLUDE_DIRS})
-    add_definitions(-DHAS_FFTW)
-    include_directories(${FFTW_INCLUDE_DIRS})
-else()
-    message(WARNING "FFTW (+float capabilities) not found, we recommend you install it")
+#find_package(FFTW QUIET)
+#if (FFTW_FLOAT_LIB_FOUND)
+#    message(STATUS "FFTW (+float capabilities) found " ${FFTW_INCLUDE_DIRS})
+#    add_definitions(-DHAS_FFTW)
+#    include_directories(${FFTW_INCLUDE_DIRS})
+#else()
+#    message(WARNING "FFTW (+float capabilities) not found, we recommend you install it")
 # TODO: Perhaps downloading?
 #    set(FFTW_INSTALL_DIR ${CMAKE_BINARY_DIR}/fftw-install)
 #    ExternalProject_Add(fftw
@@ -30,7 +30,7 @@ else()
 #    set(FFTW_FLOAT_LIB ${FFTW_INSTALL_DIR}/lib/libfftw3f.so)
 #    set(FFTW_FOUND TRUE)
 #    add_definitions(-DHAS_FFTW)
-endif()
+#endif()
 
 # Installing FFTW https://www.fftw.org/fftw3_doc/Installation-on-Unix.html ---------------------------------------------
 # wget https://www.fftw.org/fftw-3.3.10.tar.gz

@@ -14,7 +14,7 @@ class PDXConstants:
     SUPPORTED_METRICS = [
         "l2sq"
     ]
-    HAS_FFTW = ctypes.util.find_library("fftw3f") is not None
+    HAS_FFTW = False # ctypes.util.find_library("fftw3f") is not None
 
 
 class PDXDistanceMetrics(Enum):

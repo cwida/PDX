@@ -37,9 +37,7 @@ struct PhasesRuntime {
 class BenchmarkUtils {
 public:
     inline static std::string PDX_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/pdx/";
-    inline static std::string NARY_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/nary/";
     inline static std::string PDX_ADSAMPLING_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/adsampling_pdx/";
-    inline static std::string NARY_ADSAMPLING_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/adsampling_nary/";
     inline static std::string GROUND_TRUTH_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/ground_truth/";
     inline static std::string FILTERED_GROUND_TRUTH_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/ground_truth_filtered/";
     inline static std::string PURESCAN_DATA = std::string{CMAKE_SOURCE_DIR} + "/benchmarks/datasets/purescan/";

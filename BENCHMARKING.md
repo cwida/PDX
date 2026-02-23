@@ -67,30 +67,22 @@ On the [/benchmarks/CMakeLists.txt](/benchmarks/CMakeLists.txt) file, you can fi
 - PDX IVF ADSampling + SQ8: `/benchmarks/BenchmarkU8PDXADSampling`
 - PDX Two-Level IVF ADSampling: `/benchmarks/BenchmarkIVF2ADSampling`
 - PDX Two Level IVF ADSampling + SQ8: `/benchmarks/BenchmarkU8IVF2ADSampling`
-- PDX IVF BOND: `/benchmarks/BenchmarkPDXIVFBOND`
 - FAISS IVF: `/benchmarks/python_scripts/ivf_faiss.py`
 
 All of these programs have two optional parameters:
 - `<dataset_name>` to specify the name of the dataset to use. If not given, it will try to use all the datasets set in [benchmark_utils.hpp](/include/utils/benchmark_utils.hpp) or [benchmark_utils.py](/benchmarks/python_scripts/benchmark_utils.py) in the Python scripts.
 - `<buckets_nprobe>` to specify the `nprobe` parameter on the IVF index, which controls the recall. If not given or `0`, it will use a series of parameters from 2 to 4096 set in the [benchmark_utils.hpp](/include/utils/benchmark_utils.hpp) or [benchmark_utils.py](/benchmarks/python_scripts/benchmark_utils.py) in the Python scripts.
 
-PDX IVF BOND has an additional third parameter:
-- `<dimension_ordering_criteria>`: An integer value. On Intel SPR, we use distance-to-means (`1`). For the other microarchitectures, we use dimension-zones (`5`). Refer to Figure 5 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf).
-
 > [!IMPORTANT]   
 > Recall that the IVF indexes must be created beforehand by the `setup_data.py` script.
 
 ###  Exact Search
-- PDX BOND: ```/benchmarks/BenchmarkPDXBOND```
 - USearch: ```python /benchmarks/python_scripts/exact_usearch.py```
 - SKLearn: ```python /benchmarks/python_scripts/exact_sklearn.py```
 - FAISS: ```python /benchmarks/python_scripts/exact_faiss.py```
 
 All of these programs have one optional parameter:
 - `<dataset_name>` to specify the name of the dataset to use. If not given, it will try to use all the datasets set in [benchmark_utils.hpp](/include/utils/benchmark_utils.hpp) or [benchmark_utils.py](/benchmarks/python_scripts/benchmark_utils.py) in the Python scripts.
-
-PDX BOND has an additional second parameter:
-- `<dimension_ordering_criteria>`: An integer value. On exact-search, we always use distance-to-means (`1`). Refer to Figure 5 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf).
 
 **Notes**: Usearch, SKLearn, and FAISS scripts expect the original `.hdf5` files under the `/downloaded` directory.  Furthermore, they require their respective Python packages (`pip install -r ./benchmarks/python_scripts/requirements.txt`).
 

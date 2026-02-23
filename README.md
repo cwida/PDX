@@ -117,7 +117,7 @@ An exhaustive search scans all the vectors in the collection. Having an IVF inde
 The key observation here is that thanks to the underlying IVF index, the exhaustive search starts with the most promising clusters. A tight threshold is found early on, which enables the quick pruning of most candidates.
 
 ### Exhaustive search without an index
-By creating random clusters with the PDX layout, you can still accelerate exhaustive search without an index. Unlike ADSampling, with BOND (our pruning algorithm), you can use the raw vectors. Gains vary depending on the distribution of the data. 
+By creating random clusters with the PDX layout, you can still accelerate exhaustive search without an index. 
 
 <p align="center">
         <img src="./benchmarks/results/bond-intel.png" alt="PDX Layout" style="{max-height: 150px}">

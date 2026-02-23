@@ -46,7 +46,7 @@ int main(int argc, char *argv[]) {
         PDX::IndexPDXIVF2 pdx_data = PDX::IndexPDXIVF2<PDX::Quantization::F32>();
         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf2");
 
-        std::unique_ptr<char[]> _matrix_ptr = MmapFile(BenchmarkUtils::NARY_ADSAMPLING_DATA + dataset + "-ivf2-matrix");
+        std::unique_ptr<char[]> _matrix_ptr = MmapFile(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf2-matrix");
         auto *_matrix = reinterpret_cast<float*>(_matrix_ptr.get());
 
         std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + dataset);
