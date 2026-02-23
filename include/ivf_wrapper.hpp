@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <cassert>
 #include <vector>
 #include <memory>
@@ -9,9 +10,6 @@
 namespace PDX {
 
 
-/******************************************************************
- * Very rudimentary memory to IVF index reader
- ******************************************************************/
 template <Quantization q>
 class IndexPDXIVF{};
 
@@ -181,6 +179,104 @@ public:
         quantization_scale_squared = quantization_scale * quantization_scale;
         inverse_quantization_scale_squared = 1.0f / (quantization_scale * quantization_scale);
     }
+};
+
+template <Quantization Q>
+class IndexPDXIVF2 : public IndexPDXIVF<Q> {
+public:
+	using data_t = pdx_data_t<Q>;
+
+	IndexPDXIVF<F32> l0; // Meso clusters
+
+	IndexPDXIVF2() = default;
+
+	void Restore(const std::string &filename) {
+		this->file_buffer = MmapFile(filename);
+		Load(this->file_buffer.get());
+	}
+
+	void Load(char *input) {
+		char *next_value = input;
+
+		// Header
+		uint32_t dims = ((uint32_t *) input)[0];
+		uint32_t v_dims = ((uint32_t *) input)[1];
+		uint32_t h_dims = ((uint32_t *) input)[2];
+		next_value += sizeof(uint32_t) * 3;
+
+		uint32_t n_clusters_l1 = ((uint32_t *) next_value)[0];
+		next_value += sizeof(uint32_t);
+		uint32_t n_clusters_l0 = ((uint32_t *) next_value)[0];
+		next_value += sizeof(uint32_t);
+
+		// === L0 (meso-clusters, always F32) ===
+		l0.num_dimensions = dims;
+		l0.num_vertical_dimensions = v_dims;
+		l0.num_horizontal_dimensions = h_dims;
+		l0.num_clusters = n_clusters_l0;
+
+		auto *nums_embeddings_l0 = (uint32_t *) next_value;
+		next_value += n_clusters_l0 * sizeof(uint32_t);
+
+		l0.clusters.reserve(n_clusters_l0);
+		for (size_t i = 0; i < n_clusters_l0; ++i) {
+			l0.clusters.emplace_back(nums_embeddings_l0[i], dims);
+			memcpy(l0.clusters[i].data, next_value,
+			       sizeof(float) * l0.clusters[i].num_embeddings * dims);
+			next_value += sizeof(float) * l0.clusters[i].num_embeddings * dims;
+		}
+		for (size_t i = 0; i < n_clusters_l0; ++i) {
+			memcpy(l0.clusters[i].indices, next_value,
+			       sizeof(uint32_t) * l0.clusters[i].num_embeddings);
+			next_value += sizeof(uint32_t) * l0.clusters[i].num_embeddings;
+		}
+
+		// === L1 (data clusters, inherited fields) ===
+		this->num_dimensions = dims;
+		this->num_vertical_dimensions = v_dims;
+		this->num_horizontal_dimensions = h_dims;
+		this->num_clusters = n_clusters_l1;
+
+		auto *nums_embeddings_l1 = (uint32_t *) next_value;
+		next_value += n_clusters_l1 * sizeof(uint32_t);
+
+		this->clusters.reserve(n_clusters_l1);
+		for (size_t i = 0; i < n_clusters_l1; ++i) {
+			this->clusters.emplace_back(nums_embeddings_l1[i], dims);
+			memcpy(this->clusters[i].data, next_value,
+			       sizeof(data_t) * this->clusters[i].num_embeddings * dims);
+			next_value += sizeof(data_t) * this->clusters[i].num_embeddings * dims;
+		}
+		for (size_t i = 0; i < n_clusters_l1; ++i) {
+			memcpy(this->clusters[i].indices, next_value,
+			       sizeof(uint32_t) * this->clusters[i].num_embeddings);
+			next_value += sizeof(uint32_t) * this->clusters[i].num_embeddings;
+		}
+
+		// === Shared metadata ===
+		bool normalized = ((char *) next_value)[0];
+		this->is_normalized = normalized;
+		l0.is_normalized = normalized;
+		next_value += sizeof(char);
+
+		// === L0 centroids (centroids_pdx from file) ===
+		l0.centroids.resize(n_clusters_l0 * dims);
+		memcpy(l0.centroids.data(), (float *) next_value,
+		       sizeof(float) * n_clusters_l0 * dims);
+		next_value += sizeof(float) * n_clusters_l0 * dims;
+
+		// === U8 quantization params ===
+		if constexpr (Q == U8) {
+			this->quantization_base = ((float *) next_value)[0];
+			next_value += sizeof(float);
+			this->quantization_scale = ((float *) next_value)[0];
+			next_value += sizeof(float);
+			this->quantization_scale_squared =
+			    this->quantization_scale * this->quantization_scale;
+			this->inverse_quantization_scale_squared =
+			    1.0f / this->quantization_scale_squared;
+		}
+	}
 };
 
 } // namespace PDX

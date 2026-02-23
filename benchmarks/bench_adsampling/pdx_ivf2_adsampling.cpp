@@ -9,9 +9,7 @@
 #include <memory>
 #include <iostream>
 #include "utils/file_reader.hpp"
-#include "index_base/pdx_ivf2.hpp"
-#include "pruners/adsampling.hpp"
-#include "pdxearch.hpp"
+#include "pdx_index.hpp"
 #include "utils/benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
@@ -23,17 +21,14 @@ int main(int argc, char *argv[]) {
     if (argc > 2){
         arg_ivf_nprobe = atoi(argv[2]);
     }
-    std::cout << "==> PDX IVF ADSampling\n";
+    std::cout << "==> PDX IVF2 ADSampling\n";
 
     std::string ALGORITHM = "adsampling";
     const bool VERIFY_RESULTS = BenchmarkUtils::VERIFY_RESULTS;
 
     uint8_t KNN = BenchmarkUtils::KNN;
-    float EPSILON0 = BenchmarkUtils::EPSILON0;
     size_t NUM_QUERIES;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
-
-    PDX::DimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
 
     std::string RESULTS_PATH;
     RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "IVF2_PDX_ADSAMPLING.csv";
@@ -43,11 +38,9 @@ int main(int argc, char *argv[]) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
-        PDX::IndexPDXIVF2 pdx_data = PDX::IndexPDXIVF2<PDX::Quantization::F32>();
-        pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf2");
-
-        std::unique_ptr<char[]> _matrix_ptr = MmapFile(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf2-matrix");
-        auto *_matrix = reinterpret_cast<float*>(_matrix_ptr.get());
+        PDX::PDXTreeIndexF32 pdx_index;
+        pdx_index.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf2",
+                          BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf2-matrix");
 
         std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + dataset);
         auto *query = reinterpret_cast<float*>(query_ptr.get());
@@ -57,9 +50,6 @@ int main(int argc, char *argv[]) {
         auto *int_ground_truth = reinterpret_cast<uint32_t*>(ground_truth.get());
         query += 1; // skip number of embeddings
 
-        PDX::ADSamplingPruner pruner = PDX::ADSamplingPruner<PDX::F32>(pdx_data.num_dimensions, EPSILON0, _matrix);
-        PDX::PDXearch searcher = PDX::PDXearch(pdx_data, pruner, 1, DIMENSION_ORDER);
-
         std::vector<size_t> nprobes_to_use;
         if (arg_ivf_nprobe > 0) {
             nprobes_to_use = {arg_ivf_nprobe};
@@ -68,7 +58,7 @@ int main(int argc, char *argv[]) {
         }
 
         for (size_t ivf_nprobe : nprobes_to_use) {
-            if (pdx_data.num_clusters < ivf_nprobe){
+            if (pdx_index.GetNumClusters() < ivf_nprobe){
                 continue;
             }
             if (arg_ivf_nprobe > 0 && ivf_nprobe != arg_ivf_nprobe){
@@ -76,20 +66,20 @@ int main(int argc, char *argv[]) {
             }
             std::vector<PhasesRuntime> runtimes;
             runtimes.resize(NUM_MEASURE_RUNS * NUM_QUERIES);
-            searcher.SetNProbe(ivf_nprobe);
+            pdx_index.SetNProbe(ivf_nprobe);
 
             float recalls = 0;
             if (VERIFY_RESULTS) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
-                    auto result = searcher.Search(query + l * pdx_data.num_dimensions, KNN);
+                    auto result = pdx_index.Search(query + l * pdx_index.GetNumDimensions(), KNN);
                     BenchmarkUtils::VerifyResult<true, PDX::F32>(recalls, result, KNN, int_ground_truth, l);
                 }
             }
             for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
-                    searcher.Search(query + l * pdx_data.num_dimensions, KNN);
+                    pdx_index.Search(query + l * pdx_index.GetNumDimensions(), KNN);
                     runtimes[j + l * NUM_MEASURE_RUNS] = {
-                            searcher.end_to_end_clock.accum_time
+                            pdx_index.GetSearcher().end_to_end_clock.accum_time
                     };
                 }
             }

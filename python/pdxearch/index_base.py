@@ -176,7 +176,7 @@ class BaseIndexPDXIVF2:
         data.extend(self.normalize.to_bytes(1, sys.byteorder))
         # TODO: Support other multiples of 64
         if len(self.centroids_l0) == PDXConstants.PDX_CENTROIDS_VECTOR_SIZE:
-            data.extend(self.centroids_l0.tobytes("F")) # PDX
+            data.extend(self.centroids_l0.tobytes("C")) # PDX
         else:
             data.extend(self.centroids_l0.tobytes("C"))  # Nary format
         if (_type == 'pdx-v4-h') and kwargs.get('quantize', False):

@@ -9,7 +9,6 @@
 #include <memory>
 #include <iostream>
 #include "utils/file_reader.hpp"
-#include "index_base/pdx_ivf2.hpp"
 #include "pruners/adsampling.hpp"
 #include "pdxearch.hpp"
 #include "db_mock/predicate_evaluator.hpp"

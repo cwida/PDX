@@ -8,8 +8,7 @@
 #include <iostream>
 #include <memory>
 #include "utils/file_reader.hpp"
-#include "index_base/pdx_ivf.hpp"
-#include "index_base/pdx_ivf2.hpp"
+#include "ivf_wrapper.hpp"
 #include "pdxearch.hpp"
 #include "pruners/adsampling.hpp"
 

@@ -9,7 +9,7 @@
 #include <memory>
 #include <iostream>
 #include "utils/file_reader.hpp"
-#include "index_base/pdx_ivf.hpp"
+#include "ivf_wrapper.hpp"
 #include "pdxearch.hpp"
 #include "pruners/adsampling.hpp"
 #include "utils/benchmark_utils.hpp"

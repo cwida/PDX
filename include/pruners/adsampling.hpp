@@ -10,10 +10,6 @@
 
 namespace PDX {
 
-/******************************************************************
- * ADSampling pruner
- ******************************************************************/
-template <Quantization Q = F32>
 class ADSamplingPruner {
 	using matrix_t = eigen_matrix_t;
 

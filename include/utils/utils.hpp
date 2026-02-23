@@ -5,7 +5,7 @@
 #include <queue>
 #include <random>
 #include "common.hpp"
-#include "index_base/pdx_ivf.hpp"
+#include "ivf_wrapper.hpp"
 #include "quantizers/scalar.hpp"
 #include "pruners/adsampling.hpp"
 
@@ -118,7 +118,7 @@ StoreClusterEmbeddings<PDX::Quantization::U8, uint8_t>(PDX::IndexPDXIVF<PDX::Qua
 class EmbeddingPreprocessor {
 private:
 	// For rotation matrix multiplication.
-	PDX::ADSamplingPruner<PDX::F32> pruner;
+	PDX::ADSamplingPruner pruner;
 	// For normalization.
 	PDX::Quantizer quantizer;
 	const size_t num_dimensions;

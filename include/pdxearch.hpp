@@ -11,13 +11,13 @@
 #include "db_mock/predicate_evaluator.hpp"
 #include "distance_computers/base_computers.hpp"
 #include "quantizers/scalar.hpp"
-#include "index_base/pdx_ivf.hpp"
+#include "ivf_wrapper.hpp"
 #include "pruners/adsampling.hpp"
 
 namespace PDX {
 
 template <Quantization Q = F32, class Index = IndexPDXIVF<Q>, class Quantizer = ScalarQuantizer<Q>,
-          DistanceMetric alpha = DistanceMetric::L2SQ, class Pruner = ADSamplingPruner<Q>>
+          DistanceMetric alpha = DistanceMetric::L2SQ, class Pruner = ADSamplingPruner>
 class PDXearch {
 public:
 	using distance_t = pdx_distance_t<Q>;
@@ -33,9 +33,7 @@ public:
 
 	PDXearch(index_t &data_index, Pruner &pruner)
 	    : quantizer(data_index.num_dimensions), pruner(pruner), pdx_data(data_index),
-	      cluster_offsets(new size_t[data_index.num_clusters]),
-	      cluster_indices_in_access_order(new uint32_t[data_index.num_clusters]),
-	      quantized_query_buf(new quantized_embedding_t[data_index.num_dimensions]) {
+	      cluster_offsets(new size_t[data_index.num_clusters]) {
 		for (size_t i = 0; i < data_index.num_clusters; ++i) {
 			cluster_offsets[i] = total_embeddings;
 			total_embeddings += data_index.clusters[i].num_embeddings;
@@ -46,6 +44,15 @@ public:
 	void SetNProbe(size_t nprobe) {
 		ivf_nprobe = nprobe;
 	}
+
+    size_t GetNProbe() const {
+        return ivf_nprobe;
+    }
+
+    void SetClusterAccessOrder(const std::vector<uint32_t> &cluster_indexes) {
+        cluster_indices_in_access_order = std::make_unique<uint32_t[]>(cluster_indexes.size());
+        std::copy(cluster_indexes.begin(), cluster_indexes.end(), cluster_indices_in_access_order.get());
+    }
 
     TicToc end_to_end_clock = TicToc();
     void ResetClocks(){
@@ -64,19 +71,11 @@ protected:
     // Prioritized list of indices of the clusters to probe. E.g., [0, 2, 1].
     std::unique_ptr<uint32_t[]> cluster_indices_in_access_order;
 
-    // Indexes into the cluster_indices_in_access_order list. This offset is
-    // incremented by 1 after probing a cluster.
-    uint64_t cluster_indices_in_access_order_offset {0};
-
     // Start: State for the current filtered search.
     uint32_t k = 0;
     quantized_embedding_t *prepared_query = nullptr;
     // Predicate evaluator for this rowgroup.
     std::unique_ptr<PredicateEvaluator> predicate_evaluator;
-
-    // Per-search query buffers, filled by QuantizeEmbedding in InitializeSearch (U8 path).
-    // Used by Search/FilteredSearch and passed to Warmup/Prune.
-    std::unique_ptr<quantized_embedding_t[]> quantized_query_buf;
 
     void ResetPruningDistances(size_t n_vectors, distance_t *pruning_distances) {
         std::fill(pruning_distances, pruning_distances + n_vectors, distance_t {0});
@@ -424,7 +423,12 @@ public:
 		size_t clusters_to_visit =
 		    (ivf_nprobe == 0 || ivf_nprobe > pdx_data.num_clusters) ? pdx_data.num_clusters : ivf_nprobe;
 		std::unique_ptr<uint32_t[]> local_cluster_order(new uint32_t[pdx_data.num_clusters]);
-		GetClustersAccessOrderIVF(query.get(), pdx_data, clusters_to_visit, local_cluster_order.get());
+		if (cluster_indices_in_access_order) {
+			std::copy(cluster_indices_in_access_order.get(),
+			          cluster_indices_in_access_order.get() + clusters_to_visit, local_cluster_order.get());
+		} else {
+			GetClustersAccessOrderIVF(query.get(), pdx_data, clusters_to_visit, local_cluster_order.get());
+		}
 		// PDXearch core
 		std::unique_ptr<quantized_embedding_t[]> local_quantized_query(
 		    new quantized_embedding_t[pdx_data.num_dimensions]);
