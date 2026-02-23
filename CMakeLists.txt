@@ -1,13 +1,54 @@
 cmake_minimum_required(VERSION 3.26)
-set(CMAKE_CXX_STANDARD 17)
 project(PDX)
+
+# Default to Release build if not specified
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (default: Release)" FORCE)
+endif()
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native")
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/extern/findFFTW")
 
 add_compile_options(-fPIC)
 include(FetchContent)
 include(CheckCXXCompilerFlag)
 include(CMakePrintHelpers)
 include(CTest)
-# include(ExternalProject)
+
+# find_package(OpenMP REQUIRED)
+
+list(PREPEND CMAKE_PREFIX_PATH /usr/local)
+
+set(MKL_INTERFACE_FULL "intel_lp64")
+find_package(MKL CONFIG QUIET)
+if (MKL_FOUND)
+    message(STATUS "MKL library found")
+    message(STATUS "MKL targets: ${MKL_IMPORTED_TARGETS}")
+    get_target_property(mkl_includes MKL::MKL INTERFACE_INCLUDE_DIRECTORIES)
+    message(STATUS "MKL includes: ${mkl_includes}")
+    add_definitions(-DEIGEN_USE_MKL_ALL)
+    set(MKL_COMMON_LIBS MKL::MKL OpenMP::OpenMP_CXX m dl)
+    set(BLAS_LINK_LIBRARIES "")
+else()
+    set(MKL_COMMON_LIBS "")
+    message(STATUS "MKL not found. Trying to find a BLAS implementation")
+
+    # On macOS, prefer Apple's Accelerate framework over other BLAS implementations
+    if(APPLE)
+        set(BLA_VENDOR Apple)
+        message(STATUS "macOS detected: prioritizing Apple Accelerate framework")
+    endif()
+
+    find_package(BLAS REQUIRED)
+    message(STATUS "BLAS library found: ${BLAS_LIBRARIES}")
+    add_definitions(-DEIGEN_USE_BLAS)
+    # set(BLAS_LINK_LIBRARIES ${BLAS_LIBRARIES} OpenMP::OpenMP_CXX)
+    set(BLAS_LINK_LIBRARIES ${BLAS_LIBRARIES})
+endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "extern/findFFTW")
 #find_package(FFTW QUIET)
@@ -17,41 +58,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "extern/findFFTW")
 #    include_directories(${FFTW_INCLUDE_DIRS})
 #else()
 #    message(WARNING "FFTW (+float capabilities) not found, we recommend you install it")
-# TODO: Perhaps downloading?
-#    set(FFTW_INSTALL_DIR ${CMAKE_BINARY_DIR}/fftw-install)
-#    ExternalProject_Add(fftw
-#        URL http://www.fftw.org/fftw-3.3.10.tar.gz
-#        PREFIX fftw-src
-#        CONFIGURE_COMMAND ./configure --prefix=${FFTW_INSTALL_DIR} --enable-float
-#        BUILD_COMMAND make -j4
-#        INSTALL_COMMAND make install
-#    )
-#    set(FFTW_INCLUDE_DIRS ${FFTW_INSTALL_DIR}/include)
-#    set(FFTW_FLOAT_LIB ${FFTW_INSTALL_DIR}/lib/libfftw3f.so)
-#    set(FFTW_FOUND TRUE)
-#    add_definitions(-DHAS_FFTW)
 #endif()
 
-# Installing FFTW https://www.fftw.org/fftw3_doc/Installation-on-Unix.html ---------------------------------------------
-# wget https://www.fftw.org/fftw-3.3.10.tar.gz
-# tar -xvzf fftw-3.3.10.tar.gz
-# cd fftw-3.3.10
-# ./configure --enable-float --enable-shared    # --enabled-shared is required for ctypes.util.find_library("fftw3f")
-# sudo make
-# sudo make install
-# ldconfig
-
-# CMAKE_SOURCE_DIR: ----------------------------------------------------------------------------------------------------
 add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-# Gtest: ---------------------------------------------------------------------------------------------------------------
-#include(FetchContent)
-#FetchContent_Declare(
-#        googletest
-#        URL https://github.com/google/googletest/archive/03597a01ee50ed33e9dfd640b249b4be3799d395.zip
-#)
-#set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-#FetchContent_MakeAvailable(googletest)
-
-include_directories(include extern)
+include_directories(include extern/Eigen)
 add_subdirectory(benchmarks)

@@ -1,17 +1,9 @@
-#ifndef PDX_IVF_HPP
-#define PDX_IVF_HPP
+#pragma once
 
 #include <cstdint>
 #include <cassert>
 #include <vector>
-#include <string>
 #include <memory>
-#include <numeric>
-#include <random>
-#include <algorithm>
-#include <cstring>
-#include <iostream>
-#include "utils/file_reader.hpp"
 #include "common.hpp"
 
 namespace PDX {
@@ -26,21 +18,39 @@ class IndexPDXIVF{};
 template <>
 class IndexPDXIVF<F32> {
 public:
-
-    using CLUSTER_TYPE = Cluster<F32>;
+	using cluster_t = Cluster<F32>;
 
     std::unique_ptr<char[]> file_buffer;
 
-    uint32_t num_dimensions{};
-    uint32_t num_clusters{};
-    uint32_t num_horizontal_dimensions{};
-    uint32_t num_vertical_dimensions{};
-    std::vector<CLUSTER_TYPE> clusters;
-    float *means{};
-    bool is_ivf{};
-    bool is_normalized{};
-    float *centroids{};
-    float *centroids_pdx{};
+	// const uint32_t num_dimensions {};
+	// const uint64_t total_num_embeddings {};
+	// const uint32_t num_clusters {};
+	// const uint32_t num_vertical_dimensions {};
+	// const uint32_t num_horizontal_dimensions {};
+	// std::vector<cluster_t> clusters;
+	// const bool is_normalized {};
+	// std::vector<float> centroids;
+
+	uint32_t num_dimensions {};
+	uint64_t total_num_embeddings {};
+	uint32_t num_clusters {};
+	uint32_t num_vertical_dimensions {};
+	uint32_t num_horizontal_dimensions {};
+	std::vector<cluster_t> clusters;
+	bool is_normalized {};
+	std::vector<float> centroids;
+
+    IndexPDXIVF() = default;
+
+    ~IndexPDXIVF() = default;
+
+	IndexPDXIVF(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized)
+	    : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings), num_clusters(num_clusters),
+	      num_vertical_dimensions(GetPDXDimensionSplit(num_dimensions).vertical_dimensions),
+	      num_horizontal_dimensions(GetPDXDimensionSplit(num_dimensions).horizontal_dimensions),
+	      is_normalized(is_normalized) {
+		clusters.reserve(num_clusters);
+	}
 
     void Restore(const std::string &filename) {
         file_buffer = MmapFile(filename);
@@ -58,53 +68,76 @@ public:
         next_value += sizeof(uint32_t);
         auto *nums_embeddings = (uint32_t *) next_value;
         next_value += num_clusters * sizeof(uint32_t);
-        clusters.resize(num_clusters);
+        clusters.reserve(num_clusters);
         for (size_t i = 0; i < num_clusters; ++i) {
-            CLUSTER_TYPE &cluster = clusters[i];
-            cluster.num_embeddings = nums_embeddings[i];
-            cluster.data = (float *) next_value;
-            next_value += sizeof(float) * cluster.num_embeddings * num_dimensions;
+            clusters.emplace_back(nums_embeddings[i], num_dimensions);
+            memcpy(clusters[i].data, next_value, sizeof(float) * clusters[i].num_embeddings * num_dimensions);
+            next_value += sizeof(float) * clusters[i].num_embeddings * num_dimensions;
         }
         for (size_t i = 0; i < num_clusters; ++i) {
-            CLUSTER_TYPE &cluster = clusters[i];
-            cluster.indices = (uint32_t *) next_value;
-            next_value += sizeof(uint32_t) * cluster.num_embeddings;
+            memcpy(clusters[i].indices, next_value, sizeof(uint32_t) * clusters[i].num_embeddings);
+            next_value += sizeof(uint32_t) * clusters[i].num_embeddings;
         }
-        means = (float *) next_value;
-        next_value += sizeof(float) * num_dimensions;
+        next_value += sizeof(float) * num_dimensions; // Skipping means (not used)
+
         is_normalized = ((char *) next_value)[0];
         next_value += sizeof(char);
-        is_ivf = ((char *) next_value)[0];
-        next_value += sizeof(char);
-        if (is_ivf) {
-            centroids = (float *) next_value;
-            next_value += sizeof(float) * num_clusters * num_dimensions;
-            centroids_pdx = (float *) next_value;
-        }
+        next_value += sizeof(char); // Skipping is_ivf field (not used)
+
+        centroids.resize(num_clusters * num_dimensions);
+        memcpy(centroids.data(), (float *) next_value, sizeof(float) * num_clusters * num_dimensions);
     }
 };
 
 template <>
 class IndexPDXIVF<U8> {
 public:
-
-    using CLUSTER_TYPE = Cluster<U8>;
-
+	using cluster_t = Cluster<U8>;
     std::unique_ptr<char[]> file_buffer;
 
-    uint32_t num_dimensions{};
-    uint32_t num_clusters{};
-    uint32_t num_horizontal_dimensions{};
-    uint32_t num_vertical_dimensions{};
-    std::vector<Cluster<U8>> clusters;
-    float *means{};
-    bool is_ivf{};
-    bool is_normalized{};
-    float *centroids{};
-    float *centroids_pdx{};
+	// const uint32_t num_dimensions {};
+	// const uint64_t total_num_embeddings {};
+	// const uint32_t num_clusters {};
+	// const uint32_t num_vertical_dimensions {};
+	// const uint32_t num_horizontal_dimensions {};
+	// std::vector<cluster_t> clusters;
+	// const bool is_normalized {};
+	// std::vector<float> centroids;
 
-    float for_base {};
-    float scale_factor {};
+	// const float quantization_scale = 1.0f;
+	// const float quantization_scale_squared = 1.0f;
+	// const float inverse_quantization_scale_squared = 1.0f;
+	// const float quantization_base = 0.0f;
+
+	uint32_t num_dimensions {};
+	uint64_t total_num_embeddings {};
+	uint32_t num_clusters {};
+	uint32_t num_vertical_dimensions {};
+	uint32_t num_horizontal_dimensions {};
+	std::vector<cluster_t> clusters;
+	bool is_normalized {};
+	std::vector<float> centroids;
+
+	float quantization_scale = 1.0f;
+	float quantization_scale_squared = 1.0f;
+	float inverse_quantization_scale_squared = 1.0f;
+	float quantization_base = 0.0f;
+
+	IndexPDXIVF(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized,
+	            float quantization_scale, float quantization_base)
+	    : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings), num_clusters(num_clusters),
+	      num_vertical_dimensions(GetPDXDimensionSplit(num_dimensions).vertical_dimensions),
+	      num_horizontal_dimensions(GetPDXDimensionSplit(num_dimensions).horizontal_dimensions),
+	      is_normalized(is_normalized), quantization_scale(quantization_scale),
+	      quantization_scale_squared(quantization_scale * quantization_scale),
+	      inverse_quantization_scale_squared(1.0f / (quantization_scale * quantization_scale)),
+	      quantization_base(quantization_base) {
+		clusters.reserve(num_clusters);
+	}
+
+    IndexPDXIVF() = default;
+
+    ~IndexPDXIVF() = default;
 
     void Restore(const std::string &filename) {
         file_buffer = MmapFile(filename);
@@ -122,37 +155,32 @@ public:
         next_value += sizeof(uint32_t);
         auto *nums_embeddings = (uint32_t *) next_value;
         next_value += num_clusters * sizeof(uint32_t);
-        clusters.resize(num_clusters);
+        clusters.reserve(num_clusters);
         for (size_t i = 0; i < num_clusters; ++i) {
-            CLUSTER_TYPE &cluster = clusters[i];
-            cluster.num_embeddings = nums_embeddings[i];
-            cluster.data = (uint8_t *) next_value;
-            next_value += sizeof(uint8_t) * cluster.num_embeddings * num_dimensions;
+            clusters.emplace_back(nums_embeddings[i], num_dimensions);
+            memcpy(clusters[i].data, next_value, sizeof(uint8_t) * clusters[i].num_embeddings * num_dimensions);
+            next_value += sizeof(uint8_t) * clusters[i].num_embeddings * num_dimensions;
         }
         for (size_t i = 0; i < num_clusters; ++i) {
-            CLUSTER_TYPE &cluster = clusters[i];
-            cluster.indices = (uint32_t *) next_value;
-            next_value += sizeof(uint32_t) * cluster.num_embeddings;
+            memcpy(clusters[i].indices, next_value, sizeof(uint32_t) * clusters[i].num_embeddings);
+            next_value += sizeof(uint32_t) * clusters[i].num_embeddings;
         }
-        // means = (float *) next_value;
-        // next_value += sizeof(float) * num_dimensions;
         is_normalized = ((char *) next_value)[0];
         next_value += sizeof(char);
-        is_ivf = ((char *) next_value)[0];
-        next_value += sizeof(char);
-        if (is_ivf) {
-            centroids = (float *) next_value;
-            next_value += sizeof(float) * num_clusters * num_dimensions;
-            centroids_pdx = (float *) next_value;
-        }
+        next_value += sizeof(char); // Skipping is_ivf field (not used)
 
-        for_base = ((float *) next_value)[0];
+        centroids.resize(num_clusters * num_dimensions);
+        memcpy(centroids.data(), (float *) next_value, sizeof(float) * num_clusters * num_dimensions);
+        next_value += sizeof(float) * num_clusters * num_dimensions;
+
+        quantization_base = ((float *) next_value)[0];
         next_value += sizeof(float);
-        scale_factor = ((float *) next_value)[0];
+        quantization_scale = ((float *) next_value)[0];
         next_value += sizeof(float);
+
+        quantization_scale_squared = quantization_scale * quantization_scale;
+        inverse_quantization_scale_squared = 1.0f / (quantization_scale * quantization_scale);
     }
 };
 
 } // namespace PDX
-
-#endif //PDX_IVF_HPP

@@ -14,6 +14,8 @@
 #include <iomanip>
 #include <chrono>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include <filesystem>
 #include "../common.hpp"
 
@@ -129,7 +131,7 @@ public:
     inline static uint8_t GROUND_TRUTH_MAX_K = 100; // To properly skip on the ground truth file (do not change)
 
     template<bool MEASURE_RECALL, PDX::Quantization q=PDX::F32>
-    static void VerifyResult(float &recalls, const std::vector<PDX::KNNCandidate<q>> &result, size_t knn,
+    static void VerifyResult(float &recalls, const std::vector<PDX::KNNCandidate> &result, size_t knn,
                              const uint32_t *int_ground_truth, size_t n_query) {
         std::unordered_set<uint32_t> seen;
         for (const auto& val : result) {

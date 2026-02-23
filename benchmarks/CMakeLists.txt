@@ -1,3 +1,10 @@
+set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES})
+
+if (FFTW_FOUND)
+    message(STATUS "Linking FFTW: ${FFTW_FLOAT_LIB} ${FFTW_FLOAT_OPENMP_LIB}")
+    list(APPEND BENCH_COMMON_LIBS ${FFTW_FLOAT_LIB} ${FFTW_FLOAT_OPENMP_LIB})
+endif()
+
 add_executable(BenchmarkPDXADSampling bench_adsampling/pdx_ivf_adsampling.cpp)
 add_executable(BenchmarkIVF2ADSampling bench_adsampling/pdx_ivf2_adsampling.cpp)
 add_executable(BenchmarkU8PDXADSampling bench_adsampling/pdx_ivf_adsampling_u8.cpp)
@@ -5,11 +12,9 @@ add_executable(BenchmarkU8IVF2ADSampling bench_adsampling/pdx_ivf2_adsampling_u8
 add_executable(FilteredBenchmarkU8IVF2ADSampling bench_adsampling/pdx_ivf2_adsampling_u8_filtered.cpp)
 add_executable(FilteredBenchmarkPDXADSampling bench_adsampling/pdx_ivf_adsampling_filtered.cpp)
 
-if (FFTW_FOUND)
-    target_link_libraries(BenchmarkPDXADSampling ${FFTW_FLOAT_LIB})
-    target_link_libraries(FilteredBenchmarkPDXADSampling ${FFTW_FLOAT_LIB})
-    target_link_libraries(BenchmarkIVF2ADSampling ${FFTW_FLOAT_LIB})
-    target_link_libraries(BenchmarkU8PDXADSampling ${FFTW_FLOAT_LIB})
-    target_link_libraries(BenchmarkU8IVF2ADSampling ${FFTW_FLOAT_LIB})
-    target_link_libraries(FilteredBenchmarkU8IVF2ADSampling ${FFTW_FLOAT_LIB})
-endif()
+target_link_libraries(BenchmarkPDXADSampling ${BENCH_COMMON_LIBS})
+target_link_libraries(FilteredBenchmarkPDXADSampling ${BENCH_COMMON_LIBS})
+target_link_libraries(BenchmarkIVF2ADSampling ${BENCH_COMMON_LIBS})
+target_link_libraries(BenchmarkU8PDXADSampling ${BENCH_COMMON_LIBS})
+target_link_libraries(BenchmarkU8IVF2ADSampling ${BENCH_COMMON_LIBS})
+target_link_libraries(FilteredBenchmarkU8IVF2ADSampling ${BENCH_COMMON_LIBS})

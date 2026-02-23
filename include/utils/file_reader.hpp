@@ -16,9 +16,7 @@
 #include <linux/mman.h>
 #endif
 
-/******************************************************************
- * File reader
- ******************************************************************/
+
 inline std::unique_ptr<char[]> MmapFile(const std::string& filename) {
     struct stat file_stats {};
     int fd = ::open(filename.c_str(), O_RDONLY);

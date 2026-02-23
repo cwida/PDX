@@ -1,59 +1,59 @@
 #pragma once
-#ifndef PDX_BASE_COMPUTERS_HPP
-#define PDX_BASE_COMPUTERS_HPP
 
-#include <cstdint>
-#include <cstdio>
-#include <type_traits>
 #include "common.hpp"
 
 #ifdef __ARM_NEON
-#include "neon_computers.hpp"
+#include "distance_computers/neon_computers.hpp"
 #endif
 
 #if defined(__AVX2__) && !defined(__AVX512F__)
-#include "avx2_computers.hpp"
+#include "distance_computers/avx2_computers.hpp"
 #endif
 
 #ifdef __AVX512F__
-#include "avx512_computers.hpp"
+#include "distance_computers/avx512_computers.hpp"
+#endif
+
+// Fallback to scalar computer.
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+#include "distance_computers/scalar_computers.hpp"
 #endif
 
 // TODO: Support SVE
 
 namespace PDX {
 
-template <DistanceFunction alpha, Quantization q>
+template <DistanceMetric alpha, Quantization Q>
 class DistanceComputer {};
 
-template<>
-class DistanceComputer<L2, Quantization::F32> {
-    using computer = SIMDComputer<L2, F32>;
-public:
-    constexpr static auto VerticalReorderedPruning = computer::VerticalPruning<true, true>;
-    constexpr static auto VerticalPruning = computer::VerticalPruning<false, true>;
-    constexpr static auto VerticalReordered = computer::VerticalPruning<true, false>;
-    constexpr static auto Vertical = computer::VerticalPruning<false, false>;
+template <>
+class DistanceComputer<DistanceMetric::L2SQ, Quantization::F32> {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+	using computer = ScalarComputer<DistanceMetric::L2SQ, F32>;
+#else
+	using computer = SIMDComputer<DistanceMetric::L2SQ, F32>;
+#endif
 
-    constexpr static auto VerticalBlock = computer::Vertical;
-    constexpr static auto Horizontal = computer::Horizontal;
+public:
+	constexpr static auto VerticalPruning = computer::Vertical<true>;
+	constexpr static auto Vertical = computer::Vertical<false>;
+
+	constexpr static auto Horizontal = computer::Horizontal;
 };
 
-template<>
-class DistanceComputer<L2, Quantization::U8> {
-    using computer = SIMDComputer<L2, U8>;
-public:
-    constexpr static auto VerticalReorderedPruning = computer::VerticalPruning<true, true>;
-    constexpr static auto VerticalPruning = computer::VerticalPruning<false, true>;
-    constexpr static auto VerticalReordered = computer::VerticalPruning<true, false>;
-    constexpr static auto Vertical = computer::VerticalPruning<false, false>;
+template <>
+class DistanceComputer<DistanceMetric::L2SQ, Quantization::U8> {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+	using computer = ScalarComputer<DistanceMetric::L2SQ, U8>;
+#else
+	using computer = SIMDComputer<DistanceMetric::L2SQ, U8>;
+#endif
 
-    constexpr static auto VerticalBlock = computer::Vertical;
-    constexpr static auto Horizontal = computer::Horizontal;
+public:
+	constexpr static auto VerticalPruning = computer::Vertical<true>;
+	constexpr static auto Vertical = computer::Vertical<false>;
+
+	constexpr static auto Horizontal = computer::Horizontal;
 };
 
-
-}; // namespace PDX
-
-
-#endif //PDX_BASE_COMPUTERS_HPP
+} // namespace PDX
