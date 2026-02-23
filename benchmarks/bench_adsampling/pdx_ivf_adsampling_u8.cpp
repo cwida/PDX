@@ -29,11 +29,8 @@ int main(int argc, char *argv[]) {
     const bool VERIFY_RESULTS = BenchmarkUtils::VERIFY_RESULTS;
 
     uint8_t KNN = BenchmarkUtils::KNN;
-    float EPSILON0 = BenchmarkUtils::EPSILON0;
     size_t NUM_QUERIES;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
-
-    PDX::DimensionsOrder DIMENSION_ORDER = PDX::SEQUENTIAL;
 
     std::string RESULTS_PATH;
     RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "U8_IVF_PDX_ADSAMPLING.csv";
@@ -56,8 +53,8 @@ int main(int argc, char *argv[]) {
         auto *int_ground_truth = reinterpret_cast<uint32_t*>(ground_truth.get());
         query += 1; // skip number of embeddings
 
-        PDX::ADSamplingPruner pruner = PDX::ADSamplingPruner<PDX::U8>(pdx_data.num_dimensions, EPSILON0, _matrix);
-        PDX::PDXearch searcher = PDX::PDXearch<PDX::U8>(pdx_data, pruner, 1, DIMENSION_ORDER);
+        PDX::ADSamplingPruner pruner = PDX::ADSamplingPruner<PDX::U8>(pdx_data.num_dimensions,  _matrix);
+        PDX::PDXearch searcher = PDX::PDXearch<PDX::U8>(pdx_data, pruner);
 
         std::vector<size_t> nprobes_to_use;
         if (arg_ivf_nprobe > 0) {
