@@ -1,16 +1,16 @@
+#include "benchmark_utils.hpp"
+#include "pdx/index.hpp"
+#include "pdx/utils.hpp"
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include "pdx/utils.hpp"
-#include "pdx/index.hpp"
-#include "benchmark_utils.hpp"
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <index_type> [dataset] [nprobe]\n";
         std::cerr << "Index types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
         std::cerr << "Available datasets:";
-        for (const auto &[name, _] : RAW_DATASET_PARAMS) {
+        for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
         }
         std::cerr << "\n";
@@ -38,10 +38,12 @@ int main(int argc, char *argv[]) {
 
     // Build results file name from index type (e.g., "pdx_f32" -> "PDX_F32_ADSAMPLING.csv")
     std::string index_type_upper = index_type;
-    for (auto &c : index_type_upper) c = toupper(c);
-    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + index_type_upper + "_ADSAMPLING.csv";
+    for (auto& c : index_type_upper)
+        c = toupper(c);
+    std::string RESULTS_PATH =
+        BENCHMARK_UTILS.RESULTS_DIR_PATH + index_type_upper + "_ADSAMPLING.csv";
 
-    for (const auto &[dataset, info] : RAW_DATASET_PARAMS) {
+    for (const auto& [dataset, info] : RAW_DATASET_PARAMS) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset) {
             continue;
         }
@@ -50,22 +52,26 @@ int main(int argc, char *argv[]) {
         std::cout << "Loading " << index_path << "...\n";
         auto pdx_index = PDX::LoadPDXIndex(index_path);
         std::cout << "Index in-memory size: " << std::fixed << std::setprecision(2)
-                  << static_cast<double>(pdx_index->GetInMemorySizeInBytes()) / (1024.0 * 1024.0) << " MB\n";
+                  << static_cast<double>(pdx_index->GetInMemorySizeInBytes()) / (1024.0 * 1024.0)
+                  << " MB\n";
 
-        std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + info.pdx_dataset_name);
-        auto *query = reinterpret_cast<float *>(query_ptr.get());
+        std::unique_ptr<char[]> query_ptr =
+            MmapFile(BenchmarkUtils::QUERIES_DATA + info.pdx_dataset_name);
+        auto* query = reinterpret_cast<float*>(query_ptr.get());
 
         NUM_QUERIES = info.num_queries;
-        std::unique_ptr<char[]> ground_truth = MmapFile(
-            BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm");
-        auto *int_ground_truth = reinterpret_cast<uint32_t *>(ground_truth.get());
+        std::unique_ptr<char[]> ground_truth =
+            MmapFile(BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm");
+        auto* int_ground_truth = reinterpret_cast<uint32_t*>(ground_truth.get());
         query += 1; // skip number of embeddings
 
         std::vector<size_t> nprobes_to_use;
         if (arg_ivf_nprobe > 0) {
             nprobes_to_use = {arg_ivf_nprobe};
         } else {
-            nprobes_to_use.assign(std::begin(BenchmarkUtils::IVF_PROBES), std::end(BenchmarkUtils::IVF_PROBES));
+            nprobes_to_use.assign(
+                std::begin(BenchmarkUtils::IVF_PROBES), std::end(BenchmarkUtils::IVF_PROBES)
+            );
         }
 
         for (size_t ivf_nprobe : nprobes_to_use) {
@@ -93,9 +99,7 @@ int main(int argc, char *argv[]) {
                     clock.Tic();
                     pdx_index->Search(query + l * pdx_index->GetNumDimensions(), KNN);
                     clock.Toc();
-                    runtimes[j + l * NUM_MEASURE_RUNS] = {
-                        clock.accum_time
-                    };
+                    runtimes[j + l * NUM_MEASURE_RUNS] = {clock.accum_time};
                 }
             }
             float real_selectivity = 1 - BenchmarkUtils::SELECTIVITY_THRESHOLD;

@@ -6,16 +6,20 @@
 #include <memory>
 #include <vector>
 
-#include "pdx/index.hpp"
 #include "benchmark_utils.hpp"
+#include "pdx/index.hpp"
 
 template <typename IndexT>
-void BuildAndSave(const RawDatasetInfo &info, const std::string &dataset, const std::string &index_type,
-                  const float *data) {
+void BuildAndSave(
+    const RawDatasetInfo& info,
+    const std::string& dataset,
+    const std::string& index_type,
+    const float* data
+) {
     const size_t d = info.num_dimensions;
     const size_t n = info.num_embeddings;
 
-    PDX::PDXIndexConfig index_config {
+    PDX::PDXIndexConfig index_config{
         .num_dimensions = static_cast<uint32_t>(d),
         .distance_metric = info.distance_metric,
         .seed = 42,
@@ -32,7 +36,8 @@ void BuildAndSave(const RawDatasetInfo &info, const std::string &dataset, const 
     std::cout << "Build time: " << build_ms << " ms\n";
     std::cout << "Clusters: " << pdx_index.GetNumClusters() << "\n";
     std::cout << "Index in-memory size: " << std::fixed << std::setprecision(2)
-              << static_cast<double>(pdx_index.GetInMemorySizeInBytes()) / (1024.0 * 1024.0) << " MB\n";
+              << static_cast<double>(pdx_index.GetInMemorySizeInBytes()) / (1024.0 * 1024.0)
+              << " MB\n";
 
     std::string save_path = BenchmarkUtils::PDX_DATA + dataset + "-" + index_type;
     std::cout << "Saving to " << save_path << "...\n";
@@ -40,12 +45,12 @@ void BuildAndSave(const RawDatasetInfo &info, const std::string &dataset, const 
     std::cout << "Done.\n";
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: " << argv[0] << " <dataset_name> <index_type>\n";
         std::cerr << "Index types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
         std::cerr << "Available datasets:";
-        for (const auto &[name, _] : RAW_DATASET_PARAMS) {
+        for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
         }
         std::cerr << "\n";
@@ -59,12 +64,13 @@ int main(int argc, char *argv[]) {
         std::cerr << "Unknown dataset: " << dataset << "\n";
         return 1;
     }
-    const auto &info = it->second;
+    const auto& info = it->second;
     const size_t n = info.num_embeddings;
     const size_t d = info.num_dimensions;
 
     std::cout << "==> PDX Serialization\n";
-    std::cout << "Dataset: " << dataset << " (" << info.pdx_dataset_name << ", n=" << n << ", d=" << d << ")\n";
+    std::cout << "Dataset: " << dataset << " (" << info.pdx_dataset_name << ", n=" << n
+              << ", d=" << d << ")\n";
     std::cout << "Index type: " << index_type << "\n";
 
     // Read raw data
@@ -72,8 +78,11 @@ int main(int argc, char *argv[]) {
     std::vector<float> data(n * d);
     {
         std::ifstream file(data_path, std::ios::binary);
-        if (!file) { std::cerr << "Failed to open " << data_path << "\n"; return 1; }
-        file.read(reinterpret_cast<char *>(data.data()), n * d * sizeof(float));
+        if (!file) {
+            std::cerr << "Failed to open " << data_path << "\n";
+            return 1;
+        }
+        file.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     }
 
     // Ensure output directory exists
@@ -99,17 +108,19 @@ int main(int argc, char *argv[]) {
     std::cout << "\n==> Verification: Loading index from " << save_path << "...\n";
     auto loaded_index = PDX::LoadPDXIndex(save_path);
     std::cout << "Loaded index in-memory size: " << std::fixed << std::setprecision(2)
-              << static_cast<double>(loaded_index->GetInMemorySizeInBytes()) / (1024.0 * 1024.0) << " MB\n";
+              << static_cast<double>(loaded_index->GetInMemorySizeInBytes()) / (1024.0 * 1024.0)
+              << " MB\n";
 
     // Load queries
-    std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + info.pdx_dataset_name);
-    auto *queries = reinterpret_cast<float *>(query_ptr.get());
+    std::unique_ptr<char[]> query_ptr =
+        MmapFile(BenchmarkUtils::QUERIES_DATA + info.pdx_dataset_name);
+    auto* queries = reinterpret_cast<float*>(query_ptr.get());
     queries += 1; // skip header
 
     // Load ground truth
-    std::unique_ptr<char[]> gt_buffer = MmapFile(
-        BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm");
-    auto *int_ground_truth = reinterpret_cast<uint32_t *>(gt_buffer.get());
+    std::unique_ptr<char[]> gt_buffer =
+        MmapFile(BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm");
+    auto* int_ground_truth = reinterpret_cast<uint32_t*>(gt_buffer.get());
 
     const size_t n_queries = info.num_queries;
     const uint8_t KNN = BenchmarkUtils::KNN;

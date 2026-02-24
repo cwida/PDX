@@ -1,0 +1,32 @@
+BasedOnStyle: LLVM
+
+# Indentation
+IndentWidth: 4
+TabWidth: 4
+
+# Braces
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: InlineOnly
+
+ColumnLimit: 100
+
+# Pointer/reference alignment
+PointerAlignment: Left
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignAfterOpenBracket: BlockIndent
+AlwaysBreakTemplateDeclarations: Yes
+
+# Spaces
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: true
+SpacesInParentheses: false
+
+
+BinPackParameters: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AlwaysBreakAfterReturnType: None
+PenaltyReturnTypeOnItsOwnLine: 1024
+
+BinPackArguments: false
+AllowAllArgumentsOnNextLine: true

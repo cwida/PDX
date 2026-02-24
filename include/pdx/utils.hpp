@@ -1,9 +1,9 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 #include <fcntl.h>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -17,7 +17,8 @@
 inline std::unique_ptr<char[]> MmapFile(const std::string& filename) {
     struct stat file_stats {};
     int fd = ::open(filename.c_str(), O_RDONLY);
-    if (fd == -1) throw std::runtime_error("Failed to open file");
+    if (fd == -1)
+        throw std::runtime_error("Failed to open file");
 
     fstat(fd, &file_stats);
     size_t file_size = file_stats.st_size;

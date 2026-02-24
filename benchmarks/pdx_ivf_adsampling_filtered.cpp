@@ -6,25 +6,25 @@
 #define PDX_USE_EXPLICIT_SIMD = true
 #endif
 
-#include <memory>
-#include <iostream>
-#include "pdx/utils.hpp"
-#include "pdx/ivf_wrapper.hpp"
-#include "pdx/searcher.hpp"
-#include "pdx/pruners/adsampling.hpp"
 #include "benchmark_utils.hpp"
+#include "pdx/ivf_wrapper.hpp"
+#include "pdx/pruners/adsampling.hpp"
+#include "pdx/searcher.hpp"
+#include "pdx/utils.hpp"
+#include <iostream>
+#include <memory>
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     std::string arg_dataset;
     std::string arg_selectivity;
     size_t arg_ivf_nprobe = 0;
-    if (argc > 1){
+    if (argc > 1) {
         arg_dataset = argv[1];
     }
-    if (argc > 2){
+    if (argc > 2) {
         arg_ivf_nprobe = atoi(argv[2]);
     }
-    if (argc > 3){
+    if (argc > 3) {
         arg_selectivity = argv[3];
     } else {
         arg_selectivity = "0_99";
@@ -45,41 +45,50 @@ int main(int argc, char *argv[]) {
     std::string RESULTS_PATH;
     RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "IVF_PDX_ADSAMPLING_FILTERED.csv";
     std::cout << "==> SELECTIVITY: " << arg_selectivity << std::endl;
-    for (const auto & dataset : BenchmarkUtils::DATASETS) {
-        if (arg_dataset.size() > 0 && arg_dataset != dataset){
+    for (const auto& dataset : BenchmarkUtils::DATASETS) {
+        if (arg_dataset.size() > 0 && arg_dataset != dataset) {
             continue;
         }
         PDX::IndexPDXIVF<PDX::F32> pdx_data = PDX::IndexPDXIVF<PDX::F32>();
         pdx_data.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf");
 
-        std::unique_ptr<char[]> _matrix_ptr = MmapFile(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-matrix");
-        auto *_matrix = reinterpret_cast<float*>(_matrix_ptr.get());
+        std::unique_ptr<char[]> _matrix_ptr =
+            MmapFile(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-matrix");
+        auto* _matrix = reinterpret_cast<float*>(_matrix_ptr.get());
 
         std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + dataset);
-        auto *query = reinterpret_cast<float*>(query_ptr.get());
+        auto* query = reinterpret_cast<float*>(query_ptr.get());
         NUM_QUERIES = 1000;
 
-        std::unique_ptr<char[]> ground_truth = MmapFile(BenchmarkUtils::FILTERED_GROUND_TRUTH_DATA + dataset + "_100_norm_" + arg_selectivity);
-        auto *int_ground_truth = reinterpret_cast<uint32_t*>(ground_truth.get());
+        std::unique_ptr<char[]> ground_truth = MmapFile(
+            BenchmarkUtils::FILTERED_GROUND_TRUTH_DATA + dataset + "_100_norm_" + arg_selectivity
+        );
+        auto* int_ground_truth = reinterpret_cast<uint32_t*>(ground_truth.get());
         query += 1; // skip number of embeddings
 
-        PDX::PredicateEvaluator predicate_evaluator = PDX::PredicateEvaluator(pdx_data.num_clusters);
-        predicate_evaluator.LoadSelectionVectorFromFile(BenchmarkUtils::SELECTION_VECTOR_DATA + dataset + "_" + arg_selectivity + ".bin");
-        PDX::ADSamplingPruner pruner = PDX::ADSamplingPruner<PDX::F32>(pdx_data.num_dimensions, EPSILON0, _matrix);
+        PDX::PredicateEvaluator predicate_evaluator =
+            PDX::PredicateEvaluator(pdx_data.num_clusters);
+        predicate_evaluator.LoadSelectionVectorFromFile(
+            BenchmarkUtils::SELECTION_VECTOR_DATA + dataset + "_" + arg_selectivity + ".bin"
+        );
+        PDX::ADSamplingPruner pruner =
+            PDX::ADSamplingPruner<PDX::F32>(pdx_data.num_dimensions, EPSILON0, _matrix);
         PDX::PDXearch searcher = PDX::PDXearch<PDX::F32>(pdx_data, pruner, 1, DIMENSION_ORDER);
 
         std::vector<size_t> nprobes_to_use;
         if (arg_ivf_nprobe > 0) {
             nprobes_to_use = {arg_ivf_nprobe};
         } else {
-            nprobes_to_use.assign(std::begin(BenchmarkUtils::IVF_PROBES), std::end(BenchmarkUtils::IVF_PROBES));
+            nprobes_to_use.assign(
+                std::begin(BenchmarkUtils::IVF_PROBES), std::end(BenchmarkUtils::IVF_PROBES)
+            );
         }
 
         for (size_t ivf_nprobe : nprobes_to_use) {
-            if (pdx_data.num_clusters < ivf_nprobe){
+            if (pdx_data.num_clusters < ivf_nprobe) {
                 continue;
             }
-            if (arg_ivf_nprobe > 0 && ivf_nprobe != arg_ivf_nprobe){
+            if (arg_ivf_nprobe > 0 && ivf_nprobe != arg_ivf_nprobe) {
                 continue;
             }
             std::vector<PhasesRuntime> runtimes;
@@ -89,28 +98,32 @@ int main(int argc, char *argv[]) {
             float recalls = 0;
             if (VERIFY_RESULTS) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
-                    auto result = searcher.FilteredSearch(query + l * pdx_data.num_dimensions, KNN, predicate_evaluator);
-                    BenchmarkUtils::VerifyResult<true, PDX::F32>(recalls, result, KNN, int_ground_truth, l);
+                    auto result = searcher.FilteredSearch(
+                        query + l * pdx_data.num_dimensions, KNN, predicate_evaluator
+                    );
+                    BenchmarkUtils::VerifyResult<true, PDX::F32>(
+                        recalls, result, KNN, int_ground_truth, l
+                    );
                 }
             }
             for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
                 for (size_t l = 0; l < NUM_QUERIES; ++l) {
-                    searcher.FilteredSearch(query + l * pdx_data.num_dimensions, KNN, predicate_evaluator);
-                    runtimes[j + l * NUM_MEASURE_RUNS] = {
-                            searcher.end_to_end_clock.accum_time
-                    };
+                    searcher.FilteredSearch(
+                        query + l * pdx_data.num_dimensions, KNN, predicate_evaluator
+                    );
+                    runtimes[j + l * NUM_MEASURE_RUNS] = {searcher.end_to_end_clock.accum_time};
                 }
             }
             float real_selectivity = 1 - SELECTIVITY_THRESHOLD;
             BenchmarkMetadata results_metadata = {
-                    dataset,
-                    ALGORITHM,
-                    NUM_MEASURE_RUNS,
-                    NUM_QUERIES,
-                    ivf_nprobe,
-                    KNN,
-                    recalls,
-                    real_selectivity
+                dataset,
+                ALGORITHM,
+                NUM_MEASURE_RUNS,
+                NUM_QUERIES,
+                ivf_nprobe,
+                KNN,
+                recalls,
+                real_selectivity
             };
             BenchmarkUtils::SaveResults(runtimes, RESULTS_PATH, results_metadata);
         }
