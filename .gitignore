@@ -46,6 +46,7 @@ venv
 /build_release/
 /build_relwithdebinfo/
 /tests/cmake_test_discovery_*.json
+compile_commands.json
 /.idea/
 /dummy/
 /Testing/
