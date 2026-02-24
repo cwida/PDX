@@ -33,6 +33,13 @@ class IndexPDXIVF:
         self._index.set_nprobe(nprobe)
         return self._index.search(np.ascontiguousarray(query, dtype=np.float32), knn)
 
+    def filtered_search(self, query: np.ndarray, knn: int, row_ids: np.ndarray, nprobe: int = 16):
+        self._index.set_nprobe(nprobe)
+        return self._index.filtered_search(
+            np.ascontiguousarray(query, dtype=np.float32), knn,
+            np.ascontiguousarray(row_ids, dtype=np.uint64),
+        )
+
     def save(self, path: str) -> None:
         self._index.save(path)
 
@@ -87,6 +94,13 @@ class IndexPDXIVFSQ8:
     def search(self, query: np.ndarray, knn: int, nprobe: int = 16):
         self._index.set_nprobe(nprobe)
         return self._index.search(np.ascontiguousarray(query, dtype=np.float32), knn)
+
+    def filtered_search(self, query: np.ndarray, knn: int, row_ids: np.ndarray, nprobe: int = 16):
+        self._index.set_nprobe(nprobe)
+        return self._index.filtered_search(
+            np.ascontiguousarray(query, dtype=np.float32), knn,
+            np.ascontiguousarray(row_ids, dtype=np.uint64),
+        )
 
     def save(self, path: str) -> None:
         self._index.save(path)
@@ -145,6 +159,13 @@ class IndexPDXIVFTree:
         self._index.set_nprobe(nprobe)
         return self._index.search(np.ascontiguousarray(query, dtype=np.float32), knn)
 
+    def filtered_search(self, query: np.ndarray, knn: int, row_ids: np.ndarray, nprobe: int = 16):
+        self._index.set_nprobe(nprobe)
+        return self._index.filtered_search(
+            np.ascontiguousarray(query, dtype=np.float32), knn,
+            np.ascontiguousarray(row_ids, dtype=np.uint64),
+        )
+
     def save(self, path: str) -> None:
         self._index.save(path)
 
@@ -201,6 +222,13 @@ class IndexPDXIVFTreeSQ8:
     def search(self, query: np.ndarray, knn: int, nprobe: int = 16):
         self._index.set_nprobe(nprobe)
         return self._index.search(np.ascontiguousarray(query, dtype=np.float32), knn)
+
+    def filtered_search(self, query: np.ndarray, knn: int, row_ids: np.ndarray, nprobe: int = 16):
+        self._index.set_nprobe(nprobe)
+        return self._index.filtered_search(
+            np.ascontiguousarray(query, dtype=np.float32), knn,
+            np.ascontiguousarray(row_ids, dtype=np.uint64),
+        )
 
     def save(self, path: str) -> None:
         self._index.save(path)

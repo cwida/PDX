@@ -2,7 +2,7 @@ import json
 import sys
 from setup_utils import *
 from pdxearch import IndexPDXIVF, IndexPDXIVFSQ8, IndexPDXIVFTree, IndexPDXIVFTreeSQ8
-from WrapperBruteForce import BruteForceSKLearn
+from WrapperBruteForce import BruteForceFAISS
 from sklearn import preprocessing
 
 INDEX_CLASSES = {
@@ -14,7 +14,7 @@ INDEX_CLASSES = {
 
 
 def generate_ground_truth(dataset_abbrev, KNNS=(100,), normalize=True):
-    """Generate ground truth with SKLearn brute-force search."""
+    """Generate ground truth with FAISS brute-force search."""
     hdf5_name, dims = DATASET_INFO[dataset_abbrev]
     print(f'Generating ground truth: {dataset_abbrev} -> {hdf5_name}')
 
@@ -26,7 +26,7 @@ def generate_ground_truth(dataset_abbrev, KNNS=(100,), normalize=True):
         train = preprocessing.normalize(train, axis=1, norm='l2')
         test = preprocessing.normalize(test, axis=1, norm='l2')
 
-    algo = BruteForceSKLearn("euclidean", njobs=-1)
+    algo = BruteForceFAISS("euclidean")
     algo.fit(train)
     for knn in KNNS:
         gt_filename = get_ground_truth_filename(hdf5_name, knn, normalize)
@@ -38,7 +38,7 @@ def generate_ground_truth(dataset_abbrev, KNNS=(100,), normalize=True):
         dist, index = algo.query_batch(test, n=knn)
         for i in range(N_QUERIES):
             index_data.append(index[i])
-            distance_data.append(dist[i] ** 2)
+            distance_data.append(dist[i])
             gt[i] = index[i].tolist()
         with open(os.path.join(GROUND_TRUTH_DATA, gt_filename.replace('.json', '')), "wb") as file:
             file.write(np.array(index_data, dtype=np.uint32).tobytes("C"))

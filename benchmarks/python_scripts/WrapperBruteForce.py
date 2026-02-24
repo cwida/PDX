@@ -21,36 +21,32 @@ class BruteForceUsearch:
 
 
 class BruteForceFAISS:
-    def __init__(self, metric, dimension):
-        if metric not in ("angular", "euclidean", "hamming", "ip"):
+    def __init__(self, metric, njobs=-1):
+        if metric not in ("angular", "euclidean", "ip"):
             raise NotImplementedError("BruteForce doesn't support metric %s" % metric)
         self.metric = metric
-        if metric == "euclidean":
-            self._metric = faiss.METRIC_L2
-        elif metric == "ip":
-            self._metric = faiss.METRIC_INNER_PRODUCT
-        else:
-            self._metric = faiss.METRIC_L2
-
-        self._metric = metric
-        self.name = "BruteForceSIMD()"
-        self._nbrs = None
-        self.dimension = dimension
-        faiss.omp_set_num_threads(1)
+        self.name = "BruteForceFAISS()"
 
     def fit(self, X):
-        if self.metric == "euclidean":
-            self.index = faiss.IndexFlatL2(self.dimension)
-        elif self.metric == "ip":
-            self.index = faiss.IndexFlatIP(self.dimension)
+        X = numpy.ascontiguousarray(X, dtype=numpy.float32)
+        dimension = X.shape[1]
+        if self.metric == "ip":
+            self.index = faiss.IndexFlatIP(dimension)
         else:
-            self.index = faiss.IndexFlatL2(self.dimension)
+            self.index = faiss.IndexFlatL2(dimension)
         self.index.add(X)
 
-    def query(self, v, n, X=None, force_fit=True):
-        if force_fit and X is not None: self.fit(X)
-        points, distances = self.index.search(numpy.array([v]), k=n)
-        return points, distances
+    def query(self, v, n):
+        v = numpy.ascontiguousarray(numpy.array([v]), dtype=numpy.float32)
+        distances, indices = self.index.search(v, k=n)
+        return distances[0], indices[0]
+
+    def query_batch(self, v, n):
+        """Batch query. Returns (distances, indices).
+        Note: for L2, distances are squared L2 (unlike sklearn which returns L2)."""
+        v = numpy.ascontiguousarray(v, dtype=numpy.float32)
+        distances, indices = self.index.search(v, k=n)
+        return distances, indices
 
 class BruteForceSKLearn:
     def __init__(self, metric, njobs=1):

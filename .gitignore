@@ -90,16 +90,8 @@ cmake_install.cmake
 /benchmarks/milvus/volumes/
 /benchmarks/python_scripts/indexes
 
-/benchmarks/BenchmarkPDXADSampling
 /benchmarks/BenchmarkEndToEnd
 /benchmarks/BenchmarkSerialization
 /benchmarks/BenchmarkPDXIVF
-/benchmarks/BenchmarkIVF2ADSampling
-/benchmarks/FilteredBenchmarkPDXADSampling
-/benchmarks/FilteredBenchmarkU8IVF2ADSampling
-/benchmarks/BenchmarkU8PDXADSampling
-/benchmarks/BenchmarkPDXLinearScan
-/benchmarks/BenchmarkU*
-/benchmarks/G4*
-/benchmarks/BenchmarkU8*
-/benchmarks/BenchmarkEndToEnd
+/benchmarks/BenchmarkFiltered
+/benchmarks/BenchmarkSpecialFilters

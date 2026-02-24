@@ -46,9 +46,9 @@ void BuildAndSave(
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <dataset_name> <index_type>\n";
-        std::cerr << "Index types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <dataset> [index_type]\n";
+        std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::string dataset = argv[1];
-    std::string index_type = argv[2];
+    std::string index_type = (argc > 2) ? argv[2] : "pdx_f32";
 
     auto it = RAW_DATASET_PARAMS.find(dataset);
     if (it == RAW_DATASET_PARAMS.end()) {

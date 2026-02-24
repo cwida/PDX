@@ -8,6 +8,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "pdx/clustering.hpp"
 #include "pdx/common.hpp"
@@ -35,12 +36,19 @@ class IPDXIndex {
   public:
     virtual ~IPDXIndex() = default;
     virtual std::vector<KNNCandidate> Search(const float* query_embedding, size_t knn) const = 0;
+    virtual std::vector<KNNCandidate> FilteredSearch(
+        const float* query_embedding,
+        size_t knn,
+        const std::vector<size_t>& passing_row_ids
+    ) const = 0;
     virtual void BuildIndex(const float* embeddings, size_t num_embeddings) = 0;
     virtual void SetNProbe(uint32_t n_probe) const = 0;
     virtual void Save(const std::string& path) const = 0;
     virtual void Restore(const std::string& path) = 0;
     virtual uint32_t GetNumDimensions() const = 0;
     virtual uint32_t GetNumClusters() const = 0;
+    virtual uint32_t GetClusterSize(uint32_t cluster_id) const = 0;
+    virtual std::vector<uint32_t> GetClusterRowIds(uint32_t cluster_id) const = 0;
     virtual size_t GetInMemorySizeInBytes() const = 0;
 };
 
@@ -54,12 +62,38 @@ class PDXIndex : public IPDXIndex {
     PDX::IVF<Q> index;
     std::unique_ptr<PDX::ADSamplingPruner> pruner;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
+    std::vector<std::pair<uint32_t, uint32_t>> row_id_cluster_mapping;
 
     static constexpr PDXIndexType GetIndexType() {
         if constexpr (Q == F32)
             return PDXIndexType::PDX_F32;
         else
             return PDXIndexType::PDX_U8;
+    }
+
+    void BuildRowIdClusterMapping() {
+        size_t total = 0;
+        for (size_t c = 0; c < index.num_clusters; c++) {
+            total += index.clusters[c].num_embeddings;
+        }
+        row_id_cluster_mapping.resize(total);
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            for (uint32_t p = 0; p < index.clusters[c].num_embeddings; p++) {
+                row_id_cluster_mapping[index.clusters[c].indices[p]] = {c, p};
+            }
+        }
+    }
+
+    PDX::PredicateEvaluator CreatePredicateEvaluator(
+        const std::vector<size_t>& passing_row_ids
+    ) const {
+        PDX::PredicateEvaluator evaluator(index.num_clusters, row_id_cluster_mapping.size());
+        for (const auto row_id : passing_row_ids) {
+            const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
+            evaluator.n_passing_tuples[cluster_id]++;
+            evaluator.selection_vector[searcher->cluster_offsets[cluster_id] + index_in_cluster] = 1;
+        }
+        return evaluator;
     }
 
   public:
@@ -111,10 +145,20 @@ class PDXIndex : public IPDXIndex {
         // Create pruner and searcher
         pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, matrix_data);
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
+        BuildRowIdClusterMapping();
     }
 
     std::vector<PDX::KNNCandidate> Search(const float* query_embedding, size_t knn) const override {
         return searcher->Search(query_embedding, knn);
+    }
+
+    std::vector<PDX::KNNCandidate> FilteredSearch(
+        const float* query_embedding,
+        size_t knn,
+        const std::vector<size_t>& passing_row_ids
+    ) const override {
+        auto evaluator = CreatePredicateEvaluator(passing_row_ids);
+        return searcher->FilteredSearch(query_embedding, knn, evaluator);
     }
 
     void SetNProbe(uint32_t n_probe) const override { searcher->SetNProbe(n_probe); }
@@ -124,6 +168,15 @@ class PDXIndex : public IPDXIndex {
     uint32_t GetNumDimensions() const override { return index.num_dimensions; }
 
     uint32_t GetNumClusters() const override { return index.num_clusters; }
+
+    uint32_t GetClusterSize(uint32_t cluster_id) const override {
+        return index.clusters[cluster_id].num_embeddings;
+    }
+
+    std::vector<uint32_t> GetClusterRowIds(uint32_t cluster_id) const override {
+        const auto& cluster = index.clusters[cluster_id];
+        return {cluster.indices, cluster.indices + cluster.num_embeddings};
+    }
 
     size_t GetInMemorySizeInBytes() const override {
         size_t size = sizeof(*this);
@@ -145,6 +198,8 @@ class PDXIndex : public IPDXIndex {
             size += sizeof(*searcher);
             size += index.num_clusters * sizeof(size_t);
         }
+        // Row ID to cluster mapping
+        size += row_id_cluster_mapping.capacity() * sizeof(std::pair<uint32_t, uint32_t>);
         return size;
     }
 
@@ -262,6 +317,7 @@ class PDXIndex : public IPDXIndex {
         }
 
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
+        BuildRowIdClusterMapping();
     }
 };
 
@@ -276,12 +332,38 @@ class PDXTreeIndex : public IPDXIndex {
     std::unique_ptr<PDX::ADSamplingPruner> pruner;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
     std::unique_ptr<PDX::PDXearch<F32>> top_level_searcher;
+    std::vector<std::pair<uint32_t, uint32_t>> row_id_cluster_mapping;
 
     static constexpr PDXIndexType GetIndexType() {
         if constexpr (Q == F32)
             return PDXIndexType::PDX_TREE_F32;
         else
             return PDXIndexType::PDX_TREE_U8;
+    }
+
+    void BuildRowIdClusterMapping() {
+        size_t total = 0;
+        for (size_t c = 0; c < index.num_clusters; c++) {
+            total += index.clusters[c].num_embeddings;
+        }
+        row_id_cluster_mapping.resize(total);
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            for (uint32_t p = 0; p < index.clusters[c].num_embeddings; p++) {
+                row_id_cluster_mapping[index.clusters[c].indices[p]] = {c, p};
+            }
+        }
+    }
+
+    PDX::PredicateEvaluator CreatePredicateEvaluator(
+        const std::vector<size_t>& passing_row_ids
+    ) const {
+        PDX::PredicateEvaluator evaluator(index.num_clusters, row_id_cluster_mapping.size());
+        for (const auto row_id : passing_row_ids) {
+            const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
+            evaluator.n_passing_tuples[cluster_id]++;
+            evaluator.selection_vector[searcher->cluster_offsets[cluster_id] + index_in_cluster] = 1;
+        }
+        return evaluator;
     }
 
   public:
@@ -334,6 +416,7 @@ class PDXTreeIndex : public IPDXIndex {
         pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, matrix_data);
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
+        BuildRowIdClusterMapping();
     }
 
     std::vector<PDX::KNNCandidate> Search(const float* query_embedding, size_t knn) const override {
@@ -352,6 +435,15 @@ class PDXTreeIndex : public IPDXIndex {
         searcher->SetClusterAccessOrder(top_level_indexes);
 
         return searcher->Search(query_embedding, knn);
+    }
+
+    std::vector<PDX::KNNCandidate> FilteredSearch(
+        const float* query_embedding,
+        size_t knn,
+        const std::vector<size_t>& passing_row_ids
+    ) const override {
+        auto evaluator = CreatePredicateEvaluator(passing_row_ids);
+        return searcher->FilteredSearch(query_embedding, knn, evaluator);
     }
 
     void BuildIndex(const float* const embeddings, const size_t num_embeddings) override {
@@ -519,6 +611,7 @@ class PDXTreeIndex : public IPDXIndex {
         }
 
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
+        BuildRowIdClusterMapping();
     }
 
     void SetNProbe(uint32_t n_probe) const override { searcher->SetNProbe(n_probe); }
@@ -528,6 +621,15 @@ class PDXTreeIndex : public IPDXIndex {
     uint32_t GetNumDimensions() const override { return index.num_dimensions; }
 
     uint32_t GetNumClusters() const override { return index.num_clusters; }
+
+    uint32_t GetClusterSize(uint32_t cluster_id) const override {
+        return index.clusters[cluster_id].num_embeddings;
+    }
+
+    std::vector<uint32_t> GetClusterRowIds(uint32_t cluster_id) const override {
+        const auto& cluster = index.clusters[cluster_id];
+        return {cluster.indices, cluster.indices + cluster.num_embeddings};
+    }
 
     uint32_t GetTopLevelNumClusters() const { return index.l0.num_clusters; }
 
@@ -556,6 +658,8 @@ class PDXTreeIndex : public IPDXIndex {
             size += sizeof(*top_level_searcher);
             size += index.l0.num_clusters * sizeof(size_t);
         }
+        // Row ID to cluster mapping
+        size += row_id_cluster_mapping.capacity() * sizeof(std::pair<uint32_t, uint32_t>);
         return size;
     }
 };

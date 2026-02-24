@@ -30,10 +30,27 @@ PYBIND11_MODULE(compiled, m) {
         )
         .def("build_index", &PDX::PyPDXIndex::BuildIndex, py::arg("data"))
         .def("search", &PDX::PyPDXIndex::Search, py::arg("query"), py::arg("knn"))
+        .def(
+            "filtered_search",
+            &PDX::PyPDXIndex::FilteredSearch,
+            py::arg("query"),
+            py::arg("knn"),
+            py::arg("row_ids")
+        )
         .def("set_nprobe", &PDX::PyPDXIndex::SetNProbe, py::arg("nprobe"))
         .def("save", &PDX::PyPDXIndex::Save, py::arg("path"))
         .def("get_num_dimensions", &PDX::PyPDXIndex::GetNumDimensions)
         .def("get_num_clusters", &PDX::PyPDXIndex::GetNumClusters)
+        .def(
+            "get_cluster_size",
+            &PDX::PyPDXIndex::GetClusterSize,
+            py::arg("cluster_id")
+        )
+        .def(
+            "get_cluster_row_ids",
+            &PDX::PyPDXIndex::GetClusterRowIds,
+            py::arg("cluster_id")
+        )
         .def("get_in_memory_size_in_bytes", &PDX::PyPDXIndex::GetInMemorySizeInBytes);
 
     m.def(

@@ -107,6 +107,36 @@ class PyPDXIndex {
         return {ids, distances};
     }
 
+    std::pair<py::array_t<uint32_t>, py::array_t<float>> FilteredSearch(
+        const py::array_t<float>& query,
+        uint32_t knn,
+        const py::array_t<size_t>& row_ids
+    ) const {
+        auto query_buf = query.request();
+        if (query_buf.ndim != 1) {
+            throw std::runtime_error("query must be a 1D numpy array");
+        }
+        auto row_ids_buf = row_ids.request();
+        if (row_ids_buf.ndim != 1) {
+            throw std::runtime_error("row_ids must be a 1D numpy array");
+        }
+        auto* query_ptr = static_cast<const float*>(query_buf.ptr);
+        auto* row_ids_ptr = static_cast<const size_t*>(row_ids_buf.ptr);
+        size_t n_row_ids = static_cast<size_t>(row_ids_buf.shape[0]);
+        std::vector<size_t> passing_row_ids(row_ids_ptr, row_ids_ptr + n_row_ids);
+        auto results = index->FilteredSearch(query_ptr, knn, passing_row_ids);
+        size_t n = results.size();
+        py::array_t<uint32_t> ids(n);
+        py::array_t<float> distances(n);
+        auto ids_ptr = ids.mutable_unchecked<1>();
+        auto distances_ptr = distances.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; ++i) {
+            ids_ptr(i) = results[i].index;
+            distances_ptr(i) = results[i].distance;
+        }
+        return {ids, distances};
+    }
+
     void SetNProbe(uint32_t n) const { index->SetNProbe(n); }
 
     void Save(const std::string& path) const { index->Save(path); }
@@ -114,6 +144,18 @@ class PyPDXIndex {
     uint32_t GetNumDimensions() const { return index->GetNumDimensions(); }
 
     uint32_t GetNumClusters() const { return index->GetNumClusters(); }
+
+    uint32_t GetClusterSize(uint32_t cluster_id) const { return index->GetClusterSize(cluster_id); }
+
+    py::array_t<uint32_t> GetClusterRowIds(uint32_t cluster_id) const {
+        auto ids = index->GetClusterRowIds(cluster_id);
+        py::array_t<uint32_t> result(ids.size());
+        auto ptr = result.mutable_unchecked<1>();
+        for (size_t i = 0; i < ids.size(); ++i) {
+            ptr(i) = ids[i];
+        }
+        return result;
+    }
 
     size_t GetInMemorySizeInBytes() const { return index->GetInMemorySizeInBytes(); }
 };
