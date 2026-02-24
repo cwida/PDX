@@ -65,3 +65,45 @@ add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 include_directories(include extern/Eigen)
 add_subdirectory(benchmarks)
+
+# Python bindings: only build if pybind11 is available
+find_package(Python COMPONENTS Interpreter Development.Module QUIET)
+set(PYBIND11_FINDPYTHON ON)
+find_package(pybind11 CONFIG QUIET)
+
+if(Python_FOUND AND pybind11_FOUND)
+    message(STATUS "Python bindings enabled")
+    message(STATUS "Python executable: ${Python_EXECUTABLE}")
+    message(STATUS "pybind11 found: ${pybind11_VERSION}")
+
+    pybind11_add_module(compiled
+        python/lib.cpp
+    )
+
+    target_include_directories(compiled PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/Eigen
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/SuperKMeans/include
+    )
+
+    if(MKL_FOUND)
+        target_link_libraries(compiled PRIVATE ${MKL_COMMON_LIBS})
+    else()
+        target_link_libraries(compiled PRIVATE ${BLAS_LINK_LIBRARIES})
+    endif()
+
+    target_compile_options(compiled PRIVATE
+        -Wall
+        -Wno-unknown-pragmas
+        $<$<CONFIG:Release>:-O3 -march=native>
+    )
+
+    target_compile_features(compiled PRIVATE cxx_std_17)
+
+    install(TARGETS compiled
+        LIBRARY DESTINATION pdxearch
+        COMPONENT python
+    )
+else()
+    message(STATUS "Python bindings disabled (pybind11 not found)")
+endif()

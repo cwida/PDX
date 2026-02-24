@@ -1,228 +1,219 @@
 import numpy as np
 
-from pdxearch.index_base import (
-    BaseIndexPDXIVF, BaseIndexPDXIVF2, BaseIndexPDXFlat
-)
-from pdxearch.preprocessors import (
-    ADSampling, Preprocessor
-)
-from pdxearch.compiled import (
-    IndexADSamplingIVFFlat as _IndexPDXADSamplingIVFFlat,
-    IndexADSamplingFlat as _IndexADSamplingFlat,
-    IndexPDXFlat as _IndexPDXFlat,
-    IndexADSamplingIVF2SQ8 as _IndexADSamplingIVF2SQ8,
-    IndexADSamplingIVF2Flat as _IndexADSamplingIVF2Flat
-)
-from pdxearch.constants import PDXConstants
+from pdxearch.compiled import PDXIndex as _PDXIndex, load_index as _load_index
+# from pdxearch.predicate_evaluator import PredicateEvaluator
 
-from pdxearch.predicate_evaluator import PredicateEvaluator
+METRIC_MAP = {"l2sq": 0, "cosine": 1, "ip": 2}
 
-#
-# Python wrappers of the C++ lib
-#
 
-class IndexPDXIVF2(BaseIndexPDXIVF2):
+class IndexPDXIVF:
+    """Single-level IVF index (F32)."""
+
     def __init__(
-            self,
-            *,
-            ndim: int = 128,
-            metric: str = "l2sq",
-            nbuckets: int = 256,
-            nbuckets_l0: int = 64,
-            normalize: bool = True
+        self,
+        *,
+        num_dimensions: int,
+        distance_metric: str = "l2sq",
+        normalize: bool = True,
+        seed: int = 42,
+        num_clusters: int = 0,
+        sampling_fraction: float = 0.0,
+        kmeans_iters: int = 10,
     ) -> None:
-        super().__init__(ndim, metric, nbuckets, nbuckets_l0, normalize)
-        self.preprocessor = ADSampling(ndim)
-        self.pdx_index = _IndexADSamplingIVF2Flat()
-        self.pe = PredicateEvaluator()
+        self._index = _PDXIndex(
+            "pdx_f32", num_dimensions, METRIC_MAP[distance_metric],
+            seed, num_clusters, 0, normalize, sampling_fraction, kmeans_iters,
+        )
+        # self.pe = PredicateEvaluator()
 
-    def preprocess(self, data, inplace: bool = True):
-        return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
+    def build(self, data: np.ndarray) -> None:
+        self._index.build_index(np.ascontiguousarray(data, dtype=np.float32))
 
-    # Used in Python API (TODO)
-    def add_persist(self, data, path: str, matrix_path: str):
-        self._add(data)
-        self._train_add_l0()
-        self._to_pdx(data, _type='pdx', use_original_centroids=True)
-        self._persist(path)
-        self.preprocessor.store_metadata(matrix_path)
+    def search(self, query: np.ndarray, knn: int, nprobe: int = 16):
+        self._index.set_nprobe(nprobe)
+        return self._index.search(np.ascontiguousarray(query, dtype=np.float32), knn)
 
-    # Used in Python API (TODO)
-    def persist(self, path: str, matrix_path: str):  # TODO: Rename
-        self._persist(path)
-        self.preprocessor.store_metadata(matrix_path)
+    def save(self, path: str) -> None:
+        self._index.save(path)
 
-    def add(self, data):
-        self._add(data)
-        self._train_add_l0()
-        self._to_pdx(data, _type='pdx', use_original_centroids=True)
-        self.pdx_index.load(self.materialized_index, self.preprocessor.transformation_matrix)
+    # def evaluate_predicate(self, passing_tuples_ids):
+    #     self.pe.evaluate_predicate(passing_tuples_ids, self._index.get_labels())
 
-    # Used in Python API (TODO)
-    def restore(self, path: str, matrix_path: str):
-        self.pdx_index.restore(path, matrix_path)
+    # def filtered_search(self, query: np.ndarray, knn: int, nprobe: int = 16):
+    #     if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+    #         raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first")
+    #     self._index.set_nprobe(nprobe)
+    #     return self._index.filtered_search(
+    #         np.ascontiguousarray(query, dtype=np.float32), knn,
+    #         self.pe.n_passing_tuples, self.pe.selection_vector,
+    #     )
 
-    def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
-        return self.pdx_index.search(q, knn, nprobe)
+    @property
+    def num_dimensions(self) -> int:
+        return self._index.get_num_dimensions()
 
-    def evaluate_predicate(self, passing_tuples_ids):
-        self.pe.evaluate_predicate(passing_tuples_ids, self.core_index.labels)
-
-    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
-        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
-            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
-        return self.pdx_index.filtered_search(q, knn, nprobe, self.pe.n_passing_tuples, self.pe.selection_vector)
-
-    def set_pruning_confidence(self, confidence: float):
-        self.pdx_index.set_pruning_confidence(confidence)
+    @property
+    def num_clusters(self) -> int:
+        return self._index.get_num_clusters()
 
 
-class IndexPDXIVF2SQ8(BaseIndexPDXIVF2):
+class IndexPDXIVFSQ8:
+    """Single-level IVF index (U8 scalar quantization)."""
+
     def __init__(
-            self,
-            *,
-            ndim: int = 128,
-            metric: str = "l2sq",
-            nbuckets: int = 256,
-            nbuckets_l0: int = 64,
-            normalize: bool = True
+        self,
+        *,
+        num_dimensions: int,
+        distance_metric: str = "l2sq",
+        normalize: bool = True,
+        seed: int = 42,
+        num_clusters: int = 0,
+        sampling_fraction: float = 0.0,
+        kmeans_iters: int = 10,
     ) -> None:
-        super().__init__(ndim, metric, nbuckets, nbuckets_l0, normalize)
-        self.preprocessor = ADSampling(ndim)
-        self.pdx_index = _IndexADSamplingIVF2SQ8()
-        self.pe = PredicateEvaluator()
+        self._index = _PDXIndex(
+            "pdx_u8", num_dimensions, METRIC_MAP[distance_metric],
+            seed, num_clusters, 0, normalize, sampling_fraction, kmeans_iters,
+        )
+        # self.pe = PredicateEvaluator()
 
-    def preprocess(self, data, inplace: bool = True):
-        return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
+    def build(self, data: np.ndarray) -> None:
+        self._index.build_index(np.ascontiguousarray(data, dtype=np.float32))
 
-    # Used in Python API (TODO)
-    def add_persist(self, data, path: str, matrix_path: str):
-        self._add(data)
-        self._train_add_l0()
-        self._to_pdx(data, _type='pdx-v4-h', quantize=True, use_original_centroids=True)
-        self._persist(path)
-        self.preprocessor.store_metadata(matrix_path)
+    def search(self, query: np.ndarray, knn: int, nprobe: int = 16):
+        self._index.set_nprobe(nprobe)
+        return self._index.search(np.ascontiguousarray(query, dtype=np.float32), knn)
 
-    # Used in Python API (TODO)
-    def persist(self, path: str, matrix_path: str):  # TODO: Rename
-        self._persist(path)
-        self.preprocessor.store_metadata(matrix_path)
+    def save(self, path: str) -> None:
+        self._index.save(path)
 
-    def add(self, data):
-        self._add(data)
-        self._train_add_l0()
-        self._to_pdx(data, _type='pdx-v4-h', quantize=True, use_original_centroids=True)
-        self.pdx_index.load(self.materialized_index, self.preprocessor.transformation_matrix)
+    # def evaluate_predicate(self, passing_tuples_ids):
+    #     self.pe.evaluate_predicate(passing_tuples_ids, self._index.get_labels())
 
-    # Used in Python API (TODO)
-    def restore(self, path: str, matrix_path: str):
-        self.pdx_index.restore(path, matrix_path)
+    # def filtered_search(self, query: np.ndarray, knn: int, nprobe: int = 16):
+    #     if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+    #         raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first")
+    #     self._index.set_nprobe(nprobe)
+    #     return self._index.filtered_search(
+    #         np.ascontiguousarray(query, dtype=np.float32), knn,
+    #         self.pe.n_passing_tuples, self.pe.selection_vector,
+    #     )
 
-    def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
-        return self.pdx_index.search(q, knn, nprobe)
+    @property
+    def num_dimensions(self) -> int:
+        return self._index.get_num_dimensions()
 
-    def evaluate_predicate(self, passing_tuples_ids):
-        self.pe.evaluate_predicate(passing_tuples_ids, self.core_index.labels)
-
-    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
-        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
-            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
-        return self.pdx_index.filtered_search(q, knn, nprobe, self.pe.n_passing_tuples, self.pe.selection_vector)
-
-    def set_pruning_confidence(self, confidence: float):
-        self.pdx_index.set_pruning_confidence(confidence)
+    @property
+    def num_clusters(self) -> int:
+        return self._index.get_num_clusters()
 
 
-class IndexPDXADSamplingIVFFlat(BaseIndexPDXIVF):
+class IndexPDXIVF2:
+    """Two-level IVF index (F32)."""
+
     def __init__(
-            self,
-            *, ndim: int = 128,
-            metric: str = "l2sq",
-            nbuckets: int = 256,
-            normalize: bool = True
+        self,
+        *,
+        num_dimensions: int,
+        distance_metric: str = "l2sq",
+        normalize: bool = True,
+        seed: int = 42,
+        num_clusters: int = 0,
+        num_meso_clusters: int = 0,
+        sampling_fraction: float = 0.0,
+        kmeans_iters: int = 10,
     ) -> None:
-        super().__init__(ndim, metric, nbuckets, normalize)
-        self.preprocessor = ADSampling(ndim)
-        self.pdx_index = _IndexPDXADSamplingIVFFlat()
-        self.pe = PredicateEvaluator()
+        self._index = _PDXIndex(
+            "pdx_tree_f32", num_dimensions, METRIC_MAP[distance_metric],
+            seed, num_clusters, num_meso_clusters, normalize,
+            sampling_fraction, kmeans_iters,
+        )
+        # self.pe = PredicateEvaluator()
 
-    def preprocess(self, data, inplace: bool = True):
-        return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
+    def build(self, data: np.ndarray) -> None:
+        self._index.build_index(np.ascontiguousarray(data, dtype=np.float32))
 
-    def add_persist(self, data, path: str, matrix_path: str):
-        self._add(data)
-        # I don't need to pass the centroid preprocessor here, as the centroids are already rotated
-        # Because the training was done on the transformed vectors
-        self._to_pdx(data, _type='pdx', use_original_centroids=True)
-        self._persist(path)
-        self.preprocessor.store_metadata(matrix_path)
+    def search(self, query: np.ndarray, knn: int, nprobe: int = 16):
+        self._index.set_nprobe(nprobe)
+        return self._index.search(np.ascontiguousarray(query, dtype=np.float32), knn)
 
-    def persist(self, path: str, matrix_path: str):  # TODO: Rename
-        self._persist(path)
-        self.preprocessor.store_metadata(matrix_path)
+    def save(self, path: str) -> None:
+        self._index.save(path)
 
-    def add(self, data):
-        self._add(data)
-        # I don't need to pass the centroid preprocessor here, as the centroids are already rotated
-        # Because the training was done on the transformed vectors
-        self._to_pdx(data, _type='pdx', use_original_centroids=True)
-        self.pdx_index.load(self.materialized_index, self.preprocessor.transformation_matrix)
+    # def evaluate_predicate(self, passing_tuples_ids):
+    #     self.pe.evaluate_predicate(passing_tuples_ids, self._index.get_labels())
 
-    def restore(self, path: str, matrix_path: str):
-        self.pdx_index.restore(path, matrix_path)
+    # def filtered_search(self, query: np.ndarray, knn: int, nprobe: int = 16):
+    #     if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+    #         raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first")
+    #     self._index.set_nprobe(nprobe)
+    #     return self._index.filtered_search(
+    #         np.ascontiguousarray(query, dtype=np.float32), knn,
+    #         self.pe.n_passing_tuples, self.pe.selection_vector,
+    #     )
 
-    def search(self, q: np.ndarray, knn: int, nprobe: int = 16):
-        return self.pdx_index.search(q, knn, nprobe)
+    @property
+    def num_dimensions(self) -> int:
+        return self._index.get_num_dimensions()
 
-    def evaluate_predicate(self, passing_tuples_ids):
-        self.pe.evaluate_predicate(passing_tuples_ids, self.core_index.labels)
+    @property
+    def num_clusters(self) -> int:
+        return self._index.get_num_clusters()
 
-    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
-        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
-            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
-        return self.pdx_index.filtered_search(q, knn, nprobe, self.pe.n_passing_tuples, self.pe.selection_vector)
 
-    def set_pruning_confidence(self, confidence: float):
-        self.pdx_index.set_pruning_confidence(confidence)
+class IndexPDXIVF2SQ8:
+    """Two-level IVF index (U8 scalar quantization)."""
 
-class IndexPDXADSamplingFlat(BaseIndexPDXFlat):
-    def __init__(self, *, ndim: int = 128, metric: str = "l2sq", normalize: bool = True) -> None:
-        super().__init__(ndim=ndim, metric=metric, normalize=normalize)
-        self.preprocessor = ADSampling(ndim)
-        self.pdx_index = _IndexADSamplingFlat()
-        self.block_sizes = PDXConstants.PDXEARCH_VECTOR_SIZE
-        self.pe = PredicateEvaluator()
+    def __init__(
+        self,
+        *,
+        num_dimensions: int,
+        distance_metric: str = "l2sq",
+        normalize: bool = True,
+        seed: int = 42,
+        num_clusters: int = 0,
+        num_meso_clusters: int = 0,
+        sampling_fraction: float = 0.0,
+        kmeans_iters: int = 10,
+    ) -> None:
+        self._index = _PDXIndex(
+            "pdx_tree_u8", num_dimensions, METRIC_MAP[distance_metric],
+            seed, num_clusters, num_meso_clusters, normalize,
+            sampling_fraction, kmeans_iters,
+        )
+        # self.pe = PredicateEvaluator()
 
-    def preprocess(self, data: np.array, inplace: bool = True):
-        return self.preprocessor.preprocess(data, inplace=inplace, normalize=self.normalize)
+    def build(self, data: np.ndarray) -> None:
+        self._index.build_index(np.ascontiguousarray(data, dtype=np.float32))
 
-    def add_persist(self, data: np.array, path: str, matrix_path: str):
-        self._to_pdx(data, self.block_sizes)
-        self._persist(path)
-        self.preprocessor.store_metadata(matrix_path)
+    def search(self, query: np.ndarray, knn: int, nprobe: int = 16):
+        self._index.set_nprobe(nprobe)
+        return self._index.search(np.ascontiguousarray(query, dtype=np.float32), knn)
 
-    def persist(self, path: str, matrix_path: str):  # TODO: Rename
-        self._persist(path)
-        self.preprocessor.store_metadata(matrix_path)
+    def save(self, path: str) -> None:
+        self._index.save(path)
 
-    def add(self, data):
-        self._to_pdx(data, self.block_sizes)
-        self.pdx_index.load(self.materialized_index, self.preprocessor.transformation_matrix)
+    # def evaluate_predicate(self, passing_tuples_ids):
+    #     self.pe.evaluate_predicate(passing_tuples_ids, self._index.get_labels())
 
-    def restore(self, path: str, matrix_path: str):
-        self.pdx_index.restore(path, matrix_path)
+    # def filtered_search(self, query: np.ndarray, knn: int, nprobe: int = 16):
+    #     if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
+    #         raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first")
+    #     self._index.set_nprobe(nprobe)
+    #     return self._index.filtered_search(
+    #         np.ascontiguousarray(query, dtype=np.float32), knn,
+    #         self.pe.n_passing_tuples, self.pe.selection_vector,
+    #     )
 
-    def search(self, q: np.ndarray, knn: int):
-        return self.pdx_index.search(q, knn)
+    @property
+    def num_dimensions(self) -> int:
+        return self._index.get_num_dimensions()
 
-    def set_pruning_confidence(self, confidence: float):
-        self.pdx_index.set_pruning_confidence(confidence)
+    @property
+    def num_clusters(self) -> int:
+        return self._index.get_num_clusters()
 
-    def evaluate_predicate(self, passing_tuples_ids):
-        self.pe.evaluate_predicate(passing_tuples_ids, [x.indices for x in self.partitions])
 
-    def filtered_search(self, q: np.ndarray, knn: int, nprobe: int = 16):
-        if len(self.pe.n_passing_tuples) == 0 or len(self.pe.selection_vector) == 0:
-            raise ValueError("Call .evaluate_predicate([<passing_tuples>]) first to generate the selection_vector of your predicate")
-        return self.pdx_index.filtered_search(q, knn, self.pe.n_passing_tuples, self.pe.selection_vector)
-
+def load_index(path: str):
+    """Load a PDX index from a single file (auto-detects type)."""
+    return _load_index(path)

@@ -2,6 +2,24 @@ import numpy as np
 import h5py
 from setup_settings import *
 
+# Abbreviated name -> (hdf5_dataset_name, num_dimensions)
+# Matches RAW_DATASET_PARAMS in benchmark_utils.hpp
+DATASET_INFO = {
+    "sift":       ("sift-128-euclidean",                128),
+    "yi":         ("yi-128-ip",                         128),
+    "llama":      ("llama-128-ip",                      128),
+    "glove200":   ("glove-200-angular",                 200),
+    "yandex":     ("yandex-200-cosine",                 200),
+    "yahoo":      ("yahoo-minilm-384-normalized",       384),
+    "clip":       ("imagenet-clip-512-normalized",       512),
+    "contriever": ("contriever-768",                    768),
+    "gist":       ("gist-960-euclidean",                960),
+    "mxbai":      ("agnews-mxbai-1024-euclidean",      1024),
+    "openai":     ("openai-1536-angular",              1536),
+    "arxiv":      ("arxiv-nomic-768-normalized",        768),
+    "wiki":       ("simplewiki-openai-3072-normalized", 3072),
+}
+
 
 def read_hdf5_train_data(dataset):
     hdf5_file_name = os.path.join(RAW_DATA, dataset + ".hdf5")

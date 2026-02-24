@@ -1,0 +1,3 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
+mxbai,adsampling,0.212453,0.318375,0.131292,0.901368,25,0,100,1000,0.2,1,0.2135,0.3588,0.1313
+mxbai,adsampling,0.199531,0.293875,0.12325,0.901368,25,0,100,1000,0.2,1,0.2001,0.3107,0.1232

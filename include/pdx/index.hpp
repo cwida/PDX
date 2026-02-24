@@ -35,6 +35,7 @@ class IPDXIndex {
 public:
 	virtual ~IPDXIndex() = default;
 	virtual std::vector<KNNCandidate> Search(const float *query_embedding, size_t knn) const = 0;
+	virtual void BuildIndex(const float *embeddings, size_t num_embeddings) = 0;
 	virtual void SetNProbe(uint32_t n_probe) const = 0;
 	virtual void Save(const std::string &path) const = 0;
 	virtual void Restore(const std::string &path) = 0;
@@ -128,7 +129,7 @@ public:
 		return index.num_clusters;
 	}
 
-	void BuildIndex(const float *const embeddings, const size_t num_embeddings) {
+	void BuildIndex(const float *const embeddings, const size_t num_embeddings) override {
 		std::vector<size_t> row_ids(num_embeddings);
 		std::iota(row_ids.begin(), row_ids.end(), 0);
 		BuildIndex(row_ids.data(), embeddings, num_embeddings);
@@ -286,6 +287,10 @@ public:
 
 	std::vector<PDX::KNNCandidate> Search(const float *query_embedding, size_t knn) const override {
 		auto n_probe_top_level = GetTopLevelNumClusters();
+		// We confidently prune half of the search space
+		if (searcher->GetNProbe() < GetNumClusters() / 2) {
+			n_probe_top_level /= 2;
+		}
 		top_level_searcher->SetNProbe(n_probe_top_level);
 		auto top_level_results = top_level_searcher->Search(query_embedding, searcher->GetNProbe());
 
@@ -298,7 +303,7 @@ public:
 		return searcher->Search(query_embedding, knn);
 	}
 
-	void BuildIndex(const float *const embeddings, const size_t num_embeddings) {
+	void BuildIndex(const float *const embeddings, const size_t num_embeddings) override {
 		std::vector<size_t> row_ids(num_embeddings);
 		std::iota(row_ids.begin(), row_ids.end(), 0);
 		BuildIndex(row_ids.data(), embeddings, num_embeddings);
