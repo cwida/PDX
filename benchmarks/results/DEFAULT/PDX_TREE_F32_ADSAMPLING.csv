@@ -1,3 +1,4 @@
 dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
 openai,adsampling,0.722484,1.14888,0.289916,0.836599,32,0,100,1000,0.2,1,0.7342,2.249,0.2845
 arxiv,adsampling,0.39642,0.629542,0.175917,0.904999,32,0,100,1000,0.2,1,0.3986,0.7314,0.1759
+mxbai,adsampling,0.798482,1.41258,0.281583,0.972168,128,0,100,1000,0.2,1,0.8013,1.526,0.2816

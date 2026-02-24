@@ -70,6 +70,7 @@ pdxearch.egg-info
 /benchmarks/datasets/adsampling_pdx
 /benchmarks/datasets/downloaded
 /benchmarks/datasets/raw
+/benchmarks/datasets/faiss
 /benchmarks/datasets/pdx
 /benchmarks/datasets/purescan
 /benchmarks/datasets/queries

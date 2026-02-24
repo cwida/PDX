@@ -18,11 +18,12 @@ SEMANTIC_FILTERED_GROUND_TRUTH_PATH = os.path.join(SOURCE_DIR, "benchmarks", "gt
 
 QUERIES_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "queries")
 PDX_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "pdx")
+FAISS_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "faiss")
 FILTER_SELECTION_VECTORS = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "selection_vectors")
 
 for _d in [RAW_DATA, GROUND_TRUTH_DATA, FILTERED_GROUND_TRUTH_DATA,
            SEMANTIC_GROUND_TRUTH_PATH, SEMANTIC_FILTERED_GROUND_TRUTH_PATH,
-           QUERIES_DATA, PDX_DATA, FILTER_SELECTION_VECTORS]:
+           QUERIES_DATA, PDX_DATA, FAISS_DATA, FILTER_SELECTION_VECTORS]:
     os.makedirs(_d, exist_ok=True)
 
 # ── Dataset registry ──────────────────────────────────────────────
@@ -72,9 +73,10 @@ def get_ground_truth_filename(file, k, norm=True):
     return f"{file}_{k}.json"
 
 
-def get_core_index_filename(file, norm=True, balanced=False):
-    if balanced:
-        return f"ivf_{file}_norm.index.balanced"
-    if norm:
+def get_core_index_filename(file, norm=True, sq8=False):
+    if sq8:
+        return f"ivf_{file}_norm_sq8.index"
+    elif norm:
         return f"ivf_{file}_norm.index"
-    return f"ivf_{file}.index"
+    else:
+        return f"ivf_{file}.index"

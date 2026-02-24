@@ -7,7 +7,7 @@ import numpy as np
 SOURCE_DIR = os.getcwd()
 ARCHITECTURE = os.environ.get('PDX_ARCH', 'DEFAULT')
 RESULTS_DIRECTORY = os.path.join(SOURCE_DIR, "benchmarks", "results", ARCHITECTURE)
-KNN = 100
+KNN = 20
 N_MEASURE_RUNS = 1
 
 IVF_NPROBES = [

@@ -1,3 +1,34 @@
+# Benchmarks
+
+We present single-threaded **benchmarks** against FAISS+AVX512 on an `r7iz.xlarge` (Intel Sapphire Rapids) instance. 
+
+### Two-Level IVF (IVF<sub>2</sub>) ![](https://img.shields.io/badge/Fastest%20search%20on%20PDX-red)
+IVF<sub>2</sub> tackles a bottleneck of IVF indexes: finding the nearest centroids. By clustering the original IVF centroids, we can use PDX to quickly scan them (thanks to pruning) without sacrificing recall. This achieves significant throughput improvements when paired with `8-bit` quantization.
+
+<p align="center">
+        <img src="./benchmarks/results/ivf2-intel.png" alt="PDX Layout" style="{max-height: 150px}">
+</p>
+
+### Vanilla IVF
+Here, PDX, paired with the pruning algorithm ADSampling on `float32`, achieves significant speedups.
+
+<p align="center">
+        <img src="./benchmarks/results/ivf-intel.png" alt="PDX Layout" style="{max-height: 150px}">
+</p>
+
+
+### Exhaustive search + IVF
+An exhaustive search scans all the vectors in the collection. Having an IVF index with PDX can **EXTREMELY** accelerate this without sacrificing recall, thanks to the reliable pruning of ADSampling.
+
+<p align="center">
+        <img src="./benchmarks/results/ivf-exhaustive-intel.png" alt="PDX Layout" style="{max-height: 150px}">
+</p>
+
+The key observation here is that thanks to the underlying IVF index, the exhaustive search starts with the most promising clusters. A tight threshold is found early on, which enables the quick pruning of most candidates.
+
+### No pruning and no index
+Even without pruning, PDX distance kernels can be faster than SIMD ones in most CPU microarchitectures. For detailed information, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). You can also try it yourself in our playground [here](./benchmarks/bench_kernels).
+
 # Benchmarking
 
 We provide a master script that setups the entire benchmarking suite for you.
@@ -5,9 +36,6 @@ We provide a master script that setups the entire benchmarking suite for you.
 ## Setting up Data
 
 To download all the datasets and generate all the indexes needed to run our benchmarking suite, you can use the script [/benchmarks/python_scripts/setup_data.py](/benchmarks/python_scripts/setup_data.py). For this, you need Python 3.11 or higher and install the dependencies in `/benchmarks/python_scripts/requirements.txt`. 
-
-> [!CAUTION]  
-> You will need roughly 300GB of disk for ALL the indexes of the datasets used in our paper.
 
 Run the script from the root folder with the script flags `DOWNLOAD` and `GENERATE_IVF` set to `True` and the values in the `ALGORITHMS` array uncommented. You do not need to generate the `ground_truth` for k <= 100 as it is already present. 
 
@@ -42,17 +70,7 @@ Once you have downloaded and created the indexes, you can start benchmarking.
 ### Building
 We built our scripts with the proper `march` flags. Below are the flags we used for each microarchitecture:
 ```sh
-# GRAVITON4
-cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -mcpu=neoverse-v2"
-# GRAVITON3
-cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -mcpu=neoverse-v1"
-# Intel Sapphire Rapids (256 vectors are used if mprefer-vector-width is not specified)
-cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -march=sapphirerapids -mtune=sapphirerapids -mprefer-vector-width=512"
-# ZEN4
-cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -march=znver4 -mtune=znver4"
-# ZEN3
-cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -march=znver3 -mtune=znver3"
-
+cmake . -DPDX_COMPILE_BENCHMARKS
 make
 ```
 

@@ -2,6 +2,7 @@ import os
 import zipfile
 from setup_utils import RAW_DATA, DATA_DIRECTORY, DATASET_INFO
 from setup_pdx import generate_ground_truth, generate_index, generate_test_data
+from setup_faiss import generate_faiss_index, generate_faiss_sq8_index
 
 DOWNLOAD = False  # Download raw HDF5 data
 GENERATE_GT = False  # Creates ground truth with sklearn
@@ -45,3 +46,7 @@ if __name__ == "__main__":
         generate_index(dataset, 'pdx_u8', normalize=True, seed=SEED)
         generate_index(dataset, 'pdx_tree_f32', normalize=True, seed=SEED)
         generate_index(dataset, 'pdx_tree_u8', normalize=True, seed=SEED)
+
+        print('==== Generating FAISS indexes...')
+        generate_faiss_index(dataset, normalize=True)
+        generate_faiss_sq8_index(dataset, normalize=True)

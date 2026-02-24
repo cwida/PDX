@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+
+jobs:
+  format-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install clang-format 18.1.8
+        run: pip install clang-format==18.1.8
+
+      - name: Check C++ formatting
+        run: |
+          clang-format --version
+          ./scripts/format_check.sh
+
+  tidy-check:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 clang-tidy-18 libomp-18-dev libopenblas-dev cmake
+          sudo ln -sf /usr/bin/clang-tidy-18 /usr/local/bin/clang-tidy
+
+      - name: Configure
+        run: cmake -B build -DPDX_COMPILE_TESTS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run clang-tidy
+        run: |
+          ln -s build/compile_commands.json compile_commands.json
+          ./scripts/tidy_check.sh
+
+  cpp-build-and-test:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+
+      - name: Configure
+        run: cmake -B build -DPDX_COMPILE_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build tests
+        run: cmake --build build -j$(nproc) --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  python:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python bindings
+        run: pip install .
+
+      - name: Verify import
+        run: python -c "import pdxearch; print('pdxearch imported successfully')"
+
+  sanitizers-asan-ubsan:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+
+      - name: Configure with ASan + UBSan
+        run: |
+          cmake -B build_asan -DPDX_COMPILE_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+
+      - name: Build tests
+        run: cmake --build build_asan -j$(nproc) --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build_asan --output-on-failure
+
+  ci-pass:
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - format-check
+      - tidy-check
+      - cpp-build-and-test
+      - python
+      - sanitizers-asan-ubsan
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more jobs failed or were cancelled"
+            exit 1
+          fi

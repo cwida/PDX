@@ -182,15 +182,10 @@ class BenchmarkUtils {
         2,
     };
 
-    inline static float SELECTIVITY_THRESHOLDS[] = {0.005, 0.01, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3,
-                                                    0.35,  0.4,  0.45, 0.5, 0.55, 0.6, 0.65, 0.7,
-                                                    0.75,  0.8,  0.85, 0.9, 0.95, 0.99};
-
     inline static size_t NUM_MEASURE_RUNS = 1;
-    inline static float EPSILON0 = 1.5;               // 2.1;
     inline static float SELECTIVITY_THRESHOLD = 0.80; // more than 20% pruned to pass
     inline static bool VERIFY_RESULTS = true;
-    inline static uint8_t KNN = 100;
+    inline static uint8_t KNN = 20;
 
     inline static uint8_t GROUND_TRUTH_MAX_K =
         100; // To properly skip on the ground truth file (do not change)
