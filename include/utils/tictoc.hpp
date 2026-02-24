@@ -36,4 +36,8 @@ public:
         accum_time += std::chrono::duration_cast<std::chrono::nanoseconds>(
                 end - start).count();
     }
+    
+    double GetMilliseconds() const {
+        return static_cast<double>(accum_time) / 1e6;
+    }
 };

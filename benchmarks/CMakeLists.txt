@@ -11,6 +11,7 @@ add_executable(BenchmarkU8PDXADSampling bench_adsampling/pdx_ivf_adsampling_u8.c
 add_executable(BenchmarkU8IVF2ADSampling bench_adsampling/pdx_ivf2_adsampling_u8.cpp)
 add_executable(FilteredBenchmarkU8IVF2ADSampling bench_adsampling/pdx_ivf2_adsampling_u8_filtered.cpp)
 add_executable(FilteredBenchmarkPDXADSampling bench_adsampling/pdx_ivf_adsampling_filtered.cpp)
+add_executable(BenchmarkEndToEnd bench_adsampling/pdx_end_to_end.cpp)
 
 target_link_libraries(BenchmarkPDXADSampling ${BENCH_COMMON_LIBS})
 target_link_libraries(FilteredBenchmarkPDXADSampling ${BENCH_COMMON_LIBS})
@@ -18,3 +19,4 @@ target_link_libraries(BenchmarkIVF2ADSampling ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkU8PDXADSampling ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkU8IVF2ADSampling ${BENCH_COMMON_LIBS})
 target_link_libraries(FilteredBenchmarkU8IVF2ADSampling ${BENCH_COMMON_LIBS})
+target_link_libraries(BenchmarkEndToEnd ${BENCH_COMMON_LIBS})

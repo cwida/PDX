@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
+#include <numeric>
 #include <string>
 
 #include "common.hpp"
@@ -10,8 +12,21 @@
 #include "pruners/adsampling.hpp"
 #include "pdxearch.hpp"
 #include "utils/file_reader.hpp"
+#include "clustering.hpp"
+#include "utils/utils.hpp"
+#include "quantizers/scalar.hpp"
 
 namespace PDX {
+
+struct PDXIndexConfig {
+	uint32_t num_dimensions;
+	DistanceMetric distance_metric = DistanceMetric::L2SQ;
+	uint32_t seed = 42;
+	uint32_t num_clusters = 0; // 0 = auto-compute from num_embeddings
+	bool normalize = false;
+	float sampling_fraction = 0.0f; // 0 = auto (1.0 if small dataset, 0.3 otherwise)
+	uint32_t kmeans_iters = 10;
+};
 
 template <PDX::Quantization Q>
 class PDXIndex {
@@ -21,12 +36,17 @@ public:
 private:
 	std::unique_ptr<char[]> matrix_buffer;
 
+	PDXIndexConfig config {};
 	PDX::IndexPDXIVF<Q> index;
 	std::unique_ptr<PDX::ADSamplingPruner> pruner;
 	std::unique_ptr<PDX::PDXearch<Q>> searcher;
 
 public:
 	PDXIndex() = default;
+
+	explicit PDXIndex(PDXIndexConfig config) : config(config) {
+		pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
+	}
 
 	void Restore(const std::string &index_path, const std::string &matrix_path) {
 		index.Restore(index_path);
@@ -58,14 +78,92 @@ public:
 		return index.num_clusters;
 	}
 
-	// === CreateIndex path (DuckDB integration) — commented out for now ===
-	// Requires: D_ASSERT, make_uniq, row_t, Vector, FlatVector, NotImplementedException,
-	//           clustering.hpp, db_mock/predicate_evaluator.hpp
-	//
-	// void CreateIndex(const row_t *const row_ids, const float *const embeddings, const size_t num_embeddings);
-	// std::unique_ptr<std::vector<row_t>> Search(const float *query_embedding, size_t limit, uint32_t n_probe) const;
-	// PDX::PredicateEvaluator CreatePredicateEvaluator(...) const;
-	// std::unique_ptr<std::vector<row_t>> FilteredSearch(...) const;
+	void BuildIndex(const float *const embeddings, const size_t num_embeddings) {
+		std::vector<size_t> row_ids(num_embeddings);
+		std::iota(row_ids.begin(), row_ids.end(), 0);
+		BuildIndex(row_ids.data(), embeddings, num_embeddings);
+	}
+
+	void BuildIndex(const size_t *const row_ids, const float *const embeddings, const size_t num_embeddings) {
+		const auto num_dimensions = config.num_dimensions;
+		auto num_clusters = config.num_clusters;
+		if (num_clusters == 0) {
+			num_clusters = ComputeNumberOfClusters(num_embeddings);
+		}
+		const bool normalize = config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
+
+		assert(num_dimensions > 0);
+		assert(num_embeddings > 0);
+		assert(pruner);
+
+		// Preprocess: normalize (if needed) + rotate.
+		const size_t total_floats = num_embeddings * num_dimensions;
+		std::unique_ptr<float[]> normalized;
+		const float *rotation_input = embeddings;
+		if (normalize) {
+			normalized.reset(new float[total_floats]);
+			std::memcpy(normalized.get(), embeddings, total_floats * sizeof(float));
+			PDX::Quantizer quantizer(num_dimensions);
+			for (size_t i = 0; i < num_embeddings; i++) {
+				quantizer.NormalizeQuery(normalized.get() + i * num_dimensions,
+				                         normalized.get() + i * num_dimensions);
+			}
+			rotation_input = normalized.get();
+		}
+		std::unique_ptr<float[]> preprocessed(new float[total_floats]);
+		pruner->PreprocessEmbeddings(rotation_input, preprocessed.get(), num_embeddings);
+
+		float quantization_base = 0.0f;
+		float quantization_scale = 1.0f;
+		if constexpr (Q == PDX::U8) {
+			const auto params = PDX::ScalarQuantizer<Q>::ComputeQuantizationParams(
+			    preprocessed.get(), static_cast<size_t>(num_embeddings) * num_dimensions);
+			quantization_base = params.quantization_base;
+			quantization_scale = params.quantization_scale;
+			index = PDX::IndexPDXIVF<Q>(num_dimensions, num_embeddings, num_clusters,
+			                             normalize, quantization_scale, quantization_base);
+		} else {
+			index = PDX::IndexPDXIVF<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
+		}
+
+		KMeansResult kmeans_result = ComputeKMeans(preprocessed.get(), num_embeddings, num_dimensions,
+		                                           num_clusters, config.distance_metric, config.seed,
+		                                           config.normalize, config.sampling_fraction, config.kmeans_iters);
+		index.centroids = std::move(kmeans_result.centroids);
+
+		size_t max_cluster_size = 0;
+		for (size_t i = 0; i < num_clusters; i++) {
+			max_cluster_size = std::max(max_cluster_size, kmeans_result.assignments[i].size());
+		}
+		std::unique_ptr<embedding_storage_t[]> tmp_cluster_embeddings(
+		    new embedding_storage_t[static_cast<uint64_t>(max_cluster_size) * num_dimensions]);
+
+		for (size_t cluster_idx = 0; cluster_idx < num_clusters; cluster_idx++) {
+			const auto cluster_size = kmeans_result.assignments[cluster_idx].size();
+			auto &cluster = index.clusters.emplace_back(cluster_size, num_dimensions);
+
+			for (size_t position_in_cluster = 0; position_in_cluster < cluster_size; position_in_cluster++) {
+				const auto embedding_idx = kmeans_result.assignments[cluster_idx][position_in_cluster];
+				cluster.indices[position_in_cluster] = row_ids[embedding_idx];
+
+				if constexpr (Q == PDX::U8) {
+					PDX::ScalarQuantizer<Q> quantizer(num_dimensions);
+					quantizer.QuantizeEmbedding(preprocessed.get() + (embedding_idx * num_dimensions),
+					                            quantization_base, quantization_scale,
+					                            tmp_cluster_embeddings.get() + (position_in_cluster * num_dimensions));
+				} else {
+					std::memcpy(tmp_cluster_embeddings.get() + (position_in_cluster * num_dimensions),
+					            preprocessed.get() + (embedding_idx * num_dimensions),
+					            num_dimensions * sizeof(float));
+				}
+			}
+			StoreClusterEmbeddings<Q, embedding_storage_t>(cluster, index, tmp_cluster_embeddings.get(),
+			                                               cluster_size);
+		}
+
+		searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
+	}
+
 };
 
 template <PDX::Quantization Q>
@@ -134,14 +232,6 @@ public:
 		return index.l0.num_clusters;
 	}
 
-	// === CreateIndex path (DuckDB integration) — commented out for now ===
-	// Requires: D_ASSERT, make_uniq, row_t, Vector, FlatVector, NotImplementedException,
-	//           clustering.hpp, db_mock/predicate_evaluator.hpp
-	//
-	// void CreateIndex(const row_t *const row_ids, const float *const embeddings, const size_t num_embeddings);
-	// std::unique_ptr<std::vector<row_t>> Search(const float *query_embedding, size_t limit, uint32_t n_probe) const;
-	// PDX::PredicateEvaluator CreatePredicateEvaluator(...) const;
-	// std::unique_ptr<std::vector<row_t>> FilteredSearch(...) const;
 };
 
 using PDXIndexF32 = PDXIndex<PDX::F32>;

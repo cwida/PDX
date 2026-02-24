@@ -19,7 +19,9 @@ include(CheckCXXCompilerFlag)
 include(CMakePrintHelpers)
 include(CTest)
 
-# find_package(OpenMP REQUIRED)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/extern/SuperKMeans/include)
+
+find_package(OpenMP REQUIRED)
 
 list(PREPEND CMAKE_PREFIX_PATH /usr/local)
 
@@ -46,8 +48,7 @@ else()
     find_package(BLAS REQUIRED)
     message(STATUS "BLAS library found: ${BLAS_LIBRARIES}")
     add_definitions(-DEIGEN_USE_BLAS)
-    # set(BLAS_LINK_LIBRARIES ${BLAS_LIBRARIES} OpenMP::OpenMP_CXX)
-    set(BLAS_LINK_LIBRARIES ${BLAS_LIBRARIES})
+    set(BLAS_LINK_LIBRARIES ${BLAS_LIBRARIES} OpenMP::OpenMP_CXX)
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "extern/findFFTW")

@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include "common.hpp"
+#include "utils/file_reader.hpp"
 
 namespace PDX {
 
@@ -34,6 +35,8 @@ public:
 
 	IndexPDXIVF() = default;
 	~IndexPDXIVF() = default;
+	IndexPDXIVF(IndexPDXIVF &&) = default;
+	IndexPDXIVF &operator=(IndexPDXIVF &&) = default;
 
 	IndexPDXIVF(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized)
 	    : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings), num_clusters(num_clusters),

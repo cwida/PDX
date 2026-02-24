@@ -15,8 +15,8 @@
 namespace PDX {
 
 // Generate a rotation matrix suitable for PDXearch's ADSampling pruning algorithm.
-[[nodiscard]] inline unique_ptr<float[]> GenerateRandomRotationMatrix(const size_t num_dimensions, const int32_t seed) {
-	auto rotation_matrix = make_uniq_array<float>(num_dimensions * num_dimensions);
+[[nodiscard]] inline std::unique_ptr<float[]> GenerateRandomRotationMatrix(const size_t num_dimensions, const int32_t seed) {
+	auto rotation_matrix = std::make_unique<float[]>(num_dimensions * num_dimensions);
 
 	std::mt19937 gen(seed);
 	std::normal_distribution<float> normal_dist;

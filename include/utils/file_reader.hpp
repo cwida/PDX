@@ -24,7 +24,7 @@ inline std::unique_ptr<char[]> MmapFile(const std::string& filename) {
     fstat(fd, &file_stats);
     size_t file_size = file_stats.st_size;
 
-    auto data = std::make_unique<char[]>(file_size);
+    std::unique_ptr<char[]> data(new char[file_size]);
     std::ifstream input(filename, std::ios::binary);
     input.read(data.get(), file_size);
 

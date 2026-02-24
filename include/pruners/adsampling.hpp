@@ -2,6 +2,7 @@
 
 #include <Eigen/Dense>
 #include <queue>
+#include <random>
 #include "common.hpp"
 
 #ifdef HAS_FFTW
@@ -15,6 +16,24 @@ class ADSamplingPruner {
 
 public:
 	const uint32_t num_dimensions;
+
+	ADSamplingPruner(const uint32_t num_dimensions, const int32_t seed) : num_dimensions(num_dimensions) {
+		ratios.resize(num_dimensions);
+		for (size_t i = 0; i < num_dimensions; ++i) {
+			ratios[i] = GetRatio(i);
+		}
+		std::mt19937 gen(seed);
+		std::normal_distribution<float> normal_dist;
+		Eigen::MatrixXf random_matrix = Eigen::MatrixXf::Zero(
+		    static_cast<Eigen::Index>(num_dimensions), static_cast<Eigen::Index>(num_dimensions));
+		for (size_t i = 0; i < num_dimensions; ++i) {
+			for (size_t j = 0; j < num_dimensions; ++j) {
+				random_matrix(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j)) = normal_dist(gen);
+			}
+		}
+		const Eigen::HouseholderQR<Eigen::MatrixXf> qr(random_matrix);
+		matrix = qr.householderQ();
+	}
 
 	ADSamplingPruner(const uint32_t num_dimensions, const float *matrix_p) : num_dimensions(num_dimensions) {
 		ratios.resize(num_dimensions);

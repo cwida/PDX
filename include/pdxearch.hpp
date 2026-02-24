@@ -50,7 +50,7 @@ public:
     }
 
     void SetClusterAccessOrder(const std::vector<uint32_t> &cluster_indexes) {
-        cluster_indices_in_access_order = std::make_unique<uint32_t[]>(cluster_indexes.size());
+        cluster_indices_in_access_order.reset(new uint32_t[cluster_indexes.size()]);
         std::copy(cluster_indexes.begin(), cluster_indexes.end(), cluster_indices_in_access_order.get());
     }
 

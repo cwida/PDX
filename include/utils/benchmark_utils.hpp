@@ -12,12 +12,42 @@
 #include <limits>
 #include <iomanip>
 #include <chrono>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <filesystem>
 #include "../common.hpp"
+#include "utils/file_reader.hpp"
 
+
+// Raw binary data paths (SuperKMeans convention: data_<name>.bin / data_<name>_test.bin)
+inline std::string RAW_DATA_DIR = std::string{CMAKE_SOURCE_DIR} + "/../../SuperKMeans/benchmarks/data";
+inline std::string GROUND_TRUTH_JSON_DIR = std::string{CMAKE_SOURCE_DIR} + "/../../SuperKMeans/benchmarks/ground_truth";
+
+struct RawDatasetInfo {
+    size_t num_embeddings;
+    size_t num_dimensions;
+    size_t num_queries;
+    PDX::DistanceMetric distance_metric;
+    std::string pdx_dataset_name; // Name used in PDX ground truth / query files
+};
+
+inline const std::unordered_map<std::string, RawDatasetInfo> RAW_DATASET_PARAMS = {
+    {"sift",        {1000000,  128,  1000, PDX::DistanceMetric::L2SQ,    "sift-128-euclidean"}},
+    {"yi",          {187843,   128,  1000, PDX::DistanceMetric::IP,      "yi-128-ip"}},
+    {"llama",       {256921,   128,  1000, PDX::DistanceMetric::IP,      "llama-128-ip"}},
+    {"glove200",    {1183514,  200,  1000, PDX::DistanceMetric::COSINE,  "glove-200-angular"}},
+    {"yandex",      {1000000,  200,  1000, PDX::DistanceMetric::COSINE,  "yandex-200-cosine"}},
+    {"yahoo",       {677305,   384,  1000, PDX::DistanceMetric::COSINE,  "yahoo-minilm-384-normalized"}},
+    {"clip",        {1281167,  512,  1000, PDX::DistanceMetric::L2SQ,    "imagenet-clip-512-normalized"}},
+    {"contriever",  {990000,   768,  1000, PDX::DistanceMetric::L2SQ,    "contriever-768"}},
+    {"gist",        {1000000,  960,  1000, PDX::DistanceMetric::L2SQ,    "gist-960-euclidean"}},
+    {"mxbai",       {769382,  1024,  1000, PDX::DistanceMetric::L2SQ,    "agnews-mxbai-1024-euclidean"}},
+    {"openai",      {999000,  1536,  1000, PDX::DistanceMetric::L2SQ,    "openai-1536-angular"}},
+    {"arxiv",       {2253000,  768,  1000, PDX::DistanceMetric::L2SQ,    "arxiv-nomic-768-normalized"}},
+    {"wiki",        {260372,  3072,  1000, PDX::DistanceMetric::L2SQ,    "simplewiki-openai-3072-normalized"}},
+};
 
 struct BenchmarkMetadata {
     std::string dataset;
@@ -237,3 +267,53 @@ public:
 };
 
 BenchmarkUtils BENCHMARK_UTILS;
+
+inline std::unordered_map<int, std::vector<int>> ParseGroundTruthJson(const std::string &filename) {
+    std::unordered_map<int, std::vector<int>> gt_map;
+    std::ifstream file(filename);
+    if (!file.is_open()) return gt_map;
+
+    std::string line;
+    std::getline(file, line);
+
+    size_t pos = 0;
+    while ((pos = line.find("\"", pos)) != std::string::npos) {
+        size_t key_start = pos + 1;
+        size_t key_end = line.find("\"", key_start);
+        if (key_end == std::string::npos) break;
+
+        int query_idx = std::stoi(line.substr(key_start, key_end - key_start));
+
+        size_t arr_start = line.find("[", key_end);
+        size_t arr_end = line.find("]", arr_start);
+        if (arr_start == std::string::npos || arr_end == std::string::npos) break;
+
+        std::string arr_str = line.substr(arr_start + 1, arr_end - arr_start - 1);
+        std::vector<int> ids;
+        std::istringstream iss(arr_str);
+        std::string token;
+        while (std::getline(iss, token, ',')) {
+            token.erase(0, token.find_first_not_of(" \t"));
+            token.erase(token.find_last_not_of(" \t") + 1);
+            if (!token.empty()) ids.push_back(std::stoi(token));
+        }
+        gt_map[query_idx] = ids;
+        pos = arr_end + 1;
+    }
+    return gt_map;
+}
+
+inline float ComputeRecallFromJson(const std::vector<PDX::KNNCandidate> &result,
+                                   const std::vector<int> &gt_ids, size_t knn) {
+    size_t hits = 0;
+    size_t gt_count = std::min(knn, gt_ids.size());
+    for (size_t i = 0; i < result.size(); i++) {
+        for (size_t j = 0; j < gt_count; j++) {
+            if (result[i].index == static_cast<uint32_t>(gt_ids[j])) {
+                hits++;
+                break;
+            }
+        }
+    }
+    return static_cast<float>(hits) / static_cast<float>(gt_count);
+}
