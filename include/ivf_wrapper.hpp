@@ -115,6 +115,17 @@ public:
 	IndexPDXIVF<F32> l0; // Meso clusters
 
 	IndexPDXIVF2() = default;
+	~IndexPDXIVF2() = default;
+	IndexPDXIVF2(IndexPDXIVF2 &&) = default;
+	IndexPDXIVF2 &operator=(IndexPDXIVF2 &&) = default;
+
+	IndexPDXIVF2(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized)
+	    : IndexPDXIVF<Q>(num_dimensions, total_num_embeddings, num_clusters, is_normalized) {}
+
+	IndexPDXIVF2(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized,
+	             float quantization_scale, float quantization_base)
+	    : IndexPDXIVF<Q>(num_dimensions, total_num_embeddings, num_clusters, is_normalized,
+	                     quantization_scale, quantization_base) {}
 
 	void Restore(const std::string &filename) {
 		this->file_buffer = MmapFile(filename);

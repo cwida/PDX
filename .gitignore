@@ -99,3 +99,4 @@ cmake_install.cmake
 /benchmarks/BenchmarkU*
 /benchmarks/G4*
 /benchmarks/BenchmarkU8*
+/benchmarks/BenchmarkEndToEnd
