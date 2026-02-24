@@ -139,8 +139,7 @@ TEST_P(IndexPropertiesTest, NumClustersMatchesConfig) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     IndexPropertiesTest,
-    // TODO: add tree indexes once crash is fixed
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

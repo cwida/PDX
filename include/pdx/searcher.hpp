@@ -52,6 +52,7 @@ class PDXearch {
     size_t GetNProbe() const { return ivf_nprobe; }
 
     void SetClusterAccessOrder(const std::vector<uint32_t>& cluster_indexes) {
+        cluster_access_order_size = cluster_indexes.size();
         cluster_indices_in_access_order.reset(new uint32_t[cluster_indexes.size()]);
         std::copy(
             cluster_indexes.begin(), cluster_indexes.end(), cluster_indices_in_access_order.get()
@@ -69,6 +70,7 @@ class PDXearch {
 
     // Prioritized list of indices of the clusters to probe. E.g., [0, 2, 1].
     std::unique_ptr<uint32_t[]> cluster_indices_in_access_order;
+    size_t cluster_access_order_size = 0;
 
     // Start: State for the current filtered search.
     uint32_t k = 0;
@@ -595,6 +597,10 @@ class PDXearch {
                                        : ivf_nprobe;
         std::unique_ptr<uint32_t[]> local_cluster_order(new uint32_t[pdx_data.num_clusters]);
         if (cluster_indices_in_access_order) {
+            // We only enter here when access order was prioritized by calling
+            // SetClusterAccessOrder(), in which case we need to check that
+            // the clusters prioritized is not greater than clusters_to_visit
+            clusters_to_visit = std::min(clusters_to_visit, cluster_access_order_size);
             std::copy(
                 cluster_indices_in_access_order.get(),
                 cluster_indices_in_access_order.get() + clusters_to_visit,
