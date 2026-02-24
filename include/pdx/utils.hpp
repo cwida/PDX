@@ -4,17 +4,41 @@
 #include <memory>
 #include <fcntl.h>
 #include <fstream>
-#include <cstdio>
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <chrono>
 
 #ifdef linux
 #include <linux/mman.h>
 #endif
 
+class TicToc {
+public:
+    size_t accum_time = 0;
+    std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+
+    void Reset() {
+        accum_time = 0;
+        start = std::chrono::high_resolution_clock::now();
+    }
+
+    inline void Tic() {
+        start = std::chrono::high_resolution_clock::now();
+    }
+
+    inline void Toc() {
+        auto end = std::chrono::high_resolution_clock::now();
+        accum_time += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                end - start).count();
+    }
+
+    double GetMilliseconds() const {
+        return static_cast<double>(accum_time) / 1e6;
+    }
+};
 
 inline std::unique_ptr<char[]> MmapFile(const std::string& filename) {
     struct stat file_stats {};
@@ -30,4 +54,3 @@ inline std::unique_ptr<char[]> MmapFile(const std::string& filename) {
 
     return data;
 }
-

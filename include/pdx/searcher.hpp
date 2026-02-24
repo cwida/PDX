@@ -6,13 +6,13 @@
 #include <algorithm>
 #include <memory>
 #include <limits>
-#include "common.hpp"
-#include "utils/tictoc.hpp"
-#include "db_mock/predicate_evaluator.hpp"
-#include "distance_computers/base_computers.hpp"
-#include "quantizers/scalar.hpp"
-#include "ivf_wrapper.hpp"
-#include "pruners/adsampling.hpp"
+#include "pdx/common.hpp"
+#include "pdx/utils.hpp"
+#include "pdx/db_mock/predicate_evaluator.hpp"
+#include "pdx/distance_computers/base_computers.hpp"
+#include "pdx/quantizers/scalar.hpp"
+#include "pdx/ivf_wrapper.hpp"
+#include "pdx/pruners/adsampling.hpp"
 
 namespace PDX {
 

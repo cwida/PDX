@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include "arm_neon.h"
-#include "common.hpp"
+#include "pdx/common.hpp"
 
 namespace PDX {
 

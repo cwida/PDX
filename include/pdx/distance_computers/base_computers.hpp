@@ -1,22 +1,22 @@
 #pragma once
 
-#include "common.hpp"
+#include "pdx/common.hpp"
 
 #ifdef __ARM_NEON
-#include "distance_computers/neon_computers.hpp"
+#include "pdx/distance_computers/neon_computers.hpp"
 #endif
 
 #if defined(__AVX2__) && !defined(__AVX512F__)
-#include "distance_computers/avx2_computers.hpp"
+#include "pdx/distance_computers/avx2_computers.hpp"
 #endif
 
 #ifdef __AVX512F__
-#include "distance_computers/avx512_computers.hpp"
+#include "pdx/distance_computers/avx512_computers.hpp"
 #endif
 
 // Fallback to scalar computer.
 #if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
-#include "distance_computers/scalar_computers.hpp"
+#include "pdx/distance_computers/scalar_computers.hpp"
 #endif
 
 // TODO: Support SVE

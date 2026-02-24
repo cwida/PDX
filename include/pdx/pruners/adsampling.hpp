@@ -3,7 +3,7 @@
 #include <Eigen/Dense>
 #include <queue>
 #include <random>
-#include "common.hpp"
+#include "pdx/common.hpp"
 
 #ifdef HAS_FFTW
 #include <fftw3.h>

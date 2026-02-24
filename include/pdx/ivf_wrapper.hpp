@@ -5,8 +5,8 @@
 #include <cassert>
 #include <vector>
 #include <memory>
-#include "common.hpp"
-#include "utils/file_reader.hpp"
+#include "pdx/common.hpp"
+#include "pdx/utils.hpp"
 
 namespace PDX {
 

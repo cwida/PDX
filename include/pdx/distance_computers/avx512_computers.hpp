@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <cassert>
 #include <immintrin.h>
-#include "common.hpp"
+#include "pdx/common.hpp"
 
 namespace PDX {
 

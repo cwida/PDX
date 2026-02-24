@@ -2,8 +2,8 @@
 
 #include <cstdint>
 #include <immintrin.h>
-#include "common.hpp"
-#include "distance_computers/scalar_computers.hpp"
+#include "pdx/common.hpp"
+#include "pdx/distance_computers/scalar_computers.hpp"
 
 namespace PDX {
 

@@ -17,8 +17,8 @@
 #include <unordered_set>
 #include <vector>
 #include <filesystem>
-#include "../common.hpp"
-#include "utils/file_reader.hpp"
+#include "pdx/common.hpp"
+#include "pdx/utils.hpp"
 
 
 // Raw binary data paths (SuperKMeans convention: data_<name>.bin / data_<name>_test.bin)

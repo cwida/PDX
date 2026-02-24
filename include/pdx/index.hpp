@@ -7,14 +7,14 @@
 #include <numeric>
 #include <string>
 
-#include "common.hpp"
-#include "ivf_wrapper.hpp"
-#include "pruners/adsampling.hpp"
-#include "pdxearch.hpp"
-#include "utils/file_reader.hpp"
-#include "clustering.hpp"
-#include "utils/utils.hpp"
-#include "quantizers/scalar.hpp"
+#include "pdx/common.hpp"
+#include "pdx/ivf_wrapper.hpp"
+#include "pdx/pruners/adsampling.hpp"
+#include "pdx/searcher.hpp"
+#include "pdx/clustering.hpp"
+#include "pdx/layout.hpp"
+#include "pdx/utils.hpp"
+#include "pdx/quantizers/scalar.hpp"
 
 namespace PDX {
 
@@ -366,5 +366,34 @@ using PDXIndexF32 = PDXIndex<PDX::F32>;
 using PDXIndexU8 = PDXIndex<PDX::U8>;
 using PDXTreeIndexF32 = PDXTreeIndex<PDX::F32>;
 using PDXTreeIndexU8 = PDXTreeIndex<PDX::U8>;
+
+class EmbeddingPreprocessor {
+private:
+	PDX::ADSamplingPruner pruner;
+	PDX::Quantizer quantizer;
+	const size_t num_dimensions;
+
+public:
+	explicit EmbeddingPreprocessor(const size_t num_dimensions, const float *const rotation_matrix)
+	    : pruner(num_dimensions, rotation_matrix), quantizer(num_dimensions), num_dimensions(num_dimensions) {
+	}
+
+	void PreprocessEmbedding(float *const input_embedding, float *const output_embedding, const bool normalize) const {
+		if (normalize) {
+			quantizer.NormalizeQuery(input_embedding, input_embedding);
+		}
+		pruner.PreprocessQuery(input_embedding, output_embedding);
+	}
+
+	void PreprocessEmbeddings(float *const input_embeddings, float *const output_embeddings,
+	                          const size_t num_embeddings, const bool normalize) const {
+		if (normalize) {
+			for (size_t i = 0; i < num_embeddings; i++) {
+				quantizer.NormalizeQuery(input_embeddings + i * num_dimensions, input_embeddings + i * num_dimensions);
+			}
+		}
+		pruner.PreprocessEmbeddings(input_embeddings, output_embeddings, num_embeddings);
+	}
+};
 
 } // namespace PDX

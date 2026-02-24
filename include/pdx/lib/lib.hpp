@@ -7,10 +7,10 @@
 #include <pybind11/stl.h>
 #include <iostream>
 #include <memory>
-#include "utils/file_reader.hpp"
-#include "ivf_wrapper.hpp"
-#include "pdxearch.hpp"
-#include "pruners/adsampling.hpp"
+#include "pdx/utils.hpp"
+#include "pdx/ivf_wrapper.hpp"
+#include "pdx/searcher.hpp"
+#include "pdx/pruners/adsampling.hpp"
 
 // TODO: the python wrapper and the core API should not be interleaved
 namespace py = pybind11;

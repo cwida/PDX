@@ -8,11 +8,11 @@
 
 #include <memory>
 #include <iostream>
-#include "utils/file_reader.hpp"
-#include "ivf_wrapper.hpp"
-#include "pdxearch.hpp"
-#include "pruners/adsampling.hpp"
-#include "utils/benchmark_utils.hpp"
+#include "pdx/utils.hpp"
+#include "pdx/ivf_wrapper.hpp"
+#include "pdx/searcher.hpp"
+#include "pdx/pruners/adsampling.hpp"
+#include "benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
     std::string arg_dataset;

@@ -4,7 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
-#include "common.hpp"
+#include "pdx/common.hpp"
 
 namespace PDX {
 

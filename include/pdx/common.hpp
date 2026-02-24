@@ -201,4 +201,8 @@ static_assert(GetPDXDimensionSplit(1028).vertical_dimensions == 260);
 	}
 }
 
+[[nodiscard]] inline constexpr bool DistanceMetricRequiresNormalization(const PDX::DistanceMetric distance_metric) {
+	return distance_metric == PDX::DistanceMetric::COSINE || distance_metric == PDX::DistanceMetric::IP;
+}
+
 } // namespace PDX

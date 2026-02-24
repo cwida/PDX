@@ -13,9 +13,9 @@
 #include <vector>
 #include <chrono>
 
-#include "pdx_index.hpp"
-#include "utils/benchmark_utils.hpp"
-#include "utils/file_reader.hpp"
+#include "pdx/index.hpp"
+#include "benchmark_utils.hpp"
+#include "pdx/utils.hpp"
 
 template <typename IndexT>
 void RunBenchmark(const RawDatasetInfo &info, const std::string &dataset, const std::string &algorithm,

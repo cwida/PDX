@@ -8,9 +8,9 @@
 
 #include <memory>
 #include <iostream>
-#include "utils/file_reader.hpp"
-#include "pdx_index.hpp"
-#include "utils/benchmark_utils.hpp"
+#include "pdx/utils.hpp"
+#include "pdx/index.hpp"
+#include "benchmark_utils.hpp"
 
 int main(int argc, char *argv[]) {
     std::string arg_dataset;

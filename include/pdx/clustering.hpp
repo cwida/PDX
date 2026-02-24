@@ -1,7 +1,7 @@
 #pragma once
 
 #include <vector>
-#include "common.hpp"
+#include "pdx/common.hpp"
 #include "superkmeans/hierarchical_superkmeans.h"
 
 namespace PDX {
