@@ -30,6 +30,41 @@ struct PDXIndexConfig {
     bool normalize = false;
     float sampling_fraction = 0.0f; // 0 = auto (1.0 if small dataset, 0.3 otherwise)
     uint32_t kmeans_iters = 10;
+
+    void Validate() const {
+        if (num_dimensions == 0 || num_dimensions > PDX_MAX_DIMS) {
+            throw std::invalid_argument(
+                "num_dimensions must be between 1 and " + std::to_string(PDX_MAX_DIMS) + ", got " +
+                std::to_string(num_dimensions)
+            );
+        }
+        if (sampling_fraction < 0.0f || sampling_fraction > 1.0f) {
+            throw std::invalid_argument(
+                "sampling_fraction must be between 0.0 and 1.0, got " +
+                std::to_string(sampling_fraction)
+            );
+        }
+        if (num_meso_clusters > 0 && num_clusters > 0 && num_meso_clusters >= num_clusters) {
+            throw std::invalid_argument(
+                "num_meso_clusters (" + std::to_string(num_meso_clusters) +
+                ") must be smaller than num_clusters (" + std::to_string(num_clusters) + ")"
+            );
+        }
+        if (kmeans_iters == 0 || kmeans_iters >= 100) {
+            throw std::invalid_argument(
+                "kmeans_iters must be between 1 and 99, got " + std::to_string(kmeans_iters)
+            );
+        }
+    }
+
+    void ValidateNumEmbeddings(size_t num_embeddings) const {
+        if (num_clusters > 0 && num_clusters > num_embeddings) {
+            throw std::invalid_argument(
+                "num_clusters (" + std::to_string(num_clusters) + ") exceeds num_embeddings (" +
+                std::to_string(num_embeddings) + ")"
+            );
+        }
+    }
 };
 
 class IPDXIndex {
@@ -84,14 +119,14 @@ class PDXIndex : public IPDXIndex {
         }
     }
 
-    PDX::PredicateEvaluator CreatePredicateEvaluator(
-        const std::vector<size_t>& passing_row_ids
+    PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids
     ) const {
         PDX::PredicateEvaluator evaluator(index.num_clusters, row_id_cluster_mapping.size());
         for (const auto row_id : passing_row_ids) {
             const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
             evaluator.n_passing_tuples[cluster_id]++;
-            evaluator.selection_vector[searcher->cluster_offsets[cluster_id] + index_in_cluster] = 1;
+            evaluator.selection_vector[searcher->cluster_offsets[cluster_id] + index_in_cluster] =
+                1;
         }
         return evaluator;
     }
@@ -100,6 +135,7 @@ class PDXIndex : public IPDXIndex {
     PDXIndex() = default;
 
     explicit PDXIndex(PDXIndexConfig config) : config(config) {
+        config.Validate();
         pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
     }
 
@@ -214,6 +250,8 @@ class PDXIndex : public IPDXIndex {
         const float* const embeddings,
         const size_t num_embeddings
     ) {
+        config.ValidateNumEmbeddings(num_embeddings);
+
         const auto num_dimensions = config.num_dimensions;
         auto num_clusters = config.num_clusters;
         if (num_clusters == 0) {
@@ -222,7 +260,6 @@ class PDXIndex : public IPDXIndex {
         const bool normalize =
             config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
 
-        assert(num_dimensions > 0);
         assert(num_embeddings > 0);
         assert(pruner);
 
@@ -354,14 +391,14 @@ class PDXTreeIndex : public IPDXIndex {
         }
     }
 
-    PDX::PredicateEvaluator CreatePredicateEvaluator(
-        const std::vector<size_t>& passing_row_ids
+    PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids
     ) const {
         PDX::PredicateEvaluator evaluator(index.num_clusters, row_id_cluster_mapping.size());
         for (const auto row_id : passing_row_ids) {
             const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
             evaluator.n_passing_tuples[cluster_id]++;
-            evaluator.selection_vector[searcher->cluster_offsets[cluster_id] + index_in_cluster] = 1;
+            evaluator.selection_vector[searcher->cluster_offsets[cluster_id] + index_in_cluster] =
+                1;
         }
         return evaluator;
     }
@@ -370,6 +407,7 @@ class PDXTreeIndex : public IPDXIndex {
     PDXTreeIndex() = default;
 
     explicit PDXTreeIndex(PDXIndexConfig config) : config(config) {
+        config.Validate();
         pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
     }
 
@@ -457,6 +495,8 @@ class PDXTreeIndex : public IPDXIndex {
         const float* const embeddings,
         const size_t num_embeddings
     ) {
+        config.ValidateNumEmbeddings(num_embeddings);
+
         const auto num_dimensions = config.num_dimensions;
         auto num_clusters = config.num_clusters;
         if (num_clusters == 0) {
@@ -465,7 +505,6 @@ class PDXTreeIndex : public IPDXIndex {
         const bool normalize =
             config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
 
-        assert(num_dimensions > 0);
         assert(num_embeddings > 0);
         assert(pruner);
 

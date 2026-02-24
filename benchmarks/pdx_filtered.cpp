@@ -22,8 +22,7 @@ std::vector<size_t> LoadPassingRowIds(const std::string& path) {
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0]
-                  << " <dataset> [index_type] [nprobe] [selectivity]\n";
+        std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe] [selectivity]\n";
         std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
@@ -132,9 +131,7 @@ int main(int argc, char* argv[]) {
                     auto result = pdx_index->FilteredSearch(
                         query + l * pdx_index->GetNumDimensions(), KNN, passing_row_ids
                     );
-                    BenchmarkUtils::VerifyResult<true>(
-                        recalls, result, KNN, int_ground_truth, l
-                    );
+                    BenchmarkUtils::VerifyResult<true>(recalls, result, KNN, int_ground_truth, l);
                 }
             }
             TicToc clock;

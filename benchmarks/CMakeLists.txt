@@ -18,3 +18,12 @@ target_link_libraries(BenchmarkEndToEnd ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkSerialization ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkFiltered ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkSpecialFilters ${BENCH_COMMON_LIBS})
+
+add_custom_target(benchmarks
+    DEPENDS
+        BenchmarkPDXIVF
+        BenchmarkEndToEnd
+        BenchmarkSerialization
+        BenchmarkFiltered
+        BenchmarkSpecialFilters
+)

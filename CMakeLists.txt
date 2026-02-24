@@ -66,6 +66,13 @@ add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 include_directories(include extern/Eigen)
 add_subdirectory(benchmarks)
 
+# Tests: disabled by default, enable with -DPDX_COMPILE_TESTS=ON
+set(PDX_COMPILE_TESTS OFF CACHE BOOL "Whether to compile tests")
+if(PDX_COMPILE_TESTS)
+    message(STATUS "Tests enabled")
+    add_subdirectory(tests)
+endif()
+
 # Python bindings: only build if pybind11 is available
 find_package(Python COMPONENTS Interpreter Development.Module QUIET)
 set(PYBIND11_FINDPYTHON ON)

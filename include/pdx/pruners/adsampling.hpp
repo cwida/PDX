@@ -42,8 +42,7 @@ class ADSamplingPruner {
         if (!matrix_created) {
             std::normal_distribution<float> normal_dist;
             Eigen::MatrixXf random_matrix = Eigen::MatrixXf::Zero(
-                static_cast<Eigen::Index>(num_dimensions),
-                static_cast<Eigen::Index>(num_dimensions)
+                static_cast<Eigen::Index>(num_dimensions), static_cast<Eigen::Index>(num_dimensions)
             );
             for (size_t i = 0; i < num_dimensions; ++i) {
                 for (size_t j = 0; j < num_dimensions; ++j) {
@@ -52,8 +51,7 @@ class ADSamplingPruner {
                 }
             }
             const Eigen::HouseholderQR<Eigen::MatrixXf> qr(random_matrix);
-            matrix = qr.householderQ() *
-                     Eigen::MatrixXf::Identity(num_dimensions, num_dimensions);
+            matrix = qr.householderQ() * Eigen::MatrixXf::Identity(num_dimensions, num_dimensions);
         }
     }
 

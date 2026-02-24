@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pdx/common.hpp"
+#include <cmath>
 #include <cstdint>
 
 namespace PDX {
@@ -131,6 +132,32 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::U8> {
         }
         return distance;
     };
+};
+
+template <>
+class ScalarComputer<DistanceMetric::COSINE, Quantization::F32> {
+  public:
+    using distance_t = float;
+    using query_t = float;
+    using data_t = float;
+
+    static distance_t Horizontal(
+        const query_t* PDX_RESTRICT vector1,
+        const data_t* PDX_RESTRICT vector2,
+        size_t num_dimensions
+    ) {
+        float dot = 0.0f, norm1 = 0.0f, norm2 = 0.0f;
+#pragma clang loop vectorize(enable)
+        for (size_t i = 0; i < num_dimensions; ++i) {
+            dot += vector1[i] * vector2[i];
+            norm1 += vector1[i] * vector1[i];
+            norm2 += vector2[i] * vector2[i];
+        }
+        float denom = std::sqrt(norm1) * std::sqrt(norm2);
+        if (denom == 0.0f)
+            return 1.0f;
+        return 1.0f - (dot / denom);
+    }
 };
 
 } // namespace PDX
