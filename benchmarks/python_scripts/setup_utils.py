@@ -1,7 +1,31 @@
+import os
+import sys
 import numpy as np
 import h5py
-from setup_settings import *
 
+SOURCE_DIR = os.getcwd()
+
+# ── Directory layout ──────────────────────────────────────────────
+DATA_DIRECTORY = os.path.join("benchmarks", "datasets")
+if not os.path.exists(os.path.join(SOURCE_DIR, DATA_DIRECTORY)):
+    os.makedirs(os.path.join(SOURCE_DIR, DATA_DIRECTORY))
+
+RAW_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "downloaded")
+GROUND_TRUTH_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "ground_truth")
+FILTERED_GROUND_TRUTH_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "ground_truth_filtered")
+SEMANTIC_GROUND_TRUTH_PATH = os.path.join(SOURCE_DIR, "benchmarks", "gt")
+SEMANTIC_FILTERED_GROUND_TRUTH_PATH = os.path.join(SOURCE_DIR, "benchmarks", "gt_filtered")
+
+QUERIES_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "queries")
+PDX_DATA = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "pdx")
+FILTER_SELECTION_VECTORS = os.path.join(SOURCE_DIR, DATA_DIRECTORY, "selection_vectors")
+
+for _d in [RAW_DATA, GROUND_TRUTH_DATA, FILTERED_GROUND_TRUTH_DATA,
+           SEMANTIC_GROUND_TRUTH_PATH, SEMANTIC_FILTERED_GROUND_TRUTH_PATH,
+           QUERIES_DATA, PDX_DATA, FILTER_SELECTION_VECTORS]:
+    os.makedirs(_d, exist_ok=True)
+
+# ── Dataset registry ──────────────────────────────────────────────
 # Abbreviated name -> (hdf5_dataset_name, num_dimensions)
 # Matches RAW_DATASET_PARAMS in benchmark_utils.hpp
 DATASET_INFO = {
@@ -20,35 +44,27 @@ DATASET_INFO = {
     "wiki":       ("simplewiki-openai-3072-normalized", 3072),
 }
 
+# ── HDF5 I/O ─────────────────────────────────────────────────────
 
-def read_hdf5_train_data(dataset):
-    hdf5_file_name = os.path.join(RAW_DATA, dataset + ".hdf5")
+def read_hdf5_train_data(dataset_hdf5_name):
+    hdf5_file_name = os.path.join(RAW_DATA, dataset_hdf5_name + ".hdf5")
     hdf5_file = h5py.File(hdf5_file_name, "r")
     return np.array(hdf5_file["train"], dtype=np.float32)
 
 
-def read_ivecs(filename):
-    a = np.fromfile(filename, dtype="int32")
-    d = a[0]
-    print(f"\t{filename} readed")
-    return a.reshape(-1, d + 1)[:, 1:]
-
-
-def read_fvecs(filename):
-    return read_ivecs(filename).view("float32")
-
-
-def read_hdf5_test_data(dataset):
-    hdf5_file_name = os.path.join(RAW_DATA, dataset + ".hdf5")
+def read_hdf5_test_data(dataset_hdf5_name):
+    hdf5_file_name = os.path.join(RAW_DATA, dataset_hdf5_name + ".hdf5")
     hdf5_file = h5py.File(hdf5_file_name, "r")
     return np.array(hdf5_file["test"], dtype=np.float32)
 
 
-def read_hdf5_data(dataset):
-    hdf5_file_name = os.path.join(RAW_DATA, dataset + ".hdf5")
+def read_hdf5_data(dataset_hdf5_name):
+    hdf5_file_name = os.path.join(RAW_DATA, dataset_hdf5_name + ".hdf5")
     hdf5_file = h5py.File(hdf5_file_name, "r")
     return np.array(hdf5_file["train"], dtype=np.float32), np.array(hdf5_file["test"], dtype=np.float32)
 
+
+# ── Helpers ───────────────────────────────────────────────────────
 
 def get_ground_truth_filename(file, k, norm=True):
     if norm:
@@ -62,15 +78,3 @@ def get_core_index_filename(file, norm=True, balanced=False):
     if norm:
         return f"ivf_{file}_norm.index"
     return f"ivf_{file}.index"
-
-
-def get_delta_d(ndim):
-    delta_d = 32
-    if ndim < 128:
-        delta_d = int(ndim / 4)
-    return delta_d
-
-
-if __name__ == '__main__':
-    if not os.path.exists(RAW_DATA):
-        os.makedirs(RAW_DATA)

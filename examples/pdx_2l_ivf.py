@@ -22,6 +22,7 @@ if __name__ == "__main__":
     print('Building index...')
     index.build(train)
     print(f'Index built: {index.num_clusters} clusters')
+    print(f'Index in-memory size: {index.in_memory_size_bytes / (1024 * 1024):.2f} MB')
 
     print(f'{len(queries)} queries with PDX')
     times = []

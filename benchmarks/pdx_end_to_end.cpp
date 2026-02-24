@@ -1,9 +1,10 @@
+#include <chrono>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <numeric>
 #include <vector>
-#include <chrono>
 
 #include "pdx/index.hpp"
 #include "benchmark_utils.hpp"
@@ -35,6 +36,8 @@ void RunBenchmark(const RawDatasetInfo &info, const std::string &dataset, const 
     double build_ms = std::chrono::duration<double, std::milli>(build_end - build_start).count();
     std::cout << "Build time: " << build_ms << " ms\n";
     std::cout << "Clusters: " << pdx_index.GetNumClusters() << "\n";
+    std::cout << "Index in-memory size: " << std::fixed << std::setprecision(2)
+              << static_cast<double>(pdx_index.GetInMemorySizeInBytes()) / (1024.0 * 1024.0) << " MB\n";
 
     // Load ground truth
     bool use_skmeans_gt = false;

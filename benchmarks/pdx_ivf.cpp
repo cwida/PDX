@@ -1,5 +1,6 @@
-#include <memory>
+#include <iomanip>
 #include <iostream>
+#include <memory>
 #include "pdx/utils.hpp"
 #include "pdx/index.hpp"
 #include "benchmark_utils.hpp"
@@ -48,6 +49,8 @@ int main(int argc, char *argv[]) {
         std::string index_path = BenchmarkUtils::PDX_DATA + dataset + "-" + index_type;
         std::cout << "Loading " << index_path << "...\n";
         auto pdx_index = PDX::LoadPDXIndex(index_path);
+        std::cout << "Index in-memory size: " << std::fixed << std::setprecision(2)
+                  << static_cast<double>(pdx_index->GetInMemorySizeInBytes()) / (1024.0 * 1024.0) << " MB\n";
 
         std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + info.pdx_dataset_name);
         auto *query = reinterpret_cast<float *>(query_ptr.get());

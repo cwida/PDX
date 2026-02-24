@@ -23,7 +23,8 @@ PYBIND11_MODULE(compiled, m) {
         .def("set_nprobe", &PDX::PyPDXIndex::SetNProbe, py::arg("nprobe"))
         .def("save", &PDX::PyPDXIndex::Save, py::arg("path"))
         .def("get_num_dimensions", &PDX::PyPDXIndex::GetNumDimensions)
-        .def("get_num_clusters", &PDX::PyPDXIndex::GetNumClusters);
+        .def("get_num_clusters", &PDX::PyPDXIndex::GetNumClusters)
+        .def("get_in_memory_size_in_bytes", &PDX::PyPDXIndex::GetInMemorySizeInBytes);
 
     m.def("load_index", &PDX::PyPDXIndex::LoadFromFile, py::arg("path"),
           "Load a PDX index from a single file (auto-detects type).");

@@ -4,7 +4,6 @@ np.random.seed(42)
 import json
 import random
 from setup_utils import *
-from setup_settings import *
 from pdxearch.index_base import BaseIndexPDXIVF, BaseIndexPDXIVFTree
 from sklearn import preprocessing
 from WrapperBruteForce import BruteForceSKLearn

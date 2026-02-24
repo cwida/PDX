@@ -1,6 +1,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -30,6 +31,8 @@ void BuildAndSave(const RawDatasetInfo &info, const std::string &dataset, const 
     double build_ms = std::chrono::duration<double, std::milli>(build_end - build_start).count();
     std::cout << "Build time: " << build_ms << " ms\n";
     std::cout << "Clusters: " << pdx_index.GetNumClusters() << "\n";
+    std::cout << "Index in-memory size: " << std::fixed << std::setprecision(2)
+              << static_cast<double>(pdx_index.GetInMemorySizeInBytes()) / (1024.0 * 1024.0) << " MB\n";
 
     std::string save_path = BenchmarkUtils::PDX_DATA + dataset + "-" + index_type;
     std::cout << "Saving to " << save_path << "...\n";
@@ -95,6 +98,8 @@ int main(int argc, char *argv[]) {
     // Verify: load back without knowing the type and run queries
     std::cout << "\n==> Verification: Loading index from " << save_path << "...\n";
     auto loaded_index = PDX::LoadPDXIndex(save_path);
+    std::cout << "Loaded index in-memory size: " << std::fixed << std::setprecision(2)
+              << static_cast<double>(loaded_index->GetInMemorySizeInBytes()) / (1024.0 * 1024.0) << " MB\n";
 
     // Load queries
     std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + info.pdx_dataset_name);

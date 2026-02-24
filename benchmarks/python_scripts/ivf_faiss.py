@@ -4,7 +4,6 @@ import sys
 from sklearn import preprocessing
 from benchmark_utils import *
 from setup_utils import *
-from setup_settings import *
 
 DATASETS_TO_USE = [
     'openai-1536-angular',

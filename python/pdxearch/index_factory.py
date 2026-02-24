@@ -56,6 +56,10 @@ class IndexPDXIVF:
     def num_clusters(self) -> int:
         return self._index.get_num_clusters()
 
+    @property
+    def in_memory_size_bytes(self) -> int:
+        return self._index.get_in_memory_size_in_bytes()
+
 
 class IndexPDXIVFSQ8:
     """Single-level IVF index (U8 scalar quantization)."""
@@ -106,6 +110,10 @@ class IndexPDXIVFSQ8:
     @property
     def num_clusters(self) -> int:
         return self._index.get_num_clusters()
+
+    @property
+    def in_memory_size_bytes(self) -> int:
+        return self._index.get_in_memory_size_in_bytes()
 
 
 class IndexPDXIVFTree:
@@ -160,6 +168,10 @@ class IndexPDXIVFTree:
     def num_clusters(self) -> int:
         return self._index.get_num_clusters()
 
+    @property
+    def in_memory_size_bytes(self) -> int:
+        return self._index.get_in_memory_size_in_bytes()
+
 
 class IndexPDXIVFTreeSQ8:
     """Two-level IVF index (U8 scalar quantization)."""
@@ -212,6 +224,10 @@ class IndexPDXIVFTreeSQ8:
     @property
     def num_clusters(self) -> int:
         return self._index.get_num_clusters()
+
+    @property
+    def in_memory_size_bytes(self) -> int:
+        return self._index.get_in_memory_size_in_bytes()
 
 
 def load_index(path: str):

@@ -41,6 +41,7 @@ public:
 	virtual void Restore(const std::string &path) = 0;
 	virtual uint32_t GetNumDimensions() const = 0;
 	virtual uint32_t GetNumClusters() const = 0;
+	virtual size_t GetInMemorySizeInBytes() const = 0;
 };
 
 template <PDX::Quantization Q>
@@ -127,6 +128,25 @@ public:
 
 	uint32_t GetNumClusters() const override {
 		return index.num_clusters;
+	}
+
+	size_t GetInMemorySizeInBytes() const override {
+		size_t size = sizeof(*this);
+		// IVF heap allocations (sizeof(IVF<Q>) is inline in sizeof(*this))
+		size += index.GetInMemorySizeInBytes() - sizeof(index);
+		// Pruner: rotation matrix (D x D floats) + ratios vector (D floats)
+		if (pruner) {
+			size += sizeof(*pruner);
+			const auto &m = pruner->GetMatrix();
+			size += static_cast<size_t>(m.rows()) * m.cols() * sizeof(float);
+			size += pruner->num_dimensions * sizeof(float);
+		}
+		// Searcher: cluster_offsets array
+		if (searcher) {
+			size += sizeof(*searcher);
+			size += index.num_clusters * sizeof(size_t);
+		}
+		return size;
 	}
 
 	void BuildIndex(const float *const embeddings, const size_t num_embeddings) override {
@@ -443,6 +463,30 @@ public:
 
 	uint32_t GetTopLevelNumClusters() const {
 		return index.l0.num_clusters;
+	}
+
+	size_t GetInMemorySizeInBytes() const override {
+		size_t size = sizeof(*this);
+		// IVFTree heap allocations (L1 + L0 clusters and centroids)
+		size += index.GetInMemorySizeInBytes() - sizeof(index);
+		// Pruner: rotation matrix (D x D floats) + ratios vector (D floats)
+		if (pruner) {
+			size += sizeof(*pruner);
+			const auto &m = pruner->GetMatrix();
+			size += static_cast<size_t>(m.rows()) * m.cols() * sizeof(float);
+			size += pruner->num_dimensions * sizeof(float);
+		}
+		// L1 searcher: cluster_offsets array
+		if (searcher) {
+			size += sizeof(*searcher);
+			size += index.num_clusters * sizeof(size_t);
+		}
+		// L0 top-level searcher: cluster_offsets array
+		if (top_level_searcher) {
+			size += sizeof(*top_level_searcher);
+			size += index.l0.num_clusters * sizeof(size_t);
+		}
+		return size;
 	}
 
 };

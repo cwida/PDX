@@ -4,7 +4,6 @@ import sys
 from numpy.random import default_rng
 from benchmark_utils import *
 from setup_utils import *
-from setup_settings import *
 from sklearn import preprocessing
 
 BUILD = False

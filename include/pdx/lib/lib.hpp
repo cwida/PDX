@@ -107,6 +107,10 @@ public:
 	uint32_t GetNumClusters() const {
 		return index->GetNumClusters();
 	}
+
+	size_t GetInMemorySizeInBytes() const {
+		return index->GetInMemorySizeInBytes();
+	}
 };
 
 } // namespace PDX
