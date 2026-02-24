@@ -30,7 +30,7 @@ struct KMeansResult {
                                                 const uint32_t num_dimensions, const uint32_t num_clusters,
                                                 const PDX::DistanceMetric distance_metric, const uint32_t seed,
                                                 const bool normalize = false, const float sampling_fraction = 0.0f,
-                                                const uint32_t kmeans_iters = 10) {
+                                                const uint32_t kmeans_iters = 8) {
 	assert(num_embeddings >= 1);
 	assert(num_dimensions >= 1);
 	assert(num_clusters >= 1);

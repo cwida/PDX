@@ -112,25 +112,6 @@ struct VectorComparator {
 	}
 };
 
-template <Quantization Q>
-struct Cluster {
-	using data_t = pdx_data_t<Q>;
-
-	Cluster(uint32_t num_embeddings, uint32_t num_dimensions)
-	    : num_embeddings(num_embeddings), indices(new uint32_t[num_embeddings]),
-	      data(new data_t[static_cast<uint64_t>(num_embeddings) * num_dimensions]) {
-	}
-
-	~Cluster() {
-		delete[] data;
-		delete[] indices;
-	}
-
-	uint32_t num_embeddings {};
-	uint32_t *indices = nullptr;
-	data_t *data = nullptr;
-};
-
 using Heap = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>;
 
 struct PDXDimensionSplit {

@@ -50,7 +50,7 @@ public:
 
 private:
 	PDXIndexConfig config {};
-	PDX::IndexPDXIVF<Q> index;
+	PDX::IVF<Q> index;
 	std::unique_ptr<PDX::ADSamplingPruner> pruner;
 	std::unique_ptr<PDX::PDXearch<Q>> searcher;
 
@@ -171,10 +171,10 @@ public:
 			    preprocessed.get(), static_cast<size_t>(num_embeddings) * num_dimensions);
 			quantization_base = params.quantization_base;
 			quantization_scale = params.quantization_scale;
-			index = PDX::IndexPDXIVF<Q>(num_dimensions, num_embeddings, num_clusters,
-			                             normalize, quantization_scale, quantization_base);
+			index = PDX::IVF<Q>(num_dimensions, num_embeddings, num_clusters,
+			                    normalize, quantization_scale, quantization_base);
 		} else {
-			index = PDX::IndexPDXIVF<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
+			index = PDX::IVF<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
 		}
 
 		KMeansResult kmeans_result = ComputeKMeans(preprocessed.get(), num_embeddings, num_dimensions,
@@ -224,7 +224,7 @@ public:
 
 private:
 	PDXIndexConfig config {};
-	PDX::IndexPDXIVF2<Q> index;
+	PDX::IVFTree<Q> index;
 	std::unique_ptr<PDX::ADSamplingPruner> pruner;
 	std::unique_ptr<PDX::PDXearch<Q>> searcher;
 	std::unique_ptr<PDX::PDXearch<F32>> top_level_searcher;
@@ -257,7 +257,7 @@ public:
 		out.write(reinterpret_cast<const char *>(matrix.data()),
 		          sizeof(float) * matrix_rows * matrix_cols);
 
-		// IVF2 data
+		// IVFTree data
 		index.Save(out);
 	}
 
@@ -276,7 +276,7 @@ public:
 		auto *matrix_data = reinterpret_cast<float *>(ptr);
 		ptr += sizeof(float) * matrix_rows * matrix_cols;
 
-		// Load IVF2 data
+		// Load IVFTree data
 		index.Load(ptr);
 
 		// Create pruner and searchers
@@ -345,10 +345,10 @@ public:
 			    preprocessed.get(), static_cast<size_t>(num_embeddings) * num_dimensions);
 			quantization_base = params.quantization_base;
 			quantization_scale = params.quantization_scale;
-			index = PDX::IndexPDXIVF2<Q>(num_dimensions, num_embeddings, num_clusters,
-			                             normalize, quantization_scale, quantization_base);
+			index = PDX::IVFTree<Q>(num_dimensions, num_embeddings, num_clusters,
+			                       normalize, quantization_scale, quantization_base);
 		} else {
-			index = PDX::IndexPDXIVF2<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
+			index = PDX::IVFTree<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
 		}
 
 		KMeansResult kmeans_result = ComputeKMeans(preprocessed.get(), num_embeddings, num_dimensions,
@@ -393,7 +393,7 @@ public:
 			l0_num_clusters = static_cast<uint32_t>(std::sqrt(num_clusters));
 		}
 
-		index.l0 = PDX::IndexPDXIVF<F32>(num_dimensions, num_clusters, l0_num_clusters, normalize);
+		index.l0 = PDX::IVF<F32>(num_dimensions, num_clusters, l0_num_clusters, normalize);
 		KMeansResult l0_kmeans_result = ComputeKMeans(index.centroids.data(), num_clusters, num_dimensions,
 		                                           l0_num_clusters, config.distance_metric, config.seed,
 		                                           config.normalize, 1.0f, 10); // No sampling for l0

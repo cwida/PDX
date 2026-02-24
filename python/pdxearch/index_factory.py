@@ -108,7 +108,7 @@ class IndexPDXIVFSQ8:
         return self._index.get_num_clusters()
 
 
-class IndexPDXIVF2:
+class IndexPDXIVFTree:
     """Two-level IVF index (F32)."""
 
     def __init__(
@@ -161,7 +161,7 @@ class IndexPDXIVF2:
         return self._index.get_num_clusters()
 
 
-class IndexPDXIVF2SQ8:
+class IndexPDXIVFTreeSQ8:
     """Two-level IVF index (U8 scalar quantization)."""
 
     def __init__(

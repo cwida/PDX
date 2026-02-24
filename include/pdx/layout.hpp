@@ -10,13 +10,13 @@ namespace PDX {
 // See the README of the following for a description of the PDX layout:
 // https://github.com/cwida/pdx
 template <PDX::Quantization q, typename T>
-inline void StoreClusterEmbeddings(typename PDX::IndexPDXIVF<q>::cluster_t &cluster, const PDX::IndexPDXIVF<q> &index,
+inline void StoreClusterEmbeddings(typename PDX::IVF<q>::cluster_t &cluster, const PDX::IVF<q> &index,
                                    const T *embeddings, const size_t num_embeddings);
 
 template <>
 inline void
-StoreClusterEmbeddings<PDX::Quantization::F32, float>(PDX::IndexPDXIVF<PDX::Quantization::F32>::cluster_t &cluster,
-                                                      const PDX::IndexPDXIVF<PDX::Quantization::F32> &index,
+StoreClusterEmbeddings<PDX::Quantization::F32, float>(PDX::IVF<PDX::Quantization::F32>::cluster_t &cluster,
+                                                      const PDX::IVF<PDX::Quantization::F32> &index,
                                                       const float *const embeddings, const size_t num_embeddings) {
 	using matrix_t = PDX::eigen_matrix_t;
 	using h_matrix_t = Eigen::Matrix<float, Eigen::Dynamic, PDX::H_DIM_SIZE, Eigen::RowMajor>;
@@ -39,8 +39,8 @@ StoreClusterEmbeddings<PDX::Quantization::F32, float>(PDX::IndexPDXIVF<PDX::Quan
 
 template <>
 inline void
-StoreClusterEmbeddings<PDX::Quantization::U8, uint8_t>(PDX::IndexPDXIVF<PDX::Quantization::U8>::cluster_t &cluster,
-                                                       const PDX::IndexPDXIVF<PDX::Quantization::U8> &index,
+StoreClusterEmbeddings<PDX::Quantization::U8, uint8_t>(PDX::IVF<PDX::Quantization::U8>::cluster_t &cluster,
+                                                       const PDX::IVF<PDX::Quantization::U8> &index,
                                                        const uint8_t *const embeddings, const size_t num_embeddings) {
 	using u8_matrix_t = Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 	using u8_v_matrix_t = Eigen::Matrix<uint8_t, Eigen::Dynamic, PDX::U8_INTERLEAVE_SIZE, Eigen::RowMajor>;

@@ -1,12 +1,12 @@
 from setup_utils import *
 from setup_settings import *
-from pdxearch import IndexPDXIVF, IndexPDXIVFSQ8, IndexPDXIVF2, IndexPDXIVF2SQ8
+from pdxearch import IndexPDXIVF, IndexPDXIVFSQ8, IndexPDXIVFTree, IndexPDXIVFTreeSQ8
 
 INDEX_CLASSES = {
     "pdx_f32": IndexPDXIVF,
     "pdx_u8": IndexPDXIVFSQ8,
-    "pdx_tree_f32": IndexPDXIVF2,
-    "pdx_tree_u8": IndexPDXIVF2SQ8,
+    "pdx_tree_f32": IndexPDXIVFTree,
+    "pdx_tree_u8": IndexPDXIVFTreeSQ8,
 }
 
 

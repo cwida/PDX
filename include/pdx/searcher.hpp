@@ -16,7 +16,7 @@
 
 namespace PDX {
 
-template <Quantization Q = F32, class Index = IndexPDXIVF<Q>, class Quantizer = ScalarQuantizer<Q>,
+template <Quantization Q = F32, class Index = IVF<Q>, class Quantizer = ScalarQuantizer<Q>,
           DistanceMetric alpha = DistanceMetric::L2SQ, class Pruner = ADSamplingPruner>
 class PDXearch {
 public:

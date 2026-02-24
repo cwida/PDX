@@ -2,7 +2,7 @@ import math
 import os
 import numpy as np
 from examples_utils import TicToc, read_hdf5_data
-from pdxearch.index_factory import IndexPDXIVF2SQ8
+from pdxearch.index_factory import IndexPDXIVFTreeSQ8
 np.random.seed(42)
 
 """
@@ -19,7 +19,7 @@ if __name__ == "__main__":
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
     nbuckets = 4 * math.ceil(math.sqrt(len(train)))
 
-    index = IndexPDXIVF2SQ8(ndim=num_dimensions, nbuckets=nbuckets, normalize=True)
+    index = IndexPDXIVFTreeSQ8(ndim=num_dimensions, nbuckets=nbuckets, normalize=True)
     print('Preprocessing')
     index.preprocess(train)
     print('Training')

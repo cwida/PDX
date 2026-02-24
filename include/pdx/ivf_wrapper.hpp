@@ -12,7 +12,33 @@
 namespace PDX {
 
 template <Quantization Q>
-class IndexPDXIVF {
+struct Cluster {
+	using data_t = pdx_data_t<Q>;
+
+	Cluster(uint32_t num_embeddings, uint32_t num_dimensions)
+	    : num_embeddings(num_embeddings), num_dimensions(num_dimensions), indices(new uint32_t[num_embeddings]),
+	      data(new data_t[static_cast<uint64_t>(num_embeddings) * num_dimensions]) {
+	}
+
+	~Cluster() {
+		delete[] data;
+		delete[] indices;
+	}
+
+	uint32_t num_embeddings {};
+	const uint32_t num_dimensions {};
+	uint32_t *indices = nullptr;
+	data_t *data = nullptr;
+
+	size_t GetInMemorySizeInBytes() const {
+		return sizeof(*this) + num_embeddings * sizeof(*indices) +
+		       num_embeddings * static_cast<uint64_t>(num_dimensions) * sizeof(*data);
+	}
+
+};
+
+template <Quantization Q>
+class IVF {
 public:
 	using cluster_t = Cluster<Q>;
 	using data_t = pdx_data_t<Q>;
@@ -32,12 +58,12 @@ public:
 	float inverse_quantization_scale_squared = 1.0f;
 	float quantization_base = 0.0f;
 
-	IndexPDXIVF() = default;
-	~IndexPDXIVF() = default;
-	IndexPDXIVF(IndexPDXIVF &&) = default;
-	IndexPDXIVF &operator=(IndexPDXIVF &&) = default;
+	IVF() = default;
+	~IVF() = default;
+	IVF(IVF &&) = default;
+	IVF &operator=(IVF &&) = default;
 
-	IndexPDXIVF(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized)
+	IVF(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized)
 	    : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings), num_clusters(num_clusters),
 	      num_vertical_dimensions(GetPDXDimensionSplit(num_dimensions).vertical_dimensions),
 	      num_horizontal_dimensions(GetPDXDimensionSplit(num_dimensions).horizontal_dimensions),
@@ -45,7 +71,7 @@ public:
 		clusters.reserve(num_clusters);
 	}
 
-	IndexPDXIVF(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized,
+	IVF(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized,
 	            float quantization_scale, float quantization_base)
 	    : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings), num_clusters(num_clusters),
 	      num_vertical_dimensions(GetPDXDimensionSplit(num_dimensions).vertical_dimensions),
@@ -125,26 +151,38 @@ public:
 			out.write(reinterpret_cast<const char *>(&quantization_scale), sizeof(float));
 		}
 	}
+
+	size_t GetInMemorySizeInBytes() const {
+		size_t in_memory_size_in_bytes = 0;
+		in_memory_size_in_bytes += sizeof(*this);
+		for (const auto &cluster : clusters) {
+			in_memory_size_in_bytes += cluster.GetInMemorySizeInBytes();
+		}
+		in_memory_size_in_bytes += (clusters.capacity() - clusters.size()) * sizeof(*clusters.data());
+		in_memory_size_in_bytes += centroids.capacity() * sizeof(*centroids.data());
+		return in_memory_size_in_bytes;
+	}
+
 };
 
 template <Quantization Q>
-class IndexPDXIVF2 : public IndexPDXIVF<Q> {
+class IVFTree : public IVF<Q> {
 public:
 	using data_t = pdx_data_t<Q>;
 
-	IndexPDXIVF<F32> l0; // Meso clusters
+	IVF<F32> l0; // Meso clusters
 
-	IndexPDXIVF2() = default;
-	~IndexPDXIVF2() = default;
-	IndexPDXIVF2(IndexPDXIVF2 &&) = default;
-	IndexPDXIVF2 &operator=(IndexPDXIVF2 &&) = default;
+	IVFTree() = default;
+	~IVFTree() = default;
+	IVFTree(IVFTree &&) = default;
+	IVFTree &operator=(IVFTree &&) = default;
 
-	IndexPDXIVF2(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized)
-	    : IndexPDXIVF<Q>(num_dimensions, total_num_embeddings, num_clusters, is_normalized) {}
+	IVFTree(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized)
+	    : IVF<Q>(num_dimensions, total_num_embeddings, num_clusters, is_normalized) {}
 
-	IndexPDXIVF2(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized,
+	IVFTree(uint32_t num_dimensions, uint64_t total_num_embeddings, uint32_t num_clusters, bool is_normalized,
 	             float quantization_scale, float quantization_base)
-	    : IndexPDXIVF<Q>(num_dimensions, total_num_embeddings, num_clusters, is_normalized,
+	    : IVF<Q>(num_dimensions, total_num_embeddings, num_clusters, is_normalized,
 	                     quantization_scale, quantization_base) {}
 
 	void Load(char *input) {
@@ -280,6 +318,26 @@ public:
 			out.write(reinterpret_cast<const char *>(&this->quantization_base), sizeof(float));
 			out.write(reinterpret_cast<const char *>(&this->quantization_scale), sizeof(float));
 		}
+	}
+
+	size_t GetInMemorySizeInBytes() const {
+		size_t size = sizeof(*this);
+
+		// L1 clusters (inherited from base)
+		for (const auto &cluster : this->clusters) {
+			size += cluster.GetInMemorySizeInBytes();
+		}
+		size += (this->clusters.capacity() - this->clusters.size()) * sizeof(Cluster<Q>);
+		size += this->centroids.capacity() * sizeof(float);
+
+		// L0 meso-clusters
+		for (const auto &cluster : l0.clusters) {
+			size += cluster.GetInMemorySizeInBytes();
+		}
+		size += (l0.clusters.capacity() - l0.clusters.size()) * sizeof(Cluster<F32>);
+		size += l0.centroids.capacity() * sizeof(float);
+
+		return size;
 	}
 };
 

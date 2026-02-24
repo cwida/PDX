@@ -91,6 +91,9 @@ cmake_install.cmake
 /benchmarks/python_scripts/indexes
 
 /benchmarks/BenchmarkPDXADSampling
+/benchmarks/BenchmarkEndToEnd
+/benchmarks/BenchmarkSerialization
+/benchmarks/BenchmarkPDXIVF
 /benchmarks/BenchmarkIVF2ADSampling
 /benchmarks/FilteredBenchmarkPDXADSampling
 /benchmarks/FilteredBenchmarkU8IVF2ADSampling

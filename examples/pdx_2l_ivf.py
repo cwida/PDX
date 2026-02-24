@@ -1,7 +1,7 @@
 import os
 import numpy as np
 from examples_utils import TicToc, read_hdf5_data
-from pdxearch import IndexPDXIVF2
+from pdxearch import IndexPDXIVFTree
 
 np.random.seed(42)
 
@@ -18,7 +18,7 @@ if __name__ == "__main__":
     print(f'Running example: PDXearch Two-Level IVF (F32)\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
 
-    index = IndexPDXIVF2(num_dimensions=num_dimensions, normalize=True)
+    index = IndexPDXIVFTree(num_dimensions=num_dimensions, normalize=True)
     print('Building index...')
     index.build(train)
     print(f'Index built: {index.num_clusters} clusters')
