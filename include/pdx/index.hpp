@@ -129,12 +129,16 @@ class PDXIndex : public IPDXIndex {
         size_t size = sizeof(*this);
         // IVF heap allocations (sizeof(IVF<Q>) is inline in sizeof(*this))
         size += index.GetInMemorySizeInBytes() - sizeof(index);
-        // Pruner: rotation matrix (D x D floats) + ratios vector (D floats)
+        // Pruner: rotation matrix or flip_masks (DCT mode) + ratios vector
         if (pruner) {
             size += sizeof(*pruner);
             const auto& m = pruner->GetMatrix();
+            // matrix heap data (1 x D for DCT sign vector, D x D for full rotation)
             size += static_cast<size_t>(m.rows()) * m.cols() * sizeof(float);
-            size += pruner->num_dimensions * sizeof(float);
+            size += pruner->num_dimensions * sizeof(float); // ratios
+            if (m.rows() == 1) {
+                size += pruner->num_dimensions * sizeof(uint32_t); // flip_masks
+            }
         }
         // Searcher: cluster_offsets array
         if (searcher) {
@@ -531,12 +535,16 @@ class PDXTreeIndex : public IPDXIndex {
         size_t size = sizeof(*this);
         // IVFTree heap allocations (L1 + L0 clusters and centroids)
         size += index.GetInMemorySizeInBytes() - sizeof(index);
-        // Pruner: rotation matrix (D x D floats) + ratios vector (D floats)
+        // Pruner: rotation matrix or flip_masks (DCT mode) + ratios vector
         if (pruner) {
             size += sizeof(*pruner);
             const auto& m = pruner->GetMatrix();
+            // matrix heap data (1 x D for DCT sign vector, D x D for full rotation)
             size += static_cast<size_t>(m.rows()) * m.cols() * sizeof(float);
-            size += pruner->num_dimensions * sizeof(float);
+            size += pruner->num_dimensions * sizeof(float); // ratios
+            if (m.rows() == 1) {
+                size += pruner->num_dimensions * sizeof(uint32_t); // flip_masks
+            }
         }
         // L1 searcher: cluster_offsets array
         if (searcher) {

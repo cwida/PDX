@@ -90,6 +90,22 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
 
         return static_cast<distance_t>(d2);
     };
+
+    static void FlipSign(const data_t* data, data_t* out, const uint32_t* masks, size_t d) {
+        size_t j = 0;
+        for (; j + 8 <= d; j += 8) {
+            __m256 vec = _mm256_loadu_ps(data + j);
+            __m256i mask = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(masks + j));
+            __m256i vec_i = _mm256_castps_si256(vec);
+            vec_i = _mm256_xor_si256(vec_i, mask);
+            _mm256_storeu_ps(out + j, _mm256_castsi256_ps(vec_i));
+        }
+        auto data_bits = reinterpret_cast<const uint32_t*>(data);
+        auto out_bits = reinterpret_cast<uint32_t*>(out);
+        for (; j < d; ++j) {
+            out_bits[j] = data_bits[j] ^ masks[j];
+        }
+    }
 };
 
 template <>

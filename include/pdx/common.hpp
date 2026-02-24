@@ -32,6 +32,10 @@ namespace PDX {
 
 static constexpr float PROPORTION_HORIZONTAL_DIM = 0.75f;
 static constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;
+
+inline bool IsPowerOf2(const uint32_t x) {
+    return x > 0 && (x & (x - 1)) == 0;
+}
 static constexpr size_t PDX_MAX_DIMS = 16384;
 static constexpr size_t H_DIM_SIZE = 64;
 static constexpr size_t U8_INTERLEAVE_SIZE = 4;

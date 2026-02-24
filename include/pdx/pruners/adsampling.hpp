@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pdx/common.hpp"
+#include "pdx/distance_computers/base_computers.hpp"
 #include <Eigen/Dense>
 #include <queue>
 #include <random>
@@ -13,6 +14,7 @@ namespace PDX {
 
 class ADSamplingPruner {
     using matrix_t = eigen_matrix_t;
+    using flip_sign_fn = DistanceComputer<DistanceMetric::L2SQ, F32>;
 
   public:
     const uint32_t num_dimensions;
@@ -24,18 +26,35 @@ class ADSamplingPruner {
             ratios[i] = GetRatio(i);
         }
         std::mt19937 gen(seed);
-        std::normal_distribution<float> normal_dist;
-        Eigen::MatrixXf random_matrix = Eigen::MatrixXf::Zero(
-            static_cast<Eigen::Index>(num_dimensions), static_cast<Eigen::Index>(num_dimensions)
-        );
-        for (size_t i = 0; i < num_dimensions; ++i) {
-            for (size_t j = 0; j < num_dimensions; ++j) {
-                random_matrix(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j)) =
-                    normal_dist(gen);
+        bool matrix_created = false;
+#ifdef HAS_FFTW
+        if (UsesDCTRotation()) {
+            fftwf_init_threads();
+            matrix.resize(1, num_dimensions);
+            std::uniform_int_distribution<int> dist(0, 1);
+            for (size_t i = 0; i < num_dimensions; ++i) {
+                matrix(i) = dist(gen) ? 1.0f : -1.0f;
             }
+            BuildFlipMasks();
+            matrix_created = true;
         }
-        const Eigen::HouseholderQR<Eigen::MatrixXf> qr(random_matrix);
-        matrix = qr.householderQ();
+#endif
+        if (!matrix_created) {
+            std::normal_distribution<float> normal_dist;
+            Eigen::MatrixXf random_matrix = Eigen::MatrixXf::Zero(
+                static_cast<Eigen::Index>(num_dimensions),
+                static_cast<Eigen::Index>(num_dimensions)
+            );
+            for (size_t i = 0; i < num_dimensions; ++i) {
+                for (size_t j = 0; j < num_dimensions; ++j) {
+                    random_matrix(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j)) =
+                        normal_dist(gen);
+                }
+            }
+            const Eigen::HouseholderQR<Eigen::MatrixXf> qr(random_matrix);
+            matrix = qr.householderQ() *
+                     Eigen::MatrixXf::Identity(num_dimensions, num_dimensions);
+        }
     }
 
     ADSamplingPruner(const uint32_t num_dimensions, const float* matrix_p)
@@ -45,8 +64,10 @@ class ADSamplingPruner {
             ratios[i] = GetRatio(i);
         }
 #ifdef HAS_FFTW
-        if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
+        if (UsesDCTRotation()) {
+            fftwf_init_threads();
             matrix = Eigen::Map<const matrix_t>(matrix_p, 1, num_dimensions);
+            BuildFlipMasks();
         } else {
             matrix = Eigen::Map<const matrix_t>(matrix_p, num_dimensions, num_dimensions);
         }
@@ -94,6 +115,19 @@ class ADSamplingPruner {
     float pruning_aggressiveness = ADSAMPLING_PRUNING_AGGRESIVENESS;
     matrix_t matrix;
     std::vector<float> ratios;
+    std::vector<uint32_t> flip_masks;
+
+    bool UsesDCTRotation() const {
+#ifdef HAS_FFTW
+#ifdef __AVX2__
+        return num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION && IsPowerOf2(num_dimensions);
+#else
+        return num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION;
+#endif
+#else
+        return false;
+#endif
+    }
 
     float GetRatio(const size_t& visited_dimensions) const {
         if (visited_dimensions == 0) {
@@ -107,35 +141,53 @@ class ADSamplingPruner {
                (1.0 + pruning_aggressiveness / std::sqrt(visited_dimensions));
     }
 
-    /**
-     * @brief Rotates embeddings using the rotation matrix.
-     *
-     * Transforms embeddings to a rotated space where dimensions contribute more equally
-     * to the total distance, enabling effective early termination.
-     *
-     * @param embeddings Input embeddings (row-major, n × num_dimensions)
-     * @param out_buffer Output buffer for rotated embeddings (n × num_dimensions)
-     * @param n Number of embeddings to rotate
-     */
+    void BuildFlipMasks() {
+        flip_masks.resize(num_dimensions);
+        for (size_t i = 0; i < num_dimensions; ++i) {
+            flip_masks[i] = (matrix(i) < 0.0f ? 0x80000000u : 0u);
+        }
+    }
+
+    void FlipSign(const float* data, float* out, const size_t n) const {
+        for (size_t i = 0; i < n; ++i) {
+            const size_t offset = i * num_dimensions;
+            flip_sign_fn::FlipSign(data + offset, out + offset, flip_masks.data(), num_dimensions);
+        }
+    }
+
     void Rotate(
         const float* PDX_RESTRICT const embeddings,
         float* PDX_RESTRICT const out_buffer,
         const size_t n
     ) const {
 #ifdef HAS_FFTW
-        Eigen::Map<const Eigen::RowVectorXf> query_matrix(raw_query, num_dimensions);
-        Eigen::Map<Eigen::RowVectorXf> output(query, num_dimensions);
-        if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
-            Eigen::RowVectorXf first_row = matrix.row(0);
-            Eigen::RowVectorXf pre_output = query_matrix.array() * first_row.array();
-            fftwf_plan plan = fftwf_plan_r2r_1d(
-                num_dimensions, pre_output.data(), output.data(), FFTW_REDFT10, FFTW_ESTIMATE
-            );
-            fftwf_execute(plan);
-            fftwf_destroy_plan(plan);
-            output[0] *= std::sqrt(1.0 / (4 * num_dimensions));
-            for (int i = 1; i < num_dimensions; ++i)
-                output[i] *= std::sqrt(1.0 / (2 * num_dimensions));
+        if (UsesDCTRotation()) {
+            Eigen::Map<matrix_t> out(out_buffer, n, num_dimensions);
+            FlipSign(embeddings, out_buffer, n);
+            const float s0 = std::sqrt(1.0f / (4.0f * num_dimensions));
+            const float s = std::sqrt(1.0f / (2.0f * num_dimensions));
+            if (n == 1) {
+                fftwf_plan plan = fftwf_plan_r2r_1d(
+                    num_dimensions, out.data(), out.data(), FFTW_REDFT10, FFTW_ESTIMATE
+                );
+                fftwf_execute(plan);
+                fftwf_destroy_plan(plan);
+            } else {
+                int n0 = static_cast<int>(num_dimensions);
+                int howmany = static_cast<int>(n);
+                fftw_r2r_kind kind[1] = {FFTW_REDFT10};
+                auto flag = FFTW_ESTIMATE;
+                if (!IsPowerOf2(num_dimensions)) {
+                    flag = FFTW_MEASURE;
+                }
+                fftwf_plan plan = fftwf_plan_many_r2r(
+                    1, &n0, howmany, out.data(), NULL, 1, n0, out.data(), NULL, 1, n0, kind, flag
+                );
+                fftwf_execute(plan);
+                fftwf_destroy_plan(plan);
+            }
+            out.col(0) *= s0;
+            out.rightCols(num_dimensions - 1) *= s;
             return;
         }
 #endif

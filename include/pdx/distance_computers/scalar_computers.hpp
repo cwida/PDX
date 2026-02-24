@@ -55,6 +55,15 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
         return distance;
     };
+
+    static void FlipSign(const data_t* data, data_t* out, const uint32_t* masks, size_t d) {
+        auto data_bits = reinterpret_cast<const uint32_t*>(data);
+        auto out_bits = reinterpret_cast<uint32_t*>(out);
+#pragma clang loop vectorize(enable)
+        for (size_t j = 0; j < d; ++j) {
+            out_bits[j] = data_bits[j] ^ masks[j];
+        }
+    }
 };
 
 template <>

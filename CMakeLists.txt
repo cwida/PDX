@@ -58,7 +58,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "extern/findFFTW")
 #    add_definitions(-DHAS_FFTW)
 #    include_directories(${FFTW_INCLUDE_DIRS})
 #else()
-#    message(WARNING "FFTW (+float capabilities) not found, we recommend you install it")
+#    message(STATUS "FFTW (+float capabilities) not found, we recommend you install them for increased performance")
 #endif()
 
 add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -91,6 +91,10 @@ if(Python_FOUND AND pybind11_FOUND)
     else()
         target_link_libraries(compiled PRIVATE ${BLAS_LINK_LIBRARIES})
     endif()
+
+    #if(FFTW_FOUND)
+    #    target_link_libraries(compiled PRIVATE ${FFTW_FLOAT_LIB} ${FFTW_FLOAT_OPENMP_LIB})
+    #endif()
 
     target_compile_options(compiled PRIVATE
         -Wall

@@ -39,6 +39,7 @@ class DistanceComputer<DistanceMetric::L2SQ, Quantization::F32> {
     constexpr static auto Vertical = computer::Vertical<false>;
 
     constexpr static auto Horizontal = computer::Horizontal;
+    constexpr static auto FlipSign = computer::FlipSign;
 };
 
 template <>

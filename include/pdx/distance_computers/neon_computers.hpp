@@ -73,6 +73,21 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         return distance;
 #endif
     };
+
+    static void FlipSign(const data_t* data, data_t* out, const uint32_t* masks, size_t d) {
+        size_t j = 0;
+        for (; j + 4 <= d; j += 4) {
+            float32x4_t vec = vld1q_f32(data + j);
+            const uint32x4_t mask = vld1q_u32(masks + j);
+            vec = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(vec), mask));
+            vst1q_f32(out + j, vec);
+        }
+        auto data_bits = reinterpret_cast<const uint32_t*>(data);
+        auto out_bits = reinterpret_cast<uint32_t*>(out);
+        for (; j < d; ++j) {
+            out_bits[j] = data_bits[j] ^ masks[j];
+        }
+    }
 };
 
 // Equivalent of vdotq_u32(acc, a, a) for squared accumulation.
