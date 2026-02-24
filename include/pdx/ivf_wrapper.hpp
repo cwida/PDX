@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cassert>
+#include <ostream>
 #include <vector>
 #include <memory>
 #include "pdx/common.hpp"
@@ -15,8 +16,6 @@ class IndexPDXIVF {
 public:
 	using cluster_t = Cluster<Q>;
 	using data_t = pdx_data_t<Q>;
-
-	std::unique_ptr<char[]> file_buffer;
 
 	uint32_t num_dimensions {};
 	uint64_t total_num_embeddings {};
@@ -58,11 +57,6 @@ public:
 		clusters.reserve(num_clusters);
 	}
 
-	void Restore(const std::string &filename) {
-		file_buffer = MmapFile(filename);
-		Load(file_buffer.get());
-	}
-
 	void Load(char *input) {
 		char *next_value = input;
 		num_dimensions = ((uint32_t *) input)[0];
@@ -84,13 +78,9 @@ public:
 			memcpy(clusters[i].indices, next_value, sizeof(uint32_t) * clusters[i].num_embeddings);
 			next_value += sizeof(uint32_t) * clusters[i].num_embeddings;
 		}
-		if constexpr (Q == F32) {
-			next_value += sizeof(float) * num_dimensions; // Skipping means (not used)
-		}
 
 		is_normalized = ((char *) next_value)[0];
 		next_value += sizeof(char);
-		next_value += sizeof(char); // Skipping is_ivf field (not used)
 
 		centroids.resize(num_clusters * num_dimensions);
 		memcpy(centroids.data(), (float *) next_value, sizeof(float) * num_clusters * num_dimensions);
@@ -103,6 +93,36 @@ public:
 			next_value += sizeof(float);
 			quantization_scale_squared = quantization_scale * quantization_scale;
 			inverse_quantization_scale_squared = 1.0f / quantization_scale_squared;
+		}
+	}
+
+	void Save(std::ostream &out) const {
+		out.write(reinterpret_cast<const char *>(&num_dimensions), sizeof(uint32_t));
+		out.write(reinterpret_cast<const char *>(&num_vertical_dimensions), sizeof(uint32_t));
+		out.write(reinterpret_cast<const char *>(&num_horizontal_dimensions), sizeof(uint32_t));
+		out.write(reinterpret_cast<const char *>(&num_clusters), sizeof(uint32_t));
+
+		for (size_t i = 0; i < num_clusters; ++i) {
+			out.write(reinterpret_cast<const char *>(&clusters[i].num_embeddings), sizeof(uint32_t));
+		}
+		for (size_t i = 0; i < num_clusters; ++i) {
+			out.write(reinterpret_cast<const char *>(clusters[i].data),
+			          sizeof(data_t) * clusters[i].num_embeddings * num_dimensions);
+		}
+		for (size_t i = 0; i < num_clusters; ++i) {
+			out.write(reinterpret_cast<const char *>(clusters[i].indices),
+			          sizeof(uint32_t) * clusters[i].num_embeddings);
+		}
+
+		char norm = is_normalized;
+		out.write(&norm, sizeof(char));
+
+		out.write(reinterpret_cast<const char *>(centroids.data()),
+		          sizeof(float) * num_clusters * num_dimensions);
+
+		if constexpr (Q == U8) {
+			out.write(reinterpret_cast<const char *>(&quantization_base), sizeof(float));
+			out.write(reinterpret_cast<const char *>(&quantization_scale), sizeof(float));
 		}
 	}
 };
@@ -126,11 +146,6 @@ public:
 	             float quantization_scale, float quantization_base)
 	    : IndexPDXIVF<Q>(num_dimensions, total_num_embeddings, num_clusters, is_normalized,
 	                     quantization_scale, quantization_base) {}
-
-	void Restore(const std::string &filename) {
-		this->file_buffer = MmapFile(filename);
-		Load(this->file_buffer.get());
-	}
 
 	void Load(char *input) {
 		char *next_value = input;
@@ -212,6 +227,58 @@ public:
 			    this->quantization_scale * this->quantization_scale;
 			this->inverse_quantization_scale_squared =
 			    1.0f / this->quantization_scale_squared;
+		}
+	}
+
+	void Save(std::ostream &out) const {
+		// Header: dimensions (shared between L0 and L1)
+		out.write(reinterpret_cast<const char *>(&this->num_dimensions), sizeof(uint32_t));
+		out.write(reinterpret_cast<const char *>(&this->num_vertical_dimensions), sizeof(uint32_t));
+		out.write(reinterpret_cast<const char *>(&this->num_horizontal_dimensions), sizeof(uint32_t));
+
+		// Number of clusters: L1 then L0
+		out.write(reinterpret_cast<const char *>(&this->num_clusters), sizeof(uint32_t));
+		uint32_t n_clusters_l0 = l0.num_clusters;
+		out.write(reinterpret_cast<const char *>(&n_clusters_l0), sizeof(uint32_t));
+
+		// === L0 (meso-clusters, always F32) ===
+		for (size_t i = 0; i < n_clusters_l0; ++i) {
+			out.write(reinterpret_cast<const char *>(&l0.clusters[i].num_embeddings), sizeof(uint32_t));
+		}
+		for (size_t i = 0; i < n_clusters_l0; ++i) {
+			out.write(reinterpret_cast<const char *>(l0.clusters[i].data),
+			          sizeof(float) * l0.clusters[i].num_embeddings * this->num_dimensions);
+		}
+		for (size_t i = 0; i < n_clusters_l0; ++i) {
+			out.write(reinterpret_cast<const char *>(l0.clusters[i].indices),
+			          sizeof(uint32_t) * l0.clusters[i].num_embeddings);
+		}
+
+		// === L1 (data clusters) ===
+		for (size_t i = 0; i < this->num_clusters; ++i) {
+			out.write(reinterpret_cast<const char *>(&this->clusters[i].num_embeddings), sizeof(uint32_t));
+		}
+		for (size_t i = 0; i < this->num_clusters; ++i) {
+			out.write(reinterpret_cast<const char *>(this->clusters[i].data),
+			          sizeof(data_t) * this->clusters[i].num_embeddings * this->num_dimensions);
+		}
+		for (size_t i = 0; i < this->num_clusters; ++i) {
+			out.write(reinterpret_cast<const char *>(this->clusters[i].indices),
+			          sizeof(uint32_t) * this->clusters[i].num_embeddings);
+		}
+
+		// === Shared metadata ===
+		char norm = this->is_normalized;
+		out.write(&norm, sizeof(char));
+
+		// L0 centroids
+		out.write(reinterpret_cast<const char *>(l0.centroids.data()),
+		          sizeof(float) * n_clusters_l0 * this->num_dimensions);
+
+		// === U8 quantization params ===
+		if constexpr (Q == U8) {
+			out.write(reinterpret_cast<const char *>(&this->quantization_base), sizeof(float));
+			out.write(reinterpret_cast<const char *>(&this->quantization_scale), sizeof(float));
 		}
 	}
 };

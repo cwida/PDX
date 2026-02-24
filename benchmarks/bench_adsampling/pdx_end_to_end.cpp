@@ -1,11 +1,3 @@
-#ifndef BENCHMARK_TIME
-#define BENCHMARK_TIME = true
-#endif
-
-#ifndef PDX_USE_EXPLICIT_SIMD
-#define PDX_USE_EXPLICIT_SIMD = true
-#endif
-
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -89,11 +81,15 @@ void RunBenchmark(const RawDatasetInfo &info, const std::string &dataset, const 
         // Runtime pass
         std::vector<PhasesRuntime> runtimes;
         runtimes.resize(NUM_MEASURE_RUNS * n_queries);
+        TicToc clock;
         for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
             for (size_t l = 0; l < n_queries; ++l) {
+                clock.Reset();
+                clock.Tic();
                 pdx_index.Search(queries + l * d, KNN);
+                clock.Toc();
                 runtimes[j + l * NUM_MEASURE_RUNS] = {
-                    pdx_index.GetSearcher().end_to_end_clock.accum_time
+                    clock.accum_time
                 };
             }
         }

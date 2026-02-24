@@ -62,6 +62,8 @@ public:
 		ADSamplingPruner::matrix = matrix;
 	}
 
+	const matrix_t& GetMatrix() const { return matrix; }
+
 	float GetPruningThreshold(uint32_t,
 	                          std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator> &heap,
 	                          const uint32_t current_dimension_idx) const {

@@ -20,6 +20,30 @@
 #include "pdx/common.hpp"
 #include "pdx/utils.hpp"
 
+class TicToc {
+public:
+    size_t accum_time = 0;
+    std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+
+    void Reset() {
+        accum_time = 0;
+        start = std::chrono::high_resolution_clock::now();
+    }
+
+    inline void Tic() {
+        start = std::chrono::high_resolution_clock::now();
+    }
+
+    inline void Toc() {
+        auto end = std::chrono::high_resolution_clock::now();
+        accum_time += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                end - start).count();
+    }
+
+    double GetMilliseconds() const {
+        return static_cast<double>(accum_time) / 1e6;
+    }
+};
 
 // Raw binary data paths (SuperKMeans convention: data_<name>.bin / data_<name>_test.bin)
 inline std::string RAW_DATA_DIR = std::string{CMAKE_SOURCE_DIR} + "/../../SuperKMeans/benchmarks/data";

@@ -3,8 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <numeric>
+#include <stdexcept>
 #include <string>
 
 #include "pdx/common.hpp"
@@ -23,24 +25,38 @@ struct PDXIndexConfig {
 	DistanceMetric distance_metric = DistanceMetric::L2SQ;
 	uint32_t seed = 42;
 	uint32_t num_clusters = 0; // 0 = auto-compute from num_embeddings
-	uint32_t num_meso_clusters = 0; 
+	uint32_t num_meso_clusters = 0;
 	bool normalize = false;
 	float sampling_fraction = 0.0f; // 0 = auto (1.0 if small dataset, 0.3 otherwise)
 	uint32_t kmeans_iters = 10;
 };
 
+class IPDXIndex {
+public:
+	virtual ~IPDXIndex() = default;
+	virtual std::vector<KNNCandidate> Search(const float *query_embedding, size_t knn) const = 0;
+	virtual void SetNProbe(uint32_t n_probe) const = 0;
+	virtual void Save(const std::string &path) const = 0;
+	virtual void Restore(const std::string &path) = 0;
+	virtual uint32_t GetNumDimensions() const = 0;
+	virtual uint32_t GetNumClusters() const = 0;
+};
+
 template <PDX::Quantization Q>
-class PDXIndex {
+class PDXIndex : public IPDXIndex {
 public:
 	using embedding_storage_t = PDX::pdx_data_t<Q>;
 
 private:
-	std::unique_ptr<char[]> matrix_buffer;
-
 	PDXIndexConfig config {};
 	PDX::IndexPDXIVF<Q> index;
 	std::unique_ptr<PDX::ADSamplingPruner> pruner;
 	std::unique_ptr<PDX::PDXearch<Q>> searcher;
+
+	static constexpr PDXIndexType GetIndexType() {
+		if constexpr (Q == F32) return PDXIndexType::PDX_F32;
+		else return PDXIndexType::PDX_U8;
+	}
 
 public:
 	PDXIndex() = default;
@@ -49,21 +65,54 @@ public:
 		pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
 	}
 
-	void Restore(const std::string &index_path, const std::string &matrix_path) {
-		index.Restore(index_path);
+	void Save(const std::string &path) const override {
+		std::ofstream out(path, std::ios::binary);
 
-		matrix_buffer = MmapFile(matrix_path);
-		auto *matrix = reinterpret_cast<float *>(matrix_buffer.get());
+		// Index type flag
+		uint8_t type_flag = static_cast<uint8_t>(GetIndexType());
+		out.write(reinterpret_cast<const char *>(&type_flag), sizeof(uint8_t));
 
-		pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, matrix);
+		// Rotation matrix
+		const auto &matrix = pruner->GetMatrix();
+		uint32_t matrix_rows = static_cast<uint32_t>(matrix.rows());
+		uint32_t matrix_cols = static_cast<uint32_t>(matrix.cols());
+		out.write(reinterpret_cast<const char *>(&matrix_rows), sizeof(uint32_t));
+		out.write(reinterpret_cast<const char *>(&matrix_cols), sizeof(uint32_t));
+		out.write(reinterpret_cast<const char *>(matrix.data()),
+		          sizeof(float) * matrix_rows * matrix_cols);
+
+		// IVF data
+		index.Save(out);
+	}
+
+	void Restore(const std::string &path) override {
+		auto buffer = MmapFile(path);
+		char *ptr = buffer.get();
+
+		// Index type flag
+		ptr += sizeof(uint8_t);
+
+		// Rotation matrix
+		uint32_t matrix_rows = *reinterpret_cast<uint32_t *>(ptr);
+		ptr += sizeof(uint32_t);
+		uint32_t matrix_cols = *reinterpret_cast<uint32_t *>(ptr);
+		ptr += sizeof(uint32_t);
+		auto *matrix_data = reinterpret_cast<float *>(ptr);
+		ptr += sizeof(float) * matrix_rows * matrix_cols;
+
+		// Load IVF data
+		index.Load(ptr);
+
+		// Create pruner and searcher
+		pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, matrix_data);
 		searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
 	}
 
-	std::vector<PDX::KNNCandidate> Search(const float *query_embedding, size_t knn) const {
+	std::vector<PDX::KNNCandidate> Search(const float *query_embedding, size_t knn) const override {
 		return searcher->Search(query_embedding, knn);
 	}
 
-	void SetNProbe(uint32_t n_probe) const {
+	void SetNProbe(uint32_t n_probe) const override {
 		searcher->SetNProbe(n_probe);
 	}
 
@@ -71,11 +120,11 @@ public:
 		return *searcher;
 	}
 
-	uint32_t GetNumDimensions() const {
+	uint32_t GetNumDimensions() const override {
 		return index.num_dimensions;
 	}
 
-	uint32_t GetNumClusters() const {
+	uint32_t GetNumClusters() const override {
 		return index.num_clusters;
 	}
 
@@ -168,18 +217,21 @@ public:
 };
 
 template <PDX::Quantization Q>
-class PDXTreeIndex {
+class PDXTreeIndex : public IPDXIndex {
 public:
 	using embedding_storage_t = PDX::pdx_data_t<Q>;
 
 private:
-	std::unique_ptr<char[]> matrix_buffer;
-
 	PDXIndexConfig config {};
 	PDX::IndexPDXIVF2<Q> index;
 	std::unique_ptr<PDX::ADSamplingPruner> pruner;
 	std::unique_ptr<PDX::PDXearch<Q>> searcher;
 	std::unique_ptr<PDX::PDXearch<F32>> top_level_searcher;
+
+	static constexpr PDXIndexType GetIndexType() {
+		if constexpr (Q == F32) return PDXIndexType::PDX_TREE_F32;
+		else return PDXIndexType::PDX_TREE_U8;
+	}
 
 public:
 	PDXTreeIndex() = default;
@@ -188,24 +240,52 @@ public:
 		pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
 	}
 
-	void Restore(const std::string &index_path, const std::string &matrix_path) {
-		index.Restore(index_path);
+	void Save(const std::string &path) const override {
+		std::ofstream out(path, std::ios::binary);
 
-		matrix_buffer = MmapFile(matrix_path);
-		auto *matrix = reinterpret_cast<float *>(matrix_buffer.get());
+		// Index type flag
+		uint8_t type_flag = static_cast<uint8_t>(GetIndexType());
+		out.write(reinterpret_cast<const char *>(&type_flag), sizeof(uint8_t));
 
-		pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, matrix);
+		// Rotation matrix
+		const auto &matrix = pruner->GetMatrix();
+		uint32_t matrix_rows = static_cast<uint32_t>(matrix.rows());
+		uint32_t matrix_cols = static_cast<uint32_t>(matrix.cols());
+		out.write(reinterpret_cast<const char *>(&matrix_rows), sizeof(uint32_t));
+		out.write(reinterpret_cast<const char *>(&matrix_cols), sizeof(uint32_t));
+		out.write(reinterpret_cast<const char *>(matrix.data()),
+		          sizeof(float) * matrix_rows * matrix_cols);
+
+		// IVF2 data
+		index.Save(out);
+	}
+
+	void Restore(const std::string &path) override {
+		auto buffer = MmapFile(path);
+		char *ptr = buffer.get();
+
+		// Index type flag
+		ptr += sizeof(uint8_t);
+
+		// Rotation matrix
+		uint32_t matrix_rows = *reinterpret_cast<uint32_t *>(ptr);
+		ptr += sizeof(uint32_t);
+		uint32_t matrix_cols = *reinterpret_cast<uint32_t *>(ptr);
+		ptr += sizeof(uint32_t);
+		auto *matrix_data = reinterpret_cast<float *>(ptr);
+		ptr += sizeof(float) * matrix_rows * matrix_cols;
+
+		// Load IVF2 data
+		index.Load(ptr);
+
+		// Create pruner and searchers
+		pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, matrix_data);
 		searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
 		top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
 	}
 
-	std::vector<PDX::KNNCandidate> Search(const float *query_embedding, size_t knn) const {
+	std::vector<PDX::KNNCandidate> Search(const float *query_embedding, size_t knn) const override {
 		auto n_probe_top_level = GetTopLevelNumClusters();
-		// if (searcher->GetNProbe() < GetNumClusters() / 2){
-		// 	// We confidently prune half of the meso-clusters only if the user wants to
-        //     // visit less than half of the available clusters
-		// 	n_probe_top_level /= 2;
-		// }
 		top_level_searcher->SetNProbe(n_probe_top_level);
 		auto top_level_results = top_level_searcher->Search(query_embedding, searcher->GetNProbe());
 
@@ -340,7 +420,7 @@ public:
 		top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
 	}
 
-	void SetNProbe(uint32_t n_probe) const {
+	void SetNProbe(uint32_t n_probe) const override {
 		searcher->SetNProbe(n_probe);
 	}
 
@@ -348,11 +428,11 @@ public:
 		return *searcher;
 	}
 
-	uint32_t GetNumDimensions() const {
+	uint32_t GetNumDimensions() const override {
 		return index.num_dimensions;
 	}
 
-	uint32_t GetNumClusters() const {
+	uint32_t GetNumClusters() const override {
 		return index.num_clusters;
 	}
 
@@ -366,6 +446,30 @@ using PDXIndexF32 = PDXIndex<PDX::F32>;
 using PDXIndexU8 = PDXIndex<PDX::U8>;
 using PDXTreeIndexF32 = PDXTreeIndex<PDX::F32>;
 using PDXTreeIndexU8 = PDXTreeIndex<PDX::U8>;
+
+inline std::unique_ptr<IPDXIndex> LoadPDXIndex(const std::string &path) {
+	auto buffer = MmapFile(path);
+	auto type = static_cast<PDXIndexType>(buffer.get()[0]);
+	std::unique_ptr<IPDXIndex> idx;
+	switch (type) {
+	case PDXIndexType::PDX_F32:
+		idx = std::make_unique<PDXIndexF32>();
+		break;
+	case PDXIndexType::PDX_U8:
+		idx = std::make_unique<PDXIndexU8>();
+		break;
+	case PDXIndexType::PDX_TREE_F32:
+		idx = std::make_unique<PDXTreeIndexF32>();
+		break;
+	case PDXIndexType::PDX_TREE_U8:
+		idx = std::make_unique<PDXTreeIndexU8>();
+		break;
+	default:
+		throw std::runtime_error("Unknown PDX index type: " + std::to_string(static_cast<int>(type)));
+	}
+	idx->Restore(path);
+	return idx;
+}
 
 class EmbeddingPreprocessor {
 private:

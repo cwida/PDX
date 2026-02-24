@@ -54,11 +54,6 @@ public:
         std::copy(cluster_indexes.begin(), cluster_indexes.end(), cluster_indices_in_access_order.get());
     }
 
-    TicToc end_to_end_clock = TicToc();
-    void ResetClocks(){
-        end_to_end_clock.Reset();
-    }
-
     std::unique_ptr<size_t[]> cluster_offsets;
 
 protected:
@@ -407,10 +402,6 @@ public:
      * Search methods
      ******************************************************************/
     std::vector<KNNCandidate> Search(const float *PDX_RESTRICT const raw_query, const uint32_t k) {
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
 		Heap local_heap {};
 		std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
 		if (!pdx_data.is_normalized) {
@@ -471,18 +462,11 @@ public:
 			}
 		}
 		std::vector<KNNCandidate> result = BuildResultSetFromHeap(k, local_heap);
-#ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Toc();
-#endif
         return result;
     }
 
 	std::vector<KNNCandidate> FilteredSearch(const float *PDX_RESTRICT const raw_query, const uint32_t k,
         const PredicateEvaluator &predicate_evaluator) {
-#ifdef BENCHMARK_TIME
-        this->ResetClocks();
-        this->end_to_end_clock.Tic();
-#endif
 		Heap local_heap {};
 		std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
 		if (!pdx_data.is_normalized) {
@@ -547,9 +531,6 @@ public:
 			}
 		}
 		std::vector<KNNCandidate> result = BuildResultSetFromHeap(k, local_heap);
-#ifdef BENCHMARK_TIME
-        this->end_to_end_clock.Toc();
-#endif
         return result;
     }
 

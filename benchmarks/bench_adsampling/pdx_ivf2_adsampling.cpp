@@ -34,19 +34,18 @@ int main(int argc, char *argv[]) {
     RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "IVF2_PDX_ADSAMPLING.csv";
 
 
-    for (const auto & dataset : BenchmarkUtils::DATASETS) {
+    for (const auto & [dataset, info] : RAW_DATASET_PARAMS) {
         if (arg_dataset.size() > 0 && arg_dataset != dataset){
             continue;
         }
         PDX::PDXTreeIndexF32 pdx_index;
-        pdx_index.Restore(BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf2",
-                          BenchmarkUtils::PDX_ADSAMPLING_DATA + dataset + "-ivf2-matrix");
+        pdx_index.Restore(BenchmarkUtils::PDX_DATA + dataset + "-pdx_tree_f32");
 
-        std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + dataset);
+        std::unique_ptr<char[]> query_ptr = MmapFile(BenchmarkUtils::QUERIES_DATA + info.pdx_dataset_name);
         auto *query = reinterpret_cast<float*>(query_ptr.get());
 
-        NUM_QUERIES = 1000;
-        std::unique_ptr<char[]> ground_truth = MmapFile(BenchmarkUtils::GROUND_TRUTH_DATA + dataset + "_100_norm");
+        NUM_QUERIES = info.num_queries;
+        std::unique_ptr<char[]> ground_truth = MmapFile(BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm");
         auto *int_ground_truth = reinterpret_cast<uint32_t*>(ground_truth.get());
         query += 1; // skip number of embeddings
 
