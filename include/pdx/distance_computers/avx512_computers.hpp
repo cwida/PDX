@@ -128,7 +128,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
         __m256i y_vec2_u8;
         __m256i y_vec1_u8;
         __m256i y_diff_u8;
-        uint32_t* query_grouped = reinterpret_cast<const uint32_t*>(query);
+        const uint32_t* query_grouped = reinterpret_cast<const uint32_t*>(query);
         size_t dim_idx = start_dimension;
         for (; dim_idx + 4 <= end_dimension; dim_idx += 4) {
             uint32_t dimension_idx = dim_idx;
