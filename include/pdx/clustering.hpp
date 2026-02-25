@@ -61,7 +61,8 @@ struct KMeansResult {
         chosen_sampling_fraction = 1.0f;
     }
 
-    bool use_hierarchical_indexing = hierarchical_indexing && num_embeddings >= KMeansResult::MIN_EMBEDDINGS_TO_SAMPLE;
+    bool use_hierarchical_indexing =
+        hierarchical_indexing && num_embeddings >= KMeansResult::MIN_EMBEDDINGS_TO_SAMPLE;
 
     std::vector<uint32_t> assignments;
     if (use_hierarchical_indexing) {
