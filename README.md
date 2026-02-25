@@ -8,7 +8,7 @@
 </div>
 </h1>
 <h3 align="center">
-  Index your vectors in seconds and search through them extremely quickly
+  Index millions of vectors in seconds. Search them in < 1 millisecond.
 </h3>
 
 
@@ -29,7 +29,7 @@
 
 ## Why PDX?
 
-- Query latency of HNSW, with the easy of use of IVF.
+- Query latency of HNSW, with the ease of use of IVF.
 - ⚡ [**100x faster index building**](https://www.lkuffo.com/superkmeans/) thanks to [SuperKMeans](https://github.com/lkuffo/SuperKMeans).
 - ⚡ [**Sub-millisecond similarity search**](https://www.lkuffo.com/sub-milisecond-similarity-search-with-pdx/), up to [**10x faster**](./BENCHMARKING.md#two-level-ivf-ivf2-) than FAISS IVF.
 - ⚡ Up to [**30x faster**](./BENCHMARKING.md#exhaustive-search--ivf) exhaustive search.
@@ -61,10 +61,10 @@ ids, dists = index.search(query, knn)
 
 ```
 
-Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We have support for Flat (`float32`) and Quantized (`8-bit`) indexes, alongside the most common distance metrics. 
+Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We support Flat (`float32`) and Quantized (`8-bit`) indexes, along with the most common distance metrics. 
 
 ## Installation
-We provide Python bindings for ease of use. Soon we will be available in PyPI.
+We provide Python bindings for ease of use. Soon, we will be available on PyPI.
 
 ### Prerequisites
 - Clang 17, CMake 3.26
@@ -94,7 +94,7 @@ Check [INSTALL.md](./INSTALL.md).
 We are actively developing Super K-Means and accepting contributions! Check [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ## The Data Layout
-PDX is a transposed layout (a.k.a. columnar, or decomposed layout), which means that the same dimensions of different vectors are stored sequentially. This decomposition occurs within a block (e.g., a cluster in an IVF index). 
+PDX is a transposed layout (a.k.a. columnar, or decomposed layout), meaning that the dimensions of different vectors are stored sequentially. This decomposition occurs within a block (e.g., a cluster in an IVF index). 
 
 We have evolved our layout from the one presented in our publication to reduce random access, and adapted it to work with `8-bit` and (in the future) `1-bit` vectors. 
 
@@ -107,7 +107,7 @@ The following image shows this layout. Storage is sequential from left to right,
 </p>
 
 ### `8 bits`
-Smaller data types are not friendly to PDX, as we must accumulate distances on wider types, resulting in asymmetry. We can work around this by changing the PDX layout. For `8 bits`, the vertical block is decomposed every 4 dimensions. This allows us to use dot product instructions (`VPDPBUSD` in [x86](https://www.officedaytime.com/simd512e/simdimg/si.php?f=vpdpbusd) and `UDOT/SDOT` in [NEON](https://developer.arm.com/documentation/102651/a/What-are-dot-product-intructions-)) to calculate L2 or IP kernels while still benefiting from PDX. The horizontal block remains decomposed every 64 dimensions. 
+Smaller data types are not friendly to PDX, as we must accumulate distances on wider types, resulting in asymmetry. We can work around this by changing the PDX layout. For `8 bits`, the vertical block is decomposed every 4 dimensions. This allows us to use dot-product instructions (`VPDPBUSD` on [x86](https://www.officedaytime.com/simd512e/simdimg/si.php?f=vpdpbusd) and `UDOT/SDOT` on [NEON](https://developer.arm.com/documentation/102651/a/What-are-dot-product-intructions-)) to calculate L2 or IP kernels while still benefiting from PDX. The horizontal block remains decomposed every 64 dimensions. 
 <p align="center">
         <img src="./benchmarks/results/layout-u8.png" alt="PDX Layout F32" style="{max-height: 150px}">
 </p>
