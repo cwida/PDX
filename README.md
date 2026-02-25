@@ -1,5 +1,5 @@
 <h1 align="center">
-  PDX
+  PDX: A Library for Vector Search and Indexing
 <div align="center">
     <a href="https://arxiv.org/pdf/2503.04422"><img src="https://img.shields.io/badge/Paper-SIGMOD'25%3A_PDX-blue" alt="Paper" /></a>
     <img src="https://github.com/cwida/PDX/actions/workflows/ci.yml/badge.svg?cacheSeconds=3600" alt="CI" />
@@ -8,63 +8,90 @@
 </div>
 </h1>
 <h3 align="center">
-  Easy and extremely fast similarity search
+  Index your vectors in seconds and search through them extremely quickly
+</h3>
+
+
+<h3 align="center">
+ 
 </h3>
 
 <p align="center">
         <img src="./benchmarks/results/openai-intel.png" alt="PDX Layout" style="{max-height: 150px}">
 </p>
 
-<h3 align="center">
+<!-- <h3 align="center">
   Build your vector index 100x faster than HNSW, without being slow:
 </h3>
 <p align="center">
         <img src="./benchmarks/results/vshnsw.png" height="250" alt="PDX Layout" style="{max-height: 100px}">
-</p>
+</p> -->
 
-### Why PDX:
+## Why PDX?
 
-- ⚡ [100x faster index building](https://www.lkuffo.com/superkmeans/) thanks to [SuperKMeans](https://github.com/lkuffo/SuperKMeans).
-- ⚡ [Sub-millisecond similarity search](https://www.lkuffo.com/sub-milisecond-similarity-search-with-pdx/), up to [**10x faster**](#two-level-ivf-ivf2-) than FAISS IVF.
-- ⚡ Up to [**30x faster**](#exhaustive-search--ivf) exhaustive search.
+- Query latency of HNSW, with the easy of use of IVF.
+- ⚡ [**100x faster index building**](https://www.lkuffo.com/superkmeans/) thanks to [SuperKMeans](https://github.com/lkuffo/SuperKMeans).
+- ⚡ [**Sub-millisecond similarity search**](https://www.lkuffo.com/sub-milisecond-similarity-search-with-pdx/), up to [**10x faster**](./BENCHMARKING.md#two-level-ivf-ivf2-) than FAISS IVF.
+- ⚡ Up to [**30x faster**](./BENCHMARKING.md#exhaustive-search--ivf) exhaustive search.
 - 🔍 Efficient [**filtered search**](https://github.com/cwida/PDX/issues/7).
 
 ## Our secret sauce
 
 [PDX](https://ir.cwi.nl/pub/35044/35044.pdf) is a data layout that **transposes** vectors in a column-major order. This layout unleashes the true potential of dimension pruning.
 
-Pruning means avoiding checking *all* the dimensions of a vector to determine if it is a neighbour of a query. The PDX layout unleashes the true potential of these algorithms, accelerating partition-based indexes by factors.
+Pruning means avoiding checking *all* the dimensions of a vector to determine if it is a neighbour of a query, accelerating index construction and similarity search by factors.
 
-[Down below](#use-cases-and-benchmarks), you will find **benchmarks** against FAISS. 
-
-
+## Use Cases and Benchmarking
+Check [./BENCHMARKING.md](./BENCHMARKING.md).
 
 ## Usage
-Try PDX with your data using our Python bindings and [examples](/examples). We have implemented PDX on Flat (`float32`) and Quantized (`8-bit`) **IVF indexes** and **exhaustive search** settings.
+
+```py
+from pdxearch import IndexPDXIVFTreeSQ8
+
+data = ... # Numpy 2D matrix
+query = ... # Numpy 1D array
+d = 1024
+knn = 20
+
+index = IndexPDXIVFTreeSQ8(num_dimensions=d)
+index.build(data)
+
+ids, dists = index.search(query, knn)
+
+```
+
+Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We have support for Flat (`float32`) and Quantized (`8-bit`) indexes, alongside the most common distance metrics. 
+
+## Installation
+We provide Python bindings for ease of use. Soon we will be available in PyPI.
+
 ### Prerequisites
-- PDX is available for x86 (AVX2 and AVX512), ARM, and Apple Silicon
-- Python 3.11 or higher
-- Clang++17 or higher
-- CMake 3.26 or higher
+- Clang 17, CMake 3.26
+- OpenMP
+- A BLAS implementation
+- Python 3 (only for Python bindings)
 
 ### Installation Steps
 ```sh
 git clone --recurse-submodules https://github.com/cwida/PDX
+cd PDX
 
 python -m pip install .
-```
 
-4. Run the examples under `/examples`
-```sh
-# Creates an IVF index with FAISS on random data
-# Then, it compares the search performance of PDXearch and FAISS
+# Run the examples under `/examples`
+# pdx_simple.py creates an IVF index with FAISS on random data
+# Then, it compares the search performance of PDX and FAISS
 python ./examples/pdx_simple.py
 ```
 
-For more details on the available examples and how to use your own data, refer to [/examples/README.md](./examples/README.md). 
+For a more comprehensive installation and compilation guide, check [INSTALL.md](./INSTALL.md).
 
-## Use Cases and Benchmarks
-Check [./BENCHMARKING.md](./BENCHMARKING.md).
+## Getting the Best Performance
+Check [INSTALL.md](./INSTALL.md).
+
+## Roadmap
+We are actively developing Super K-Means and accepting contributions! Check [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ## The Data Layout
 PDX is a transposed layout (a.k.a. columnar, or decomposed layout), which means that the same dimensions of different vectors are stored sequentially. This decomposition occurs within a block (e.g., a cluster in an IVF index). 
@@ -89,14 +116,6 @@ Smaller data types are not friendly to PDX, as we must accumulate distances on w
 <!-- ### `binary`
 For Hamming/Jaccard kernels, we use a layout decomposed every 8 dimensions (naturally grouped into bytes). The population count accumulation can be done in `bytes`. If d > 256, we flush the popcounts into a wider type every 32 words (corresponding to 256 dimensions). This has not been implemented in this repository yet, but you can find some promising benchmarks [here](https://github.com/lkuffo/binary-index).  -->
 
-## Roadmap
-- Out-of-core execution (disk-based setting).
-- Implement multi-threading capabilities.
-- Add PDX to the [VIBE benchmark](https://vector-index-bench.github.io/).
-- Create a documentation.
-
-## Benchmarking
-To run our benchmark suite in C++, refer to [BENCHMARKING.md](./BENCHMARKING.md).
 
 ## Citation
 If you use PDX for your research, consider citing us:

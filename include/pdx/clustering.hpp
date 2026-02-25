@@ -34,7 +34,8 @@ struct KMeansResult {
     const uint32_t seed,
     const bool normalize = false,
     const float sampling_fraction = 0.0f,
-    const uint32_t kmeans_iters = 8
+    const uint32_t kmeans_iters = 8,
+    const bool hierarchical_indexing = true
 ) {
     assert(num_embeddings >= 1);
     assert(num_dimensions >= 1);
@@ -50,30 +51,48 @@ struct KMeansResult {
         return result;
     }
 
-    skmeans::SuperKMeansConfig config;
+    bool is_angular = normalize || distance_metric == PDX::DistanceMetric::COSINE ||
+                      distance_metric == PDX::DistanceMetric::IP;
+
+    float chosen_sampling_fraction = 0.3f;
     if (sampling_fraction > 0.0f) {
-        config.sampling_fraction = sampling_fraction;
+        chosen_sampling_fraction = sampling_fraction;
     } else if (num_embeddings < KMeansResult::MIN_EMBEDDINGS_TO_SAMPLE) {
-        config.sampling_fraction = 1.0f;
-    } else {
-        config.sampling_fraction = 0.3f;
+        chosen_sampling_fraction = 1.0f;
     }
-    config.angular = normalize || distance_metric == PDX::DistanceMetric::COSINE ||
-                     distance_metric == PDX::DistanceMetric::IP;
-    config.data_already_rotated = true;
-    config.iters = kmeans_iters;
-    config.suppress_warnings = true;
-    config.seed = seed;
 
-    // auto kmeans = skmeans::HierarchicalSuperKMeans(num_clusters, num_dimensions, config);
-    auto kmeans = skmeans::SuperKMeans(num_clusters, num_dimensions, config);
-    result.centroids = kmeans.Train(embeddings, num_embeddings);
+    bool use_hierarchical_indexing = hierarchical_indexing && num_embeddings >= KMeansResult::MIN_EMBEDDINGS_TO_SAMPLE;
 
-    // Extract assignments
-    // SuperKMeans returns assignment from vec_id (not row_id) to centroid_idx
-    std::vector<uint32_t> assignments =
-        kmeans.FastAssign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
-    // Convert into assignment from centroid_idx to vec_id (not row_id)
+    std::vector<uint32_t> assignments;
+    if (use_hierarchical_indexing) {
+        skmeans::HierarchicalSuperKMeansConfig config;
+        config.sampling_fraction = chosen_sampling_fraction;
+        config.angular = is_angular;
+        config.data_already_rotated = true;
+        config.suppress_warnings = true;
+        config.iters_mesoclustering = 3;
+        config.iters_fineclustering = 5;
+        config.iters_refinement = 0;
+        config.seed = seed;
+        auto kmeans = skmeans::HierarchicalSuperKMeans(num_clusters, num_dimensions, config);
+        result.centroids = kmeans.Train(embeddings, num_embeddings);
+        assignments =
+            kmeans.FastAssign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
+    } else {
+        skmeans::SuperKMeansConfig config;
+        config.sampling_fraction = chosen_sampling_fraction;
+        config.angular = is_angular;
+        config.data_already_rotated = true;
+        config.suppress_warnings = true;
+        config.iters = kmeans_iters;
+        config.seed = seed;
+        auto kmeans = skmeans::SuperKMeans(num_clusters, num_dimensions, config);
+        result.centroids = kmeans.Train(embeddings, num_embeddings);
+        assignments =
+            kmeans.FastAssign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
+    }
+
+    // Convert from vec_id -> centroid_idx into centroid_idx -> vec_id
     result.assignments.resize(num_clusters);
     for (uint64_t vec_id = 0; vec_id < num_embeddings; vec_id++) {
         result.assignments[assignments[vec_id]].emplace_back(vec_id);

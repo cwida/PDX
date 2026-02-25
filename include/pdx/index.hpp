@@ -30,6 +30,7 @@ struct PDXIndexConfig {
     bool normalize = false;
     float sampling_fraction = 0.0f; // 0 = auto (1.0 if small dataset, 0.3 otherwise)
     uint32_t kmeans_iters = 10;
+    bool hierarchical_indexing = true;
 
     void Validate() const {
         if (num_dimensions == 0 || num_dimensions > PDX_MAX_DIMS) {
@@ -310,7 +311,8 @@ class PDXIndex : public IPDXIndex {
             config.seed,
             config.normalize,
             config.sampling_fraction,
-            config.kmeans_iters
+            config.kmeans_iters,
+            config.hierarchical_indexing
         );
         index.centroids = std::move(kmeans_result.centroids);
 
@@ -555,7 +557,8 @@ class PDXTreeIndex : public IPDXIndex {
             config.seed,
             config.normalize,
             config.sampling_fraction,
-            config.kmeans_iters
+            config.kmeans_iters,
+            config.hierarchical_indexing
         );
         index.centroids = std::move(kmeans_result.centroids);
 
@@ -615,7 +618,8 @@ class PDXTreeIndex : public IPDXIndex {
             config.seed,
             config.normalize,
             1.0f,
-            10
+            10,
+            config.hierarchical_indexing
         ); // No sampling for l0
         index.l0.centroids = std::move(l0_kmeans_result.centroids);
 

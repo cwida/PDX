@@ -189,6 +189,7 @@ inline std::unique_ptr<PDX::IPDXIndex> BuildIndex(
         .seed = SEED,
         .normalize = true,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
 
     std::unique_ptr<PDX::IPDXIndex> index;

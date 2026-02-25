@@ -96,6 +96,7 @@ TEST_P(IndexPropertiesTest, NumClustersMatchesConfig) {
             .num_clusters = requested,
             .normalize = true,
             .sampling_fraction = 1.0f,
+            .hierarchical_indexing = true,
         };
 
         std::unique_ptr<PDX::IPDXIndex> index;
@@ -160,6 +161,7 @@ TEST_P(EdgeCaseTest, SinglePointIndex) {
         .num_clusters = 1,
         .normalize = true,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
     auto index = TestUtils::BuildIndexWithConfig(index_type, config, all_data.data(), 1);
     ASSERT_NE(index, nullptr);
@@ -186,6 +188,7 @@ TEST_P(EdgeCaseTest, TwoPointIndex) {
         .num_clusters = 1,
         .normalize = true,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
     auto index = TestUtils::BuildIndexWithConfig(index_type, config, all_data.data(), 2);
     ASSERT_NE(index, nullptr);
@@ -215,6 +218,7 @@ TEST_P(EdgeCaseTest, NumClustersExceedsNumPointsThrows) {
         .num_clusters = 100,
         .normalize = true,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
 
     EXPECT_THROW(
@@ -286,6 +290,7 @@ TEST(ConfigValidationTest, ValidConfigDoesNotThrow) {
         .normalize = true,
         .sampling_fraction = 0.5f,
         .kmeans_iters = 10,
+        .hierarchical_indexing = true,
     };
     EXPECT_NO_THROW(([&]() { auto idx = PDX::PDXIndexF32(config); }()));
 }

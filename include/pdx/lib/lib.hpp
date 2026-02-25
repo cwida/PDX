@@ -41,7 +41,8 @@ class PyPDXIndex {
         uint32_t num_meso_clusters,
         bool normalize,
         float sampling_fraction,
-        uint32_t kmeans_iters
+        uint32_t kmeans_iters,
+        bool hierarchical_indexing
     ) {
         PDXIndexConfig config{
             .num_dimensions = num_dimensions,
@@ -52,6 +53,7 @@ class PyPDXIndex {
             .normalize = normalize,
             .sampling_fraction = sampling_fraction,
             .kmeans_iters = kmeans_iters,
+            .hierarchical_indexing = hierarchical_indexing,
         };
         if (index_type == "pdx_f32") {
             index = std::make_unique<PDXIndexF32>(config);

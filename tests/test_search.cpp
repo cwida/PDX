@@ -301,12 +301,14 @@ TEST_P(CosineTest, CosineRecallMatchesL2OnNormalizedData) {
         .seed = TestUtils::SEED,
         .normalize = true,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
     PDX::PDXIndexConfig cos_config{
         .num_dimensions = static_cast<uint32_t>(D),
         .distance_metric = PDX::DistanceMetric::COSINE,
         .seed = TestUtils::SEED,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
 
     auto l2_index = TestUtils::BuildIndexWithConfig(index_type, l2_config, train, N);
@@ -346,6 +348,7 @@ TEST_P(CosineTest, CosineRecallMonotonicity) {
         .distance_metric = PDX::DistanceMetric::COSINE,
         .seed = TestUtils::SEED,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
     auto index = TestUtils::BuildIndexWithConfig(index_type, config, train, N);
     ASSERT_NE(index, nullptr);
@@ -394,6 +397,7 @@ TEST_P(CosineTest, CosineExhaustiveRecall) {
         .distance_metric = PDX::DistanceMetric::COSINE,
         .seed = TestUtils::SEED,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
     auto index = TestUtils::BuildIndexWithConfig(index_type, config, train, N);
     ASSERT_NE(index, nullptr);
@@ -434,6 +438,7 @@ TEST_P(SeedTest, SameSeedProducesSameResults) {
         .seed = 42,
         .normalize = true,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
 
     auto index1 =
@@ -466,6 +471,7 @@ TEST_P(SeedTest, DifferentSeedProducesDifferentRotation) {
         .seed = 42,
         .normalize = true,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
     PDX::PDXIndexConfig config2{
         .num_dimensions = static_cast<uint32_t>(D),
@@ -473,6 +479,7 @@ TEST_P(SeedTest, DifferentSeedProducesDifferentRotation) {
         .seed = 99,
         .normalize = true,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
 
     auto index1 =
@@ -525,6 +532,7 @@ TEST(SamplingFractionTest, SamplingFractionDoesNotBreakSearch) {
         .seed = TestUtils::SEED,
         .normalize = true,
         .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
     };
     PDX::PDXIndexConfig sampled_config{
         .num_dimensions = static_cast<uint32_t>(D),
@@ -532,6 +540,7 @@ TEST(SamplingFractionTest, SamplingFractionDoesNotBreakSearch) {
         .seed = TestUtils::SEED,
         .normalize = true,
         .sampling_fraction = 0.3f,
+        .hierarchical_indexing = true,
     };
 
     auto full_index = TestUtils::BuildIndexWithConfig(
