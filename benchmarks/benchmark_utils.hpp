@@ -68,7 +68,7 @@ inline const std::unordered_map<std::string, RawDatasetInfo> RAW_DATASET_PARAMS 
     {"gist", {1000000, 960, 1000, PDX::DistanceMetric::L2SQ, "gist-960-euclidean"}},
     {"mxbai", {769382, 1024, 1000, PDX::DistanceMetric::L2SQ, "agnews-mxbai-1024-euclidean"}},
     {"openai", {999000, 1536, 1000, PDX::DistanceMetric::L2SQ, "openai-1536-angular"}},
-    {"arxiv", {2253000, 768, 1000, PDX::DistanceMetric::L2SQ, "arxiv-nomic-768-normalized"}},
+    {"arxiv", {2253000, 768, 1000, PDX::DistanceMetric::L2SQ, "instructorxl-arxiv-768"}},
     {"wiki", {260372, 3072, 1000, PDX::DistanceMetric::L2SQ, "simplewiki-openai-3072-normalized"}},
 };
 

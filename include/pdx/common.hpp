@@ -30,6 +30,11 @@
 
 namespace PDX {
 
+// Global thread count for OpenMP parallel regions and FFTW.
+// Set by PDXIndex/PDXTreeIndex constructors. Needed for functions (adsampling, clustering)
+// that can't access class members.
+inline uint32_t g_n_threads = 1;
+
 static constexpr float PROPORTION_HORIZONTAL_DIM = 0.75f;
 static constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;
 

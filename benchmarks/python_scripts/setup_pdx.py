@@ -1,6 +1,7 @@
 import json
 import sys
 from setup_utils import *
+from benchmark_utils import TicToc
 from pdxearch import IndexPDXIVF, IndexPDXIVFSQ8, IndexPDXIVFTree, IndexPDXIVFTreeSQ8
 from WrapperBruteForce import BruteForceFAISS
 from sklearn import preprocessing
@@ -67,9 +68,11 @@ def generate_index(dataset_abbrev: str, index_type: str, normalize=True, seed=42
 
     cls = INDEX_CLASSES[index_type]
     index = cls(num_dimensions=dims, normalize=normalize, seed=seed)
+    clock = TicToc()
     print('Building index...')
+    clock.tic()
     index.build(data)
-    print(f'Index built: {index.num_clusters} clusters')
+    print(f'Index built: {index.num_clusters} clusters ({clock.toc():.2f}ms)')
 
     save_path = os.path.join(PDX_DATA, dataset_abbrev + '-' + index_type)
     print(f'Saving to {save_path}')

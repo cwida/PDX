@@ -42,7 +42,8 @@ class PyPDXIndex {
         bool normalize,
         float sampling_fraction,
         uint32_t kmeans_iters,
-        bool hierarchical_indexing
+        bool hierarchical_indexing,
+        uint32_t n_threads
     ) {
         PDXIndexConfig config{
             .num_dimensions = num_dimensions,
@@ -54,6 +55,7 @@ class PyPDXIndex {
             .sampling_fraction = sampling_fraction,
             .kmeans_iters = kmeans_iters,
             .hierarchical_indexing = hierarchical_indexing,
+            .n_threads = n_threads,
         };
         if (index_type == "pdx_f32") {
             index = std::make_unique<PDXIndexF32>(config);

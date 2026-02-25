@@ -30,7 +30,7 @@
 ## Why PDX?
 
 - Query latency of HNSW, with the ease of use of IVF.
-- ⚡ [**100x faster index building**](https://www.lkuffo.com/superkmeans/) thanks to [SuperKMeans](https://github.com/lkuffo/SuperKMeans).
+- ⚡ Up to [**30x faster index building**](https://www.lkuffo.com/superkmeans/) thanks to [SuperKMeans](https://github.com/lkuffo/SuperKMeans).
 - ⚡ [**Sub-millisecond similarity search**](https://www.lkuffo.com/sub-milisecond-similarity-search-with-pdx/), up to [**10x faster**](./BENCHMARKING.md#two-level-ivf-ivf2-) than FAISS IVF.
 - ⚡ Up to [**30x faster**](./BENCHMARKING.md#exhaustive-search--ivf) exhaustive search.
 - 🔍 Efficient [**filtered search**](https://github.com/cwida/PDX/issues/7).

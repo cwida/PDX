@@ -1,3 +1,5 @@
+#undef HAS_FFTW
+
 #include <iomanip>
 #include <iostream>
 #include <vector>

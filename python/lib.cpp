@@ -18,7 +18,8 @@ PYBIND11_MODULE(compiled, m) {
                 bool,
                 float,
                 uint32_t,
-                bool>(),
+                bool,
+                uint32_t>(),
             py::arg("index_type"),
             py::arg("num_dimensions"),
             py::arg("distance_metric") = 0,
@@ -28,7 +29,8 @@ PYBIND11_MODULE(compiled, m) {
             py::arg("normalize") = false,
             py::arg("sampling_fraction") = 0.0f,
             py::arg("kmeans_iters") = 10,
-            py::arg("hierarchical_indexing") = true
+            py::arg("hierarchical_indexing") = true,
+            py::arg("n_threads") = 0
         )
         .def("build_index", &PDX::PyPDXIndex::BuildIndex, py::arg("data"))
         .def("search", &PDX::PyPDXIndex::Search, py::arg("query"), py::arg("knn"))

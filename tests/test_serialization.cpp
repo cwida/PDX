@@ -1,3 +1,5 @@
+#undef HAS_FFTW
+
 #include <cmath>
 #include <cstdio>
 #include <gtest/gtest.h>

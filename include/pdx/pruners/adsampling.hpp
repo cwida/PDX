@@ -3,6 +3,7 @@
 #include "pdx/common.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
 #include <Eigen/Dense>
+#include <omp.h>
 #include <queue>
 #include <random>
 
@@ -147,6 +148,7 @@ class ADSamplingPruner {
     }
 
     void FlipSign(const float* data, float* out, const size_t n) const {
+#pragma omp parallel for num_threads(PDX::g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const size_t offset = i * num_dimensions;
             flip_sign_fn::FlipSign(data + offset, out + offset, flip_masks.data(), num_dimensions);
@@ -174,10 +176,11 @@ class ADSamplingPruner {
                 int n0 = static_cast<int>(num_dimensions);
                 int howmany = static_cast<int>(n);
                 fftw_r2r_kind kind[1] = {FFTW_REDFT10};
-                auto flag = FFTW_ESTIMATE;
-                if (!IsPowerOf2(num_dimensions)) {
-                    flag = FFTW_MEASURE;
+                auto flag = FFTW_MEASURE;
+                if (IsPowerOf2(num_dimensions)) {
+                    flag = FFTW_ESTIMATE;
                 }
+                fftwf_plan_with_nthreads(static_cast<int>(PDX::g_n_threads));
                 fftwf_plan plan = fftwf_plan_many_r2r(
                     1, &n0, howmany, out.data(), NULL, 1, n0, out.data(), NULL, 1, n0, kind, flag
                 );

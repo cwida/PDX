@@ -21,11 +21,12 @@ class IndexPDXIVF:
         sampling_fraction: float = 0.0,
         kmeans_iters: int = 10,
         hierarchical_indexing: bool = True,
+        n_threads: int = 0,
     ) -> None:
         self._index = _PDXIndex(
             "pdx_f32", num_dimensions, METRIC_MAP[distance_metric],
             seed, num_clusters, 0, normalize, sampling_fraction, kmeans_iters,
-            hierarchical_indexing,
+            hierarchical_indexing, n_threads,
         )
         # self.pe = PredicateEvaluator()
 
@@ -73,11 +74,12 @@ class IndexPDXIVFSQ8:
         sampling_fraction: float = 0.0,
         kmeans_iters: int = 10,
         hierarchical_indexing: bool = True,
+        n_threads: int = 0,
     ) -> None:
         self._index = _PDXIndex(
             "pdx_u8", num_dimensions, METRIC_MAP[distance_metric],
             seed, num_clusters, 0, normalize, sampling_fraction, kmeans_iters,
-            hierarchical_indexing,
+            hierarchical_indexing, n_threads,
         )
         # self.pe = PredicateEvaluator()
 
@@ -126,11 +128,12 @@ class IndexPDXIVFTree:
         sampling_fraction: float = 0.0,
         kmeans_iters: int = 10,
         hierarchical_indexing: bool = True,
+        n_threads: int = 0,
     ) -> None:
         self._index = _PDXIndex(
             "pdx_tree_f32", num_dimensions, METRIC_MAP[distance_metric],
             seed, num_clusters, num_meso_clusters, normalize,
-            sampling_fraction, kmeans_iters, hierarchical_indexing,
+            sampling_fraction, kmeans_iters, hierarchical_indexing, n_threads,
         )
         # self.pe = PredicateEvaluator()
 
@@ -179,11 +182,12 @@ class IndexPDXIVFTreeSQ8:
         sampling_fraction: float = 0.0,
         kmeans_iters: int = 10,
         hierarchical_indexing: bool = True,
+        n_threads: int = 0,
     ) -> None:
         self._index = _PDXIndex(
             "pdx_tree_u8", num_dimensions, METRIC_MAP[distance_metric],
             seed, num_clusters, num_meso_clusters, normalize,
-            sampling_fraction, kmeans_iters, hierarchical_indexing,
+            sampling_fraction, kmeans_iters, hierarchical_indexing, n_threads,
         )
         # self.pe = PredicateEvaluator()
 

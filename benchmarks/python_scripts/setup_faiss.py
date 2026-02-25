@@ -4,6 +4,7 @@ import faiss
 
 from sklearn import preprocessing
 from setup_utils import *
+from benchmark_utils import TicToc
 
 
 def _compute_nbuckets(num_embeddings):
@@ -34,10 +35,13 @@ def generate_faiss_index(dataset_abbrev: str, normalize=True):
 
     quantizer = faiss.IndexFlatL2(dims)
     index = faiss.IndexIVFFlat(quantizer, dims, nbuckets)
+    clock = TicToc()
     print('Training')
+    clock.tic()
     index.train(data)
     print('Adding')
     index.add(data)
+    print(f'Train + Add: {clock.toc():.2f}ms')
     print('Persisting')
     faiss.write_index(index, idx_path)
 
@@ -53,9 +57,12 @@ def generate_faiss_sq8_index(dataset_abbrev: str, normalize=True):
     index = faiss.IndexIVFScalarQuantizer(
         quantizer, dims, nbuckets, faiss.ScalarQuantizer.QT_8bit
     )
+    clock = TicToc()
     print('Training')
+    clock.tic()
     index.train(data)
     print('Adding')
     index.add(data)
+    print(f'Train + Add: {clock.toc():.2f}ms')
     print('Persisting')
     faiss.write_index(index, idx_path)

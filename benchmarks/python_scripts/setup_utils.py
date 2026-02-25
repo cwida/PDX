@@ -41,7 +41,7 @@ DATASET_INFO = {
     "gist":       ("gist-960-euclidean",                960),
     "mxbai":      ("agnews-mxbai-1024-euclidean",      1024),
     "openai":     ("openai-1536-angular",              1536),
-    "arxiv":      ("arxiv-nomic-768-normalized",        768),
+    "arxiv":      ("instructorxl-arxiv-768",            768),
     "wiki":       ("simplewiki-openai-3072-normalized", 3072),
 }
 

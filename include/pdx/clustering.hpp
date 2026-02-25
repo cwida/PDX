@@ -67,7 +67,7 @@ struct KMeansResult {
     std::vector<uint32_t> assignments;
     if (use_hierarchical_indexing) {
         skmeans::HierarchicalSuperKMeansConfig config;
-        config.sampling_fraction = chosen_sampling_fraction;
+        config.sampling_fraction = 1.0f; // For now we are using all points
         config.angular = is_angular;
         config.data_already_rotated = true;
         config.suppress_warnings = true;
@@ -75,6 +75,8 @@ struct KMeansResult {
         config.iters_fineclustering = 5;
         config.iters_refinement = 0;
         config.seed = seed;
+        // config.verbose = true;
+        config.n_threads = PDX::g_n_threads;
         auto kmeans = skmeans::HierarchicalSuperKMeans(num_clusters, num_dimensions, config);
         result.centroids = kmeans.Train(embeddings, num_embeddings);
         assignments =
@@ -87,6 +89,8 @@ struct KMeansResult {
         config.suppress_warnings = true;
         config.iters = kmeans_iters;
         config.seed = seed;
+        // config.verbose = true;
+        config.n_threads = PDX::g_n_threads;
         auto kmeans = skmeans::SuperKMeans(num_clusters, num_dimensions, config);
         result.centroids = kmeans.Train(embeddings, num_embeddings);
         assignments =
