@@ -166,8 +166,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
                         _mm256_subs_epu8(y_vec1_u8, y_vec2_u8),
                         _mm256_subs_epu8(y_vec2_u8, y_vec1_u8)
                     );
-                    _mm256_store_epi32(
-                        &distances_p[i], _mm256_dpbusds_epi32(y_res, y_diff_u8, y_diff_u8)
+                    _mm256_storeu_si256(
+                        reinterpret_cast<__m256i*>(&distances_p[i]),
+                        _mm256_dpbusds_epi32(y_res, y_diff_u8, y_diff_u8)
                     );
                 }
             }
