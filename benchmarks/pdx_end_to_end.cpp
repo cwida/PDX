@@ -94,7 +94,6 @@ void RunBenchmark(
             }
         }
 
-        // Runtime pass
         std::vector<PhasesRuntime> runtimes;
         runtimes.resize(NUM_MEASURE_RUNS * n_queries);
         TicToc clock;

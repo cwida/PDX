@@ -14,7 +14,7 @@ if __name__ == "__main__":
     dataset_name = 'agnews-mxbai-1024-euclidean.hdf5'
     num_dimensions = 1024
     nprobe = 25
-    knn = 100
+    knn = 20
     print(f'Running example: PDXearch IVF (F32)\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
 

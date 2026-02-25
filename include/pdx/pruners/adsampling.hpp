@@ -37,6 +37,7 @@ class ADSamplingPruner {
                 matrix(i) = dist(gen) ? 1.0f : -1.0f;
             }
             BuildFlipMasks();
+            CacheSingleQueryPlan();
             matrix_created = true;
         }
 #endif
@@ -67,6 +68,7 @@ class ADSamplingPruner {
             fftwf_init_threads();
             matrix = Eigen::Map<const matrix_t>(matrix_p, 1, num_dimensions);
             BuildFlipMasks();
+            CacheSingleQueryPlan();
         } else {
             matrix = Eigen::Map<const matrix_t>(matrix_p, num_dimensions, num_dimensions);
         }
@@ -110,11 +112,25 @@ class ADSamplingPruner {
         Rotate(input_embeddings, output_embeddings, num_embeddings);
     }
 
+    ~ADSamplingPruner() {
+#ifdef HAS_FFTW
+        if (single_query_plan) {
+            fftwf_destroy_plan(single_query_plan);
+        }
+#endif
+    }
+
+    ADSamplingPruner(const ADSamplingPruner&) = delete;
+    ADSamplingPruner& operator=(const ADSamplingPruner&) = delete;
+
   private:
     float pruning_aggressiveness = ADSAMPLING_PRUNING_AGGRESIVENESS;
     matrix_t matrix;
     std::vector<float> ratios;
     std::vector<uint32_t> flip_masks;
+#ifdef HAS_FFTW
+    fftwf_plan single_query_plan = nullptr;
+#endif
 
     bool UsesDCTRotation() const {
 #ifdef HAS_FFTW
@@ -147,7 +163,26 @@ class ADSamplingPruner {
         }
     }
 
+#ifdef HAS_FFTW
+    void CacheSingleQueryPlan() {
+        fftwf_plan_with_nthreads(1);
+        std::unique_ptr<float[]> tmp(new float[num_dimensions]);
+        single_query_plan = fftwf_plan_r2r_1d(
+            num_dimensions, tmp.get(), tmp.get(), FFTW_REDFT10, FFTW_ESTIMATE
+        );
+    }
+#endif
+
     void FlipSign(const float* data, float* out, const size_t n) const {
+        if (n <= 1) {
+            for (size_t i = 0; i < n; ++i) {
+                const size_t offset = i * num_dimensions;
+                flip_sign_fn::FlipSign(
+                    data + offset, out + offset, flip_masks.data(), num_dimensions
+                );
+            }
+            return;
+        }
 #pragma omp parallel for num_threads(PDX::g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const size_t offset = i * num_dimensions;
@@ -167,11 +202,7 @@ class ADSamplingPruner {
             const float s0 = std::sqrt(1.0f / (4.0f * num_dimensions));
             const float s = std::sqrt(1.0f / (2.0f * num_dimensions));
             if (n == 1) {
-                fftwf_plan plan = fftwf_plan_r2r_1d(
-                    num_dimensions, out.data(), out.data(), FFTW_REDFT10, FFTW_ESTIMATE
-                );
-                fftwf_execute(plan);
-                fftwf_destroy_plan(plan);
+                fftwf_execute_r2r(single_query_plan, out.data(), out.data());
             } else {
                 int n0 = static_cast<int>(num_dimensions);
                 int howmany = static_cast<int>(n);

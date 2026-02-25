@@ -1,7 +1,7 @@
 import os
 import numpy as np
 from examples_utils import TicToc, read_hdf5_data
-from pdxearch import IndexPDXIVF, load_index
+from pdxearch import IndexPDXIVFTreeSQ8, load_index
 
 """
 Example to save a PDX index to a file and reload it later.
@@ -10,13 +10,13 @@ Download the .hdf5 data here: https://drive.google.com/drive/folders/1f76UCrU52N
 if __name__ == "__main__":
     dataset_name = 'agnews-mxbai-1024-euclidean.hdf5'
     num_dimensions = 1024
-    nprobe = 32
-    knn = 10
+    nprobe = 25
+    knn = 20
     print(f'Running example: Persist and Load PDX Index\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
 
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
 
-    index = IndexPDXIVF(num_dimensions=num_dimensions, normalize=True)
+    index = IndexPDXIVFTreeSQ8(num_dimensions=num_dimensions, normalize=True)
     print('Building index...')
     index.build(train)
     print(f'Index built: {index.num_clusters} clusters')
