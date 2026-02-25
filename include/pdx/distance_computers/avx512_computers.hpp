@@ -142,7 +142,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
                 vec1_u8 = _mm512_set1_epi32(query_value);
                 for (; i + 16 <= n_vectors; i += 16) {
                     // Read 64 bytes of data (64 values) with 4 dimensions of 16 vectors
-                    res = _mm512_load_si512(&distances_p[i]);
+                    res = _mm512_loadu_si512(&distances_p[i]);
                     vec2_u8 = _mm512_loadu_si512(&data[offset_to_dimension_start + i * 4]
                     ); // This 4 is because everytime I read 4 dimensions
                     diff_u8 = _mm512_or_si512(
@@ -152,14 +152,14 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
                     // Hence, the [sign] properties of the second operand are ignored
                     // As results will never be negative, it can be stored on distances_p[i] without
                     // issues and it saturates to MAX_INT
-                    _mm512_store_epi32(
+                    _mm512_storeu_si512(
                         &distances_p[i], _mm512_dpbusds_epi32(res, diff_u8, diff_u8)
                     );
                 }
                 y_vec1_u8 = _mm256_set1_epi32(query_value);
                 for (; i + 8 <= n_vectors; i += 8) {
                     // Read 32 bytes of data (32 values) with 4 dimensions of 8 vectors
-                    y_res = _mm256_load_epi32(&distances_p[i]);
+                    y_res = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(&distances_p[i]));
                     y_vec2_u8 = _mm256_loadu_epi8(&data[offset_to_dimension_start + i * 4]
                     ); // This 4 is because everytime I read 4 dimensions
                     y_diff_u8 = _mm256_or_si256(
