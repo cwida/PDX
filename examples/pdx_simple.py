@@ -1,62 +1,41 @@
-import math
 import numpy as np
 import sklearn.datasets
 from sklearn.model_selection import train_test_split
 from examples_utils import TicToc
-from pdxearch.index_factory import IndexPDXADSamplingIVFFlat
+from pdxearch import IndexPDXIVF
 
 """
-PDXearch (pruned search) + ADSampling with an IVF index (built with FAISS)
-This example uses a random collection of vectors
+PDXearch with a single-level IVF index on random data.
+This example uses a random collection of vectors generated with sklearn.
 """
 if __name__ == "__main__":
     num_dimensions = 768
-    num_embeddings = 1_000_000
+    num_embeddings = 100_000
     num_query_embeddings = 100
     knn = 100
     nprobe = 64
-    print(f'Running example: PDXearch + ADSampling (IVFFlat)\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset=RANDOM')
+    print(f'Running example: PDXearch IVF (F32) on random data\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset=RANDOM')
     X, _ = sklearn.datasets.make_blobs(n_samples=num_embeddings, n_features=num_dimensions, centers=1000, random_state=1)
     X = X.astype(np.float32)
     data, queries = train_test_split(X, test_size=num_query_embeddings)
 
-    nbuckets = 1 * math.ceil(math.sqrt(num_embeddings))
-    index = IndexPDXADSamplingIVFFlat(ndim=num_dimensions, nbuckets=nbuckets)
+    index = IndexPDXIVF(num_dimensions=num_dimensions, normalize=True)
+    print('Building index...')
+    index.build(data)
+    print(f'Index built: {index.num_clusters} clusters')
+    print(f'Index in-memory size: {index.in_memory_size_bytes / (1024 * 1024):.2f} MB')
 
-    print('Preprocessing')
-    index.preprocess(data)  # Preprocess vectors with ADSampling
-    print('Training IVF')
-    index.train(data)  # Train IVF with FAISS
-    print('PDXifying')
-    index.add(data)  # Add vectors and load PDX index in memory
     print(f'{len(queries)} queries with PDX')
     times = []
     clock = TicToc()
-    results = []
     for i in range(num_query_embeddings):
         q = np.ascontiguousarray(queries[i])
         clock.tic()
         index.search(q, knn, nprobe=nprobe)
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
-    # To check results...
-    results = index.search(queries[0], knn, nprobe=nprobe)
-    print(results)
 
-    times = []
-    clock = TicToc()
-    results = []
-    # We need to normalize the queries
-    queries = index.preprocess(queries, inplace=False)
-    index.core_index.index.nprobe = nprobe
-    print(f'{len(queries)} queries with FAISS')
-    for i in range(num_query_embeddings):
-        q = np.ascontiguousarray(np.array([queries[i]]))
-        clock.tic()
-        index.core_index.index.search(q, k=knn)
-        times.append(clock.toc())
-    print('FAISS med. time:', np.median(np.array(times)))
-    # To check results...
-    print(index.core_index.index.search(np.array([queries[0]]), k=knn))
-
-
+    # Show results of first query
+    ids, dists = index.search(np.ascontiguousarray(queries[0]), knn, nprobe=nprobe)
+    print('First query results (ids):', ids[:10])
+    print('First query results (dists):', dists[:10])

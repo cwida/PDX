@@ -1,50 +1,48 @@
-import math
 import os
 import numpy as np
-
 from examples_utils import TicToc, read_hdf5_data
-from pdxearch.index_factory import IndexPDXADSamplingIVFFlat
+from pdxearch import IndexPDXIVF, load_index
 
 """
-Example to store the PDX index and the metadata in a file and how to use it later
+Example to save a PDX index to a file and reload it later.
 Download the .hdf5 data here: https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing
 """
 if __name__ == "__main__":
-    dataset_name = 'yahoo-minilm-384-normalized.hdf5'
-    num_dimensions = 384
+    dataset_name = 'agnews-mxbai-1024-euclidean.hdf5'
+    num_dimensions = 1024
     nprobe = 32
     knn = 10
-    print(f'Running example: Persisting PDXADSamplingIVF Index\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
+    print(f'Running example: Persist and Load PDX Index\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
 
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
 
-    nbuckets = 1 * math.ceil(math.sqrt(len(train)))
-    index = IndexPDXADSamplingIVFFlat(ndim=num_dimensions, nbuckets=nbuckets)
-    print('Preprocessing')
-    index.preprocess(train)
-    print('Training')
-    index.train(train)
-    print('PDXifying and Storing')
-    index_path = f'./examples/my_idx.pdx'
-    matrix_path = f'./examples/my_idx.matrix'
-    index.add_persist(train, index_path, matrix_path)
+    index = IndexPDXIVF(num_dimensions=num_dimensions, normalize=True)
+    print('Building index...')
+    index.build(train)
+    print(f'Index built: {index.num_clusters} clusters')
 
-    print('Restoring')
+    index_path = './examples/my_idx.pdx'
+    print(f'Saving index to {index_path}')
+    index.save(index_path)
+
+    print('Loading index from file...')
     del index
-    # TODO: Restoring should be a utility and static method that instantiate the appropiate class
-    index = IndexPDXADSamplingIVFFlat()
-    index.restore(index_path, matrix_path)
+    restored_index = load_index(index_path)
 
-    print(f'{len(queries)} queries with PDX')
+    print(f'{len(queries)} queries with restored PDX index')
     times = []
     clock = TicToc()
-    results = []
+    restored_index.set_nprobe(nprobe)
     for i in range(len(queries)):
         q = np.ascontiguousarray(queries[i])
         clock.tic()
-        index.search(q, knn, nprobe=nprobe)
+        restored_index.search(q, knn)
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
-    results = index.search(queries[0], knn, nprobe=nprobe)
-    print(results)
 
+    ids, dists = restored_index.search(np.ascontiguousarray(queries[0]), knn)
+    print('First query results (ids):', ids[:10])
+    print('First query results (dists):', dists[:10])
+
+    # Cleanup
+    os.remove(index_path)
