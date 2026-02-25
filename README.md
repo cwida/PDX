@@ -61,7 +61,7 @@ ids, dists = index.search(query, knn)
 
 ```
 
-Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We support Flat (`float32`) and Quantized (`8-bit`) indexes, along with the most common distance metrics. 
+Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We support Flat (`float32`) and Quantized (`8-bit`) indexes, as well as the most common distance metrics. 
 
 ## Installation
 We provide Python bindings for ease of use. Soon, we will be available on PyPI.

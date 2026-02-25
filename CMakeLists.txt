@@ -64,7 +64,13 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "extern/findFFTW")
 add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 include_directories(include extern/Eigen)
-add_subdirectory(benchmarks)
+
+# Benchmarks: disabled by default, enable with -DPDX_COMPILE_BENCHMARKS=ON
+set(PDX_COMPILE_BENCHMARKS OFF CACHE BOOL "Whether to compile benchmarks")
+if(PDX_COMPILE_BENCHMARKS)
+    message(STATUS "Benchmarks enabled")
+    add_subdirectory(benchmarks)
+endif()
 
 # Tests: disabled by default, enable with -DPDX_COMPILE_TESTS=ON
 set(PDX_COMPILE_TESTS OFF CACHE BOOL "Whether to compile tests")
