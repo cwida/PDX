@@ -9,11 +9,10 @@ GENERATE_GT = False  # Creates ground truth with sklearn
 KNN = [100]
 SEED = 42
 DATASETS_TO_USE = [
-    # 'sift',
-    # 'wiki',
     'mxbai',
-    # 'arxiv',
-    # 'openai',
+    'arxiv',
+    'openai',
+    # 'cohere'
 ]
 
 if __name__ == "__main__":

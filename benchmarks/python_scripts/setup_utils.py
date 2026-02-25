@@ -43,6 +43,7 @@ DATASET_INFO = {
     "openai":     ("openai-1536-angular",              1536),
     "arxiv":      ("instructorxl-arxiv-768",            768),
     "wiki":       ("simplewiki-openai-3072-normalized", 3072),
+    "cohere":     ("cohere",                            1024),
 }
 
 # ── HDF5 I/O ─────────────────────────────────────────────────────

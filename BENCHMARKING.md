@@ -102,7 +102,7 @@ PDX programs have three parameters:
 </details>
 
 > [!IMPORTANT]   
-> Recall that the IVF indexes must be created beforehand by the `setup_data.py` script.
+> Recall that for `BenchmarkPDXIVF` and `ivf_faiss.py` the indexes must be created beforehand by the `setup_data.py` script.
 
 ## Output
 Output is written in a .csv format to the `/benchmarks/results/DEFAULT` directory. Each file contains entries detailing the experiment parameters, such as the dataset, algorithm, kNN, number of queries (`n_queries`), `ivf_nprobe`, and, more importantly, the average runtime per query in ms in the `avg` column. Each benchmarking script will create a file with a different name.

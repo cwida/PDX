@@ -70,6 +70,7 @@ inline const std::unordered_map<std::string, RawDatasetInfo> RAW_DATASET_PARAMS 
     {"openai", {999000, 1536, 1000, PDX::DistanceMetric::L2SQ, "openai-1536-angular"}},
     {"arxiv", {2253000, 768, 1000, PDX::DistanceMetric::L2SQ, "instructorxl-arxiv-768"}},
     {"wiki", {260372, 3072, 1000, PDX::DistanceMetric::L2SQ, "simplewiki-openai-3072-normalized"}},
+    {"cohere", {10000000, 1024, 1000, PDX::DistanceMetric::L2SQ, "cohere"}},
 };
 
 struct BenchmarkMetadata {
@@ -138,6 +139,7 @@ class BenchmarkUtils {
         "gooaq-distilroberta-768-normalized",
         "gist-960-euclidean",
         "agnews-mxbai-1024-euclidean",
+        "cohere",
         "openai-1536-angular",
         "celeba-resnet-2048-cosine",
         "simplewiki-openai-3072-normalized"
