@@ -41,11 +41,11 @@ if __name__ == "__main__":
         generate_test_data(dataset)
 
         print('==== Generating PDX indexes...')
-        # generate_index(dataset, 'pdx_f32', normalize=True, seed=SEED)
-        # generate_index(dataset, 'pdx_u8', normalize=True, seed=SEED)
-        # generate_index(dataset, 'pdx_tree_f32', normalize=True, seed=SEED)
+        generate_index(dataset, 'pdx_f32', normalize=True, seed=SEED)
+        generate_index(dataset, 'pdx_u8', normalize=True, seed=SEED)
+        generate_index(dataset, 'pdx_tree_f32', normalize=True, seed=SEED)
         generate_index(dataset, 'pdx_tree_u8', normalize=True, seed=SEED)
 
         print('==== Generating FAISS indexes...')
-        # generate_faiss_index(dataset, normalize=True)
-        # generate_faiss_sq8_index(dataset, normalize=True)
+        generate_faiss_index(dataset, normalize=True)
+        generate_faiss_sq8_index(dataset, normalize=True)
