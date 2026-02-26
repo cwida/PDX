@@ -259,19 +259,22 @@ class PDXIndex : public IPDXIndex {
         // Index type flag
         ptr += sizeof(uint8_t);
 
-        // Rotation matrix
-        uint32_t matrix_rows = *reinterpret_cast<uint32_t*>(ptr);
+        // Rotation matrix (ptr may be misaligned after the uint8_t type flag)
+        uint32_t matrix_rows, matrix_cols;
+        std::memcpy(&matrix_rows, ptr, sizeof(uint32_t));
         ptr += sizeof(uint32_t);
-        uint32_t matrix_cols = *reinterpret_cast<uint32_t*>(ptr);
+        std::memcpy(&matrix_cols, ptr, sizeof(uint32_t));
         ptr += sizeof(uint32_t);
-        auto* matrix_data = reinterpret_cast<float*>(ptr);
-        ptr += sizeof(float) * matrix_rows * matrix_cols;
+        const size_t matrix_floats = static_cast<size_t>(matrix_rows) * matrix_cols;
+        auto aligned_matrix = std::unique_ptr<float[]>(new float[matrix_floats]);
+        std::memcpy(aligned_matrix.get(), ptr, sizeof(float) * matrix_floats);
+        ptr += sizeof(float) * matrix_floats;
 
         // Load IVF data
         index.Load(ptr);
 
         // Create pruner and searcher
-        pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, matrix_data);
+        pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, aligned_matrix.get());
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         BuildRowIdClusterMapping();
     }
@@ -490,19 +493,22 @@ class PDXTreeIndex : public IPDXIndex {
         // Index type flag
         ptr += sizeof(uint8_t);
 
-        // Rotation matrix
-        uint32_t matrix_rows = *reinterpret_cast<uint32_t*>(ptr);
+        // Rotation matrix (ptr may be misaligned after the uint8_t type flag)
+        uint32_t matrix_rows, matrix_cols;
+        std::memcpy(&matrix_rows, ptr, sizeof(uint32_t));
         ptr += sizeof(uint32_t);
-        uint32_t matrix_cols = *reinterpret_cast<uint32_t*>(ptr);
+        std::memcpy(&matrix_cols, ptr, sizeof(uint32_t));
         ptr += sizeof(uint32_t);
-        auto* matrix_data = reinterpret_cast<float*>(ptr);
-        ptr += sizeof(float) * matrix_rows * matrix_cols;
+        const size_t matrix_floats = static_cast<size_t>(matrix_rows) * matrix_cols;
+        auto aligned_matrix = std::unique_ptr<float[]>(new float[matrix_floats]);
+        std::memcpy(aligned_matrix.get(), ptr, sizeof(float) * matrix_floats);
+        ptr += sizeof(float) * matrix_floats;
 
         // Load IVFTree data
         index.Load(ptr);
 
         // Create pruner and searchers
-        pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, matrix_data);
+        pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, aligned_matrix.get());
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
         BuildRowIdClusterMapping();

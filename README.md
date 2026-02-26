@@ -1,5 +1,5 @@
 <h1 align="center">
-  PDX: A Library for Vector Search and Indexing
+  PDX: A Library for Fast Vector Search and Indexing
 <div align="center">
     <a href="https://arxiv.org/pdf/2503.04422"><img src="https://img.shields.io/badge/Paper-SIGMOD'25%3A_PDX-blue" alt="Paper" /></a>
     <img src="https://github.com/cwida/PDX/actions/workflows/ci.yml/badge.svg?cacheSeconds=3600" alt="CI" />
@@ -8,16 +8,11 @@
 </div>
 </h1>
 <h3 align="center">
-  Index millions of vectors in seconds. Search them in < 1 millisecond.
-</h3>
-
-
-<h3 align="center">
- 
+  Index millions of vectors in seconds. Search them in milliseconds.
 </h3>
 
 <p align="center">
-        <img src="./benchmarks/results/openai-intel.png" alt="PDX Layout" style="{max-height: 150px}">
+        <img src="./benchmarks/results/github_opening.png" alt="PDX Layout" style="{max-height: 150px}">
 </p>
 
 <!-- <h3 align="center">
@@ -30,7 +25,7 @@
 ## Why PDX?
 
 - Query latency of HNSW, with the ease of use of IVF.
-- ⚡ Up to [**30x faster index building**](https://www.lkuffo.com/superkmeans/) thanks to [SuperKMeans](https://github.com/lkuffo/SuperKMeans).
+- ⚡ [**30x faster index building**](https://www.lkuffo.com/superkmeans/) thanks to [SuperKMeans](https://github.com/lkuffo/SuperKMeans).
 - ⚡ [**Sub-millisecond similarity search**](https://www.lkuffo.com/sub-milisecond-similarity-search-with-pdx/), up to [**10x faster**](./BENCHMARKING.md#two-level-ivf-ivf2-) than FAISS IVF.
 - ⚡ Up to [**30x faster**](./BENCHMARKING.md#exhaustive-search--ivf) exhaustive search.
 - 🔍 Efficient [**filtered search**](https://github.com/cwida/PDX/issues/7).
@@ -61,6 +56,8 @@ ids, dists = index.search(query, knn)
 
 ```
 
+`IndexPDXIVFTreeSQ8` is our fastest index that will give you the best performance. `IndexPDXIVFTreeSQ8` is a two-level IVF index with 8-bit quantization.
+
 Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We support Flat (`float32`) and Quantized (`8-bit`) indexes, as well as the most common distance metrics. 
 
 ## Installation
@@ -77,7 +74,7 @@ We provide Python bindings for ease of use. Soon, we will be available on PyPI.
 git clone --recurse-submodules https://github.com/cwida/PDX
 cd PDX
 
-python -m pip install .
+pip install .
 
 # Run the examples under `/examples`
 # pdx_simple.py creates an IVF index with FAISS on random data

@@ -5,6 +5,7 @@ We are actively developing PDX and accepting contributions! Any kind of PR is we
 These are our current priorities:
 
 **Features**:
+- Inserts and Updates (wip).
 - Out-of-core execution (disk-based setting).
 - Implement multi-threading capabilities.
 - Add PDX to the [VIBE benchmark](https://vector-index-bench.github.io/).
@@ -37,11 +38,6 @@ All PRs must pass the full test suite in CI. Before submitting a PR, you should 
 cmake . -DPDX_COMPILE_TESTS=ON
 make -j$(nproc) tests
 ctest .
-
-# Python bindings tests
-source venv/bin/activate # If using a venv
-pip install .
-pytest python/tests/
 ```
 
 Tests are also prone to bugs. If that is the case, please open an Issue.
@@ -60,6 +56,7 @@ Tests are also prone to bugs. If that is the case, please open an Issue.
 * Avoid `new` and `delete`
 * There is a `.clang-format` in the project. Make sure to adhere to it. We have provided scripts to check and format the files within the project:
 ```bash
+pip install clang-format==18.1.8
 ./scripts/format_check.sh   # Checks the formatting
 ./scripts/format.sh         # Fix the formatting
 ```
