@@ -82,17 +82,16 @@ inline std::unique_ptr<float[]> NormalizeAndRotate(
     const float* rotation_input = embeddings;
     if (normalize) {
         normalized.reset(new float[total_floats]);
-        std::memcpy(normalized.get(), embeddings, total_floats * sizeof(float));
         Quantizer quantizer(num_dimensions);
 #pragma omp parallel for num_threads(PDX::g_n_threads)
         for (size_t i = 0; i < num_embeddings; i++) {
             quantizer.NormalizeQuery(
-                normalized.get() + i * num_dimensions, normalized.get() + i * num_dimensions
+                embeddings + i * num_dimensions, normalized.get() + i * num_dimensions
             );
         }
         rotation_input = normalized.get();
     }
-    auto preprocessed = std::make_unique<float[]>(total_floats);
+    std::unique_ptr<float[]> preprocessed(new float[total_floats]);
     pruner.PreprocessEmbeddings(rotation_input, preprocessed.get(), num_embeddings);
     return preprocessed;
 }
@@ -114,14 +113,27 @@ void PopulateIVFClusters(
     for (size_t i = 0; i < num_clusters; i++) {
         max_cluster_size = std::max(max_cluster_size, kmeans_result.assignments[i].size());
     }
-    auto tmp =
-        std::make_unique<storage_t[]>(static_cast<uint64_t>(max_cluster_size) * num_dimensions);
 
+    // Pre-allocate all clusters sequentially
+    for (size_t cluster_idx = 0; cluster_idx < num_clusters; cluster_idx++) {
+        ivf.clusters.emplace_back(kmeans_result.assignments[cluster_idx].size(), num_dimensions);
+    }
+
+    // Per-thread tmp buffers for gather + quantize
+    const uint32_t n_threads = PDX::g_n_threads;
+    std::vector<std::unique_ptr<storage_t[]>> tmp_buffers(n_threads);
+    for (uint32_t t = 0; t < n_threads; t++) {
+        tmp_buffers[t].reset(
+            new storage_t[static_cast<uint64_t>(max_cluster_size) * num_dimensions]
+        );
+    }
+
+#pragma omp parallel for num_threads(n_threads)
     for (size_t cluster_idx = 0; cluster_idx < num_clusters; cluster_idx++) {
         const auto cluster_size = kmeans_result.assignments[cluster_idx].size();
-        auto& cluster = ivf.clusters.emplace_back(cluster_size, num_dimensions);
+        auto& cluster = ivf.clusters[cluster_idx];
+        auto* tmp = tmp_buffers[omp_get_thread_num()].get();
 
-#pragma omp parallel for num_threads(PDX::g_n_threads)
         for (size_t pos = 0; pos < cluster_size; pos++) {
             const auto emb_idx = kmeans_result.assignments[cluster_idx][pos];
             cluster.indices[pos] = row_ids[emb_idx];
@@ -132,17 +144,17 @@ void PopulateIVFClusters(
                     source_data + (emb_idx * num_dimensions),
                     quantization_base,
                     quantization_scale,
-                    tmp.get() + (pos * num_dimensions)
+                    tmp + (pos * num_dimensions)
                 );
             } else {
                 std::memcpy(
-                    tmp.get() + (pos * num_dimensions),
+                    tmp + (pos * num_dimensions),
                     source_data + (emb_idx * num_dimensions),
                     num_dimensions * sizeof(float)
                 );
             }
         }
-        StoreClusterEmbeddings<Q, storage_t>(cluster, ivf, tmp.get(), cluster_size);
+        StoreClusterEmbeddings<Q, storage_t>(cluster, ivf, tmp, cluster_size);
     }
 }
 

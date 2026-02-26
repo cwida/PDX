@@ -22,6 +22,7 @@ class Quantizer {
   public:
     void NormalizeQuery(const float* src, float* out) const {
         float sum = 0.0f;
+#pragma clang loop vectorize(enable)
         for (size_t i = 0; i < num_dimensions; ++i) {
             sum += src[i] * src[i];
         }
@@ -30,12 +31,16 @@ class Quantizer {
             return;
         }
 
+        // float inverse_norm = 1.0f / std::sqrt(sum);
         float norm = std::sqrt(sum);
+#pragma clang loop vectorize(enable)
         for (size_t i = 0; i < num_dimensions; ++i) {
-            out[i] = src[i] / norm;
+            out[i] = src[i] / norm; // * inverse_norm;
         }
     }
+
     const size_t num_dimensions;
+
 };
 
 template <Quantization Q = U8>
@@ -58,6 +63,7 @@ class ScalarQuantizer : public Quantizer {
     ) {
         float global_min = std::numeric_limits<float>::max();
         float global_max = std::numeric_limits<float>::lowest();
+#pragma omp parallel for reduction(min : global_min) reduction(max : global_max) num_threads(PDX::g_n_threads)
         for (size_t i = 0; i < total_elements; ++i) {
             global_min = std::min(global_min, embeddings[i]);
             global_max = std::max(global_max, embeddings[i]);
