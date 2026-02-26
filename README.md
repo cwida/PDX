@@ -12,15 +12,8 @@
 </h3>
 
 <p align="center">
-        <img src="./benchmarks/results/github_opening.png" alt="PDX Layout" style="{max-height: 150px}" width=700>
+        <img src="./benchmarks/results/github_opening.png" alt="PDX Layout" style="{max-height: 150px}" width=750>
 </p>
-
-<!-- <h3 align="center">
-  Build your vector index 100x faster than HNSW, without being slow:
-</h3>
-<p align="center">
-        <img src="./benchmarks/results/vshnsw.png" height="250" alt="PDX Layout" style="{max-height: 100px}">
-</p> -->
 
 ## Why PDX?
 

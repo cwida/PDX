@@ -1,5 +1,0 @@
-dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
-mxbai,adsampling_filtered,1.23474,1.47562,1.00887,0.902459,25,0,100,1000,0.99,1,1.235,1.476,1.009
-mxbai,adsampling_filtered,1.24076,1.46942,1.02992,0.902459,25,0,100,1000,0.99,1,1.242,1.508,1.03
-mxbai,adsampling_filtered,0.806941,0.955292,0.660334,0.82982,25,0,100,1000,0.3,1,0.8068,0.9945,0.6092
-mxbai,adsampling_filtered,1.02453,1.30917,0.76325,0.995968,3509,0,100,1000,0.001,1,1.029,1.476,0.7217

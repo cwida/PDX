@@ -1,6 +1,0 @@
-dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
-agnews-mxbai-1024-euclidean,adsampling,0.106526,0.170417,0.041375,0.900339,24,0,100,1000,0.2,1,0.1068,0.2076,0.03904
-agnews-mxbai-1024-euclidean,adsampling,0.104055,0.168458,0.040791,0.900339,24,0,100,1000,0.2,1,0.1044,0.194,0.04079
-agnews-mxbai-1024-euclidean,adsampling,0.109186,0.177083,0.047167,0.900339,24,0,100,1000,0.2,1,0.1111,0.2971,0.03217
-agnews-mxbai-1024-euclidean,adsampling,0.106314,0.167,0.043042,0.900339,24,0,100,1000,0.2,1,0.1069,0.1936,0.039
-agnews-mxbai-1024-euclidean,adsampling,0.104194,0.162291,0.043625,0.900339,24,0,100,1000,0.2,1,0.1045,0.1879,0.04362
