@@ -123,8 +123,7 @@ void PopulateIVFClusters(
     const uint32_t n_threads = PDX::g_n_threads;
     std::vector<std::unique_ptr<storage_t[]>> tmp_buffers(n_threads);
     for (uint32_t t = 0; t < n_threads; t++) {
-        tmp_buffers[t].reset(
-            new storage_t[static_cast<uint64_t>(max_cluster_size) * num_dimensions]
+        tmp_buffers[t].reset(new storage_t[static_cast<uint64_t>(max_cluster_size) * num_dimensions]
         );
     }
 
@@ -274,7 +273,8 @@ class PDXIndex : public IPDXIndex {
         index.Load(ptr);
 
         // Create pruner and searcher
-        pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, aligned_matrix.get());
+        pruner =
+            std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, aligned_matrix.get());
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         BuildRowIdClusterMapping();
     }
@@ -508,7 +508,8 @@ class PDXTreeIndex : public IPDXIndex {
         index.Load(ptr);
 
         // Create pruner and searchers
-        pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, aligned_matrix.get());
+        pruner =
+            std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, aligned_matrix.get());
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
         BuildRowIdClusterMapping();

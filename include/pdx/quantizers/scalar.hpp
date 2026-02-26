@@ -40,7 +40,6 @@ class Quantizer {
     }
 
     const size_t num_dimensions;
-
 };
 
 template <Quantization Q = U8>
@@ -51,8 +50,9 @@ class ScalarQuantizer : public Quantizer {
     explicit ScalarQuantizer(size_t num_dimensions) : Quantizer(num_dimensions) {}
 
 #ifdef __AVX512F__
-    // We rely on _mm512_dpbusds_epi32 that has asymmetric operands
-    static constexpr uint8_t MAX_VALUE = 127;
+    // TODO(@lkuffo, low): We rely on _mm512_dpbusds_epi32 that has asymmetric operands
+    // However, this rarely happens because of the subtraction of L2SQ distance.
+    static constexpr uint8_t MAX_VALUE = 255;
 #else
     static constexpr uint8_t MAX_VALUE = 255;
 #endif
@@ -63,7 +63,8 @@ class ScalarQuantizer : public Quantizer {
     ) {
         float global_min = std::numeric_limits<float>::max();
         float global_max = std::numeric_limits<float>::lowest();
-#pragma omp parallel for reduction(min : global_min) reduction(max : global_max) num_threads(PDX::g_n_threads)
+#pragma omp parallel for reduction(min : global_min) reduction(max : global_max)                   \
+    num_threads(PDX::g_n_threads)
         for (size_t i = 0; i < total_elements; ++i) {
             global_min = std::min(global_min, embeddings[i]);
             global_max = std::max(global_max, embeddings[i]);

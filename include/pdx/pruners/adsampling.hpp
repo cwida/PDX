@@ -167,9 +167,8 @@ class ADSamplingPruner {
     void CacheSingleQueryPlan() {
         fftwf_plan_with_nthreads(1);
         std::unique_ptr<float[]> tmp(new float[num_dimensions]);
-        single_query_plan = fftwf_plan_r2r_1d(
-            num_dimensions, tmp.get(), tmp.get(), FFTW_REDFT10, FFTW_ESTIMATE
-        );
+        single_query_plan =
+            fftwf_plan_r2r_1d(num_dimensions, tmp.get(), tmp.get(), FFTW_REDFT10, FFTW_ESTIMATE);
     }
 #endif
 

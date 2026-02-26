@@ -10,6 +10,7 @@ DATASETS_TO_USE = [
     'mxbai',
     'arxiv',
     'wiki',
+    'cohere'
 ]
 # Scalar Quantization in FAISS is EXTREMELY slow in ARM due to lack of SIMD
 if __name__ == '__main__':

@@ -10,6 +10,7 @@ DATASETS_TO_USE = [
     'mxbai',
     'arxiv',
     'wiki',
+    'cohere'
 ]
 if __name__ == '__main__':
     RESULTS_PATH = os.path.join(RESULTS_DIRECTORY, "IVF_FAISS.csv")
