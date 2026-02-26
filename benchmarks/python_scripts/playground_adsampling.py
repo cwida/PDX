@@ -1,7 +1,6 @@
 import json
 from WrapperBruteForce import BruteForceSKLearn
 from setup_utils import *
-from setup_settings import *
 from sklearn import preprocessing
 import math
 import time

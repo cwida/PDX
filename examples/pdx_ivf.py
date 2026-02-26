@@ -1,62 +1,40 @@
-import math
 import os
 import numpy as np
 from examples_utils import TicToc, read_hdf5_data
-from pdxearch.index_factory import IndexPDXADSamplingIVFFlat
+from pdxearch import IndexPDXIVF
+
 np.random.seed(42)
 
 """
-PDXearch (pruned search) + ADSampling with an IVF index (built with FAISS)
-Recall is controled with nprobe parameter
+PDXearch with a single-level IVF index (F32).
+Recall is controlled with nprobe parameter.
 Download the .hdf5 data here: https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing
 """
 if __name__ == "__main__":
     dataset_name = 'agnews-mxbai-1024-euclidean.hdf5'
     num_dimensions = 1024
-    nprobe = 64
-    knn = 100
-    print(f'Running example: PDXearch + ADSampling (IVFFlat)\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
+    nprobe = 25
+    knn = 20
+    print(f'Running example: PDXearch IVF (F32)\n- D={num_dimensions}\n- k={knn}\n- nprobe={nprobe}\n- dataset={dataset_name}')
     train, queries = read_hdf5_data(os.path.join('./benchmarks/datasets/downloaded', dataset_name))
-    nbuckets = 1 * math.ceil(math.sqrt(len(train)))
 
-    index = IndexPDXADSamplingIVFFlat(ndim=num_dimensions, nbuckets=nbuckets, normalize=True)
-    print('Preprocessing')
-    index.preprocess(train)
-    print('Training')
-    training_points = nbuckets * 50
-    rng = np.random.default_rng()
-    training_sample_idxs = rng.choice(len(train), size=training_points, replace=False)
-    training_sample_idxs.sort()
-    index.train(train[training_sample_idxs])
-    print('PDXifying')
-    index.add(train)
+    index = IndexPDXIVF(num_dimensions=num_dimensions, normalize=True)
+    print('Building index...')
+    index.build(train)
+    print(f'Index built: {index.num_clusters} clusters')
+    print(f'Index in-memory size: {index.in_memory_size_bytes / (1024 * 1024):.2f} MB')
+
     print(f'{len(queries)} queries with PDX')
     times = []
     clock = TicToc()
-    results = []
     for i in range(len(queries)):
         q = np.ascontiguousarray(queries[i])
         clock.tic()
         index.search(q, knn, nprobe=nprobe)
         times.append(clock.toc())
     print('PDX med. time:', np.median(np.array(times)))
-    # To check results of first query
-    results = index.search(np.ascontiguousarray(queries[0]), knn, nprobe=nprobe)
-    print(results)
 
-    print(f'{len(queries)} queries with FAISS')
-    times = []
-    clock = TicToc()
-    results = []
-    queries = index.preprocess(queries, inplace=False)
-    index.core_index.index.nprobe = nprobe
-    for i in range(len(queries)):
-        q = np.ascontiguousarray(np.array([queries[i]]))
-        clock.tic()
-        index.core_index.index.search(q, k=knn)
-        times.append(clock.toc())
-    print('FAISS med. time:', np.median(np.array(times)))
-    # To check results of first query
-    print(index.core_index.index.search(np.array([queries[0]]), k=knn))
-
-
+    # Show results of first query
+    ids, dists = index.search(np.ascontiguousarray(queries[0]), knn, nprobe=nprobe)
+    print('First query results (ids):', ids[:10])
+    print('First query results (dists):', dists[:10])

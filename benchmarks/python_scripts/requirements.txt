@@ -2,5 +2,6 @@ numpy~=2.2.2
 h5py~=3.12.1
 usearch~=2.16.9
 scikit-learn~=1.6.1
+faiss-cpu~=1.9.0
 gdown==5.1.0
 scipy~=1.15.3

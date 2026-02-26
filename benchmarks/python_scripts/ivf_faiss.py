@@ -4,15 +4,13 @@ import sys
 from sklearn import preprocessing
 from benchmark_utils import *
 from setup_utils import *
-from setup_settings import *
 
 DATASETS_TO_USE = [
-    'openai-1536-angular',
-    'agnews-mxbai-1024-euclidean',
-    'instructorxl-arxiv-768',
-    'simplewiki-openai-3072-normalized',
-    'msong-420',
-    'llama-128-ip',
+    'openai',
+    'mxbai',
+    'arxiv',
+    'wiki',
+    'cohere'
 ]
 if __name__ == '__main__':
     RESULTS_PATH = os.path.join(RESULTS_DIRECTORY, "IVF_FAISS.csv")
@@ -22,18 +20,18 @@ if __name__ == '__main__':
         arg_dataset = sys.argv[1]
     if len(sys.argv) > 2:
         IVF_NPROBE = int(sys.argv[2])  # controls recall of search
-    if not len(DATASETS_TO_USE): DATASETS_TO_USE = DATASETS
+    if not len(DATASETS_TO_USE): DATASETS_TO_USE = list(DATASET_INFO.keys())
     for dataset in DATASETS_TO_USE:
         if len(arg_dataset) and dataset != arg_dataset:
             continue
-        dimensionality = DIMENSIONALITIES[dataset]
-        index_name = os.path.join(CORE_INDEXES_FAISS, get_core_index_filename(dataset))
-        gt_name = os.path.join(SEMANTIC_GROUND_TRUTH_PATH, get_ground_truth_filename(dataset, 100))
+        hdf5_name, dimensionality = DATASET_INFO[dataset]
+        index_name = os.path.join(FAISS_DATA, get_core_index_filename(hdf5_name, norm=True))
+        gt_name = os.path.join(SEMANTIC_GROUND_TRUTH_PATH, get_ground_truth_filename(hdf5_name, 100))
 
         disable_multithreading()
         faiss.omp_set_num_threads(1)
 
-        queries = read_hdf5_test_data(dataset)
+        queries = read_hdf5_test_data(hdf5_name)
         queries = preprocessing.normalize(queries, axis=1, norm='l2')
 
         print('Restoring index...')
@@ -43,7 +41,7 @@ if __name__ == '__main__':
         nprobes_to_use = []
         if IVF_NPROBE:
             nprobes_to_use = [IVF_NPROBE]
-        else :
+        else:
             nprobes_to_use = IVF_NPROBES
 
         for ivf_nprobe in nprobes_to_use:
@@ -81,5 +79,3 @@ if __name__ == '__main__':
                 'ivf_nprobe': ivf_nprobe
             }
             save_results(runtimes, RESULTS_PATH, metadata)
-
-

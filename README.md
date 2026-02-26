@@ -1,133 +1,90 @@
 <h1 align="center">
-  PDX: A Transposed Data Layout for Similarity Search
+  PDX: A Library for Fast Vector Search and Indexing
 <div align="center">
     <a href="https://arxiv.org/pdf/2503.04422"><img src="https://img.shields.io/badge/Paper-SIGMOD'25%3A_PDX-blue" alt="Paper" /></a>
+    <img src="https://github.com/cwida/PDX/actions/workflows/ci.yml/badge.svg?cacheSeconds=3600" alt="CI" />
     <a href="https://github.com/cwida/PDX/blob/main/LICENSE"><img src="https://img.shields.io/github/license/cwida/PDX?cacheSeconds=3600" alt="License" /></a>
     <a href="https://github.com/cwida/PDX/stargazers"><img src="https://img.shields.io/github/stars/cwida/PDX" alt="GitHub stars" /></a>
 </div>
 </h1>
-
-[PDX](https://ir.cwi.nl/pub/35044/35044.pdf) is a data layout that **transposes** vectors in a column-major order. This layout unleashes the true potential of dimension pruning, accelerating vanilla IVF indexes by factors:
+<h3 align="center">
+  Index millions of vectors in seconds. Search them in milliseconds.
+</h3>
 
 <p align="center">
-        <img src="./benchmarks/results/openai-intel.png" alt="PDX Layout" style="{max-height: 150px}">
+        <img src="./benchmarks/results/github_opening.png" alt="PDX Layout" style="{max-height: 150px}" width=750>
 </p>
 
-PDX makes an IVF index, competitive with HNSW:
-<p align="center">
-        <img src="./benchmarks/results/vshnsw.png" height="250" alt="PDX Layout" style="{max-height: 100px}">
-</p>
+## Why PDX?
 
-### PDX benefits:
-
-- ⚡ Up to [**10x faster**](#two-level-ivf-ivf2-) **IVF searches** than FAISS+AVX512.
-- ⚡ Up to [**30x faster**](#exhaustive-search--ivf) **exhaustive search**.
+- ⚡ [**30x faster index building**](https://www.lkuffo.com/superkmeans/) thanks to [SuperKMeans](https://github.com/lkuffo/SuperKMeans).
+- ⚡ [**Sub-millisecond similarity search**](https://www.lkuffo.com/sub-milisecond-similarity-search-with-pdx/), up to [**10x faster**](./BENCHMARKING.md#two-level-ivf-ivf2-) than FAISS IVF.
+- ⚡ Up to [**30x faster**](./BENCHMARKING.md#exhaustive-search--ivf) exhaustive search.
 - 🔍 Efficient [**filtered search**](https://github.com/cwida/PDX/issues/7).
+- Query latency competitive with HNSW, with the ease of use of IVF.
 
-<hr/>
+## Our secret sauce
 
-## Contents
-- [Pruning in a nutshell](#pruning-in-a-nutshell)
-- [Try PDX](#try-pdx)
-- [Use cases (comparison with FAISS)](#use-cases-and-benchmarks)
-- [The data layout](#the-data-layout)
-- [Roadmap](#roadmap)
+[PDX](https://ir.cwi.nl/pub/35044/35044.pdf) is a data layout that **transposes** vectors in a column-major order. This layout unleashes the true potential of dimension pruning.
 
-## Pruning in a nutshell
+Pruning means avoiding checking *all* the dimensions of a vector to determine if it is a neighbour of a query, accelerating index construction and similarity search by factors.
 
-Pruning means avoiding checking *all* the dimensions of a vector to determine if it is a neighbour of a query. The PDX layout unleashes the true potential of these algorithms (e.g., [ADSampling](https://github.com/gaoj0017/ADSampling/)), accelerating vanilla IVF indexes by factors.
+## Use Cases and Benchmarking
+Check [./BENCHMARKING.md](./BENCHMARKING.md).
 
-Pruning is especially effective for large embeddings (`d > 512`) and when targeting high recalls (`> 0.90`) or nearly exact results.
+## Usage
 
-[Down below](#use-cases-and-benchmarks), you will find **benchmarks** against FAISS. 
+```py
+from pdxearch import IndexPDXIVFTreeSQ8
 
+data = ... # Numpy 2D matrix
+query = ... # Numpy 1D array
+d = 1024
+knn = 20
 
+index = IndexPDXIVFTreeSQ8(num_dimensions=d)
+index.build(data)
 
-## Try PDX
-Try PDX with your data using our Python bindings and [examples](/examples). We have implemented PDX on Flat (`float32`) and Quantized (`8-bit`) **IVF indexes** and **exhaustive search** settings.
+ids, dists = index.search(query, knn)
+
+```
+
+`IndexPDXIVFTreeSQ8` is our fastest index that will give you the best performance. It is a two-level IVF index with 8-bit quantization.
+
+Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We support Flat (`float32`) and Quantized (`8-bit`) indexes, as well as the most common distance metrics. 
+
+## Installation
+We provide Python bindings for ease of use. Soon, we will be available on PyPI.
+
 ### Prerequisites
-- PDX is available for x86_64 (with AVX512), ARM, and Apple silicon
-- Python 3.11 or higher
-- [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) with Python Bindings
-- Clang++17 or higher
-- CMake 3.26 or higher
+- Clang 17, CMake 3.26
+- OpenMP
+- A BLAS implementation
+- Python 3 (only for Python bindings)
 
 ### Installation Steps
-1. Clone and init submodules
 ```sh
-git clone https://github.com/cwida/PDX
-git submodule init
-git submodule update
-```
+git clone --recurse-submodules https://github.com/cwida/PDX
+cd PDX
 
-2. *[Optional]* Install [FFTW](https://www.fftw.org/fftw3_doc/Installation-on-Unix.html) (for higher throughput)
-```sh
-wget https://www.fftw.org/fftw-3.3.10.tar.gz
-tar -xvzf fftw-3.3.10.tar.gz
-cd fftw-3.3.10
-./configure --enable-float --enable-shared  
-sudo make
-sudo make install
-ldconfig
-```
+pip install .
 
-3. Install Python dependencies and the bindings. 
-```sh
-export CXX="/usr/bin/clang++-18"  # Set proper CXX first
-pip install -r requirements.txt
-python setup.py clean --all
-python -m pip install .
-```
-4. Run the examples under `/examples`
-```sh
-# Creates an IVF index with FAISS on random data
-# Then, it compares the search performance of PDXearch and FAISS
+# Run the examples under `/examples`
+# pdx_simple.py creates an IVF index with FAISS on random data
+# Then, it compares the search performance of PDX and FAISS
 python ./examples/pdx_simple.py
 ```
-For more details on the available examples and how to use your own data, refer to [/examples/README.md](./examples/README.md). 
 
-> [!NOTE]
-> We heavily rely on [FAISS](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) to create the underlying IVF indexes. To quickly install it you can do: `pip install faiss-cpu`
+For a more comprehensive installation and compilation guide, check [INSTALL.md](./INSTALL.md).
 
-## Use Cases and Benchmarks
-We present single-threaded **benchmarks** against FAISS+AVX512 on an `r7iz.xlarge` (Intel Sapphire Rapids) instance. 
+## Getting the Best Performance
+Check [INSTALL.md](./INSTALL.md).
 
-### Two-Level IVF (IVF<sub>2</sub>) ![](https://img.shields.io/badge/Fastest%20search%20on%20PDX-red)
-IVF<sub>2</sub> tackles a bottleneck of IVF indexes: finding the nearest centroids. By clustering the original IVF centroids, we can use PDX to quickly scan them (thanks to pruning) without sacrificing recall. This achieves significant throughput improvements when paired with `8-bit` quantization.
-
-<p align="center">
-        <img src="./benchmarks/results/ivf2-intel.png" alt="PDX Layout" style="{max-height: 150px}">
-</p>
-
-### Vanilla IVF
-Here, PDX, paired with the pruning algorithm ADSampling on `float32`, achieves significant speedups.
-
-<p align="center">
-        <img src="./benchmarks/results/ivf-intel.png" alt="PDX Layout" style="{max-height: 150px}">
-</p>
-
-
-### Exhaustive search + IVF
-An exhaustive search scans all the vectors in the collection. Having an IVF index with PDX can **EXTREMELY** accelerate this without sacrificing recall, thanks to the reliable pruning of ADSampling.
-
-<p align="center">
-        <img src="./benchmarks/results/ivf-exhaustive-intel.png" alt="PDX Layout" style="{max-height: 150px}">
-</p>
-
-The key observation here is that thanks to the underlying IVF index, the exhaustive search starts with the most promising clusters. A tight threshold is found early on, which enables the quick pruning of most candidates.
-
-### Exhaustive search without an index
-By creating random clusters with the PDX layout, you can still accelerate exhaustive search without an index. Unlike ADSampling, with BOND (our pruning algorithm), you can use the raw vectors. Gains vary depending on the distribution of the data. 
-
-<p align="center">
-        <img src="./benchmarks/results/bond-intel.png" alt="PDX Layout" style="{max-height: 150px}">
-</p>
-
-### No pruning and no index
-Even without pruning, PDX distance kernels can be faster than SIMD ones in most CPU microarchitectures. For detailed information, check Figure 3 of [our publication](https://ir.cwi.nl/pub/35044/35044.pdf). You can also try it yourself in our playground [here](./benchmarks/bench_kernels).
+## Roadmap
+We are actively developing Super K-Means and accepting contributions! Check [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ## The Data Layout
-PDX is a transposed layout (a.k.a. columnar, or decomposed layout), which means that the same dimensions of different vectors are stored sequentially. This decomposition occurs within a block (e.g., a cluster in an IVF index). 
+PDX is a transposed layout (a.k.a. columnar, or decomposed layout), meaning that the dimensions of different vectors are stored sequentially. This decomposition occurs within a block (e.g., a cluster in an IVF index). 
 
 We have evolved our layout from the one presented in our publication to reduce random access, and adapted it to work with `8-bit` and (in the future) `1-bit` vectors. 
 
@@ -140,27 +97,15 @@ The following image shows this layout. Storage is sequential from left to right,
 </p>
 
 ### `8 bits`
-Smaller data types are not friendly to PDX, as we must accumulate distances on wider types, resulting in asymmetry. We can work around this by changing the PDX layout. For `8 bits`, the vertical block is decomposed every 4 dimensions. This allows us to use dot product instructions (`VPDPBUSD` in [x86](https://www.officedaytime.com/simd512e/simdimg/si.php?f=vpdpbusd) and `UDOT/SDOT` in [NEON](https://developer.arm.com/documentation/102651/a/What-are-dot-product-intructions-)) to calculate L2 or IP kernels while still benefiting from PDX. The horizontal block remains decomposed every 64 dimensions. 
+Smaller data types are not friendly to PDX, as we must accumulate distances on wider types, resulting in asymmetry. We can work around this by changing the PDX layout. For `8 bits`, the vertical block is decomposed every 4 dimensions. This allows us to use dot-product instructions (`VPDPBUSD` on [x86](https://www.officedaytime.com/simd512e/simdimg/si.php?f=vpdpbusd) and `UDOT/SDOT` on [NEON](https://developer.arm.com/documentation/102651/a/What-are-dot-product-intructions-)) to calculate L2 or IP kernels while still benefiting from PDX. The horizontal block remains decomposed every 64 dimensions. 
 <p align="center">
         <img src="./benchmarks/results/layout-u8.png" alt="PDX Layout F32" style="{max-height: 150px}">
 </p>
 
-### `binary`
-For Hamming/Jaccard kernels, we use a layout decomposed every 8 dimensions (naturally grouped into bytes). The population count accumulation can be done in `bytes`. If d > 256, we flush the popcounts into a wider type every 32 words (corresponding to 256 dimensions). This has not been implemented in this repository yet, but you can find some promising benchmarks [here](https://github.com/lkuffo/binary-index). 
 
-## Roadmap
-- Out-of-core execution (disk-based setting).
-- Add unit tests.
-- Implement multi-threading capabilities.
-- Add PDX to the [VIBE benchmark](https://vector-index-bench.github.io/).
-- Adaptive quantization on 8-bit and 4-bit.
-- Create a documentation.
+<!-- ### `binary`
+For Hamming/Jaccard kernels, we use a layout decomposed every 8 dimensions (naturally grouped into bytes). The population count accumulation can be done in `bytes`. If d > 256, we flush the popcounts into a wider type every 32 words (corresponding to 256 dimensions). This has not been implemented in this repository yet, but you can find some promising benchmarks [here](https://github.com/lkuffo/binary-index).  -->
 
-> [!IMPORTANT]   
-> PDX is an ongoing research project. In its current state, it is not production-ready code.
-
-## Benchmarking
-To run our benchmark suite in C++, refer to [BENCHMARKING.md](./BENCHMARKING.md).
 
 ## Citation
 If you use PDX for your research, consider citing us:
@@ -177,6 +122,3 @@ If you use PDX for your research, consider citing us:
   publisher={ACM New York, NY, USA}
 }
 ```
-
-## SIGMOD
-The code used for the experiments presented at SIGMOD'25 can be found in the `sigmod` branch.

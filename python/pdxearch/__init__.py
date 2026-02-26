@@ -1,2 +1,7 @@
-import numpy as np
-np.random.seed(42)
+from pdxearch.index_factory import (
+    IndexPDXIVF,
+    IndexPDXIVFSQ8,
+    IndexPDXIVFTree,
+    IndexPDXIVFTreeSQ8,
+    load_index,
+)
