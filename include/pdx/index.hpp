@@ -155,6 +155,8 @@ void PopulateIVFClusters(
         }
         StoreClusterEmbeddings<Q, storage_t>(cluster, ivf, tmp, cluster_size);
     }
+
+    ivf.ComputeClusterOffsets();
 }
 
 class IPDXIndex {
@@ -168,7 +170,7 @@ class IPDXIndex {
     ) const = 0;
     virtual void BuildIndex(const float* embeddings, size_t num_embeddings) = 0;
     virtual void SetNProbe(uint32_t n_probe) const = 0;
-    virtual void Save(const std::string& path) const = 0;
+    virtual void Save(const std::string& path) = 0;
     virtual void Restore(const std::string& path) = 0;
     virtual uint32_t GetNumDimensions() const = 0;
     virtual uint32_t GetNumClusters() const = 0;
@@ -181,6 +183,7 @@ template <PDX::Quantization Q>
 class PDXIndex : public IPDXIndex {
   public:
     using embedding_storage_t = PDX::pdx_data_t<Q>;
+    using cluster_t = PDX::Cluster<Q>;
 
   private:
     PDXIndexConfig config{};
@@ -196,6 +199,9 @@ class PDXIndex : public IPDXIndex {
             return PDXIndexType::PDX_U8;
     }
 
+    // Known bug: When the cluster is compacted, row_id_cluster_mapping is not updated,
+    // Which leads to inconsistency between the cluster's internal state and the mapping. 
+    // This can cause errors in subsequent deletions or filtered searches that rely on the mapping.
     void BuildRowIdClusterMapping() {
         size_t total = 0;
         for (size_t c = 0; c < index.num_clusters; c++) {
@@ -211,11 +217,11 @@ class PDXIndex : public IPDXIndex {
 
     PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids
     ) const {
-        PDX::PredicateEvaluator evaluator(index.num_clusters, row_id_cluster_mapping.size());
+        PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
         for (const auto row_id : passing_row_ids) {
             const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
             evaluator.n_passing_tuples[cluster_id]++;
-            evaluator.selection_vector[searcher->cluster_offsets[cluster_id] + index_in_cluster] =
+            evaluator.selection_vector[index.cluster_offsets[cluster_id] + index_in_cluster] =
                 1;
         }
         return evaluator;
@@ -230,10 +236,17 @@ class PDXIndex : public IPDXIndex {
         pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
     }
 
-    void Save(const std::string& path) const override {
+    void Save(const std::string& path) override {
+        // Compact all clusters before saving
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            auto moves = index.clusters[c].CompactCluster();
+            for (const auto& [row_id, new_idx] : moves) {
+                row_id_cluster_mapping[row_id] = {c, new_idx};
+            }
+        }
+
         std::ofstream out(path, std::ios::binary);
 
-        // Index type flag
         uint8_t type_flag = static_cast<uint8_t>(GetIndexType());
         out.write(reinterpret_cast<const char*>(&type_flag), sizeof(uint8_t));
 
@@ -306,7 +319,14 @@ class PDXIndex : public IPDXIndex {
 
     std::vector<uint32_t> GetClusterRowIds(uint32_t cluster_id) const override {
         const auto& cluster = index.clusters[cluster_id];
-        return {cluster.indices, cluster.indices + cluster.num_embeddings};
+        std::vector<uint32_t> row_ids;
+        row_ids.reserve(cluster.num_embeddings);
+        for (uint32_t i = 0; i < cluster.used_capacity; i++) {
+            if (!cluster.HasTombstone(i)) {
+                row_ids.push_back(cluster.indices[i]);
+            }
+        }
+        return row_ids;
     }
 
     size_t GetInMemorySizeInBytes() const override {
@@ -324,10 +344,8 @@ class PDXIndex : public IPDXIndex {
                 size += pruner->num_dimensions * sizeof(uint32_t); // flip_masks
             }
         }
-        // Searcher: cluster_offsets array
         if (searcher) {
             size += sizeof(*searcher);
-            size += index.num_clusters * sizeof(size_t);
         }
         // Row ID to cluster mapping
         size += row_id_cluster_mapping.capacity() * sizeof(std::pair<uint32_t, uint32_t>);
@@ -415,6 +433,7 @@ template <PDX::Quantization Q>
 class PDXTreeIndex : public IPDXIndex {
   public:
     using embedding_storage_t = PDX::pdx_data_t<Q>;
+    using cluster_t = PDX::Cluster<Q>;
 
   private:
     PDXIndexConfig config{};
@@ -446,11 +465,11 @@ class PDXTreeIndex : public IPDXIndex {
 
     PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids
     ) const {
-        PDX::PredicateEvaluator evaluator(index.num_clusters, row_id_cluster_mapping.size());
+        PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
         for (const auto row_id : passing_row_ids) {
             const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
             evaluator.n_passing_tuples[cluster_id]++;
-            evaluator.selection_vector[searcher->cluster_offsets[cluster_id] + index_in_cluster] =
+            evaluator.selection_vector[index.cluster_offsets[cluster_id] + index_in_cluster] =
                 1;
         }
         return evaluator;
@@ -465,7 +484,19 @@ class PDXTreeIndex : public IPDXIndex {
         pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
     }
 
-    void Save(const std::string& path) const override {
+    void Save(const std::string& path) override {
+        // Compact L1 clusters before saving (update row_id_cluster_mapping from moves)
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            auto moves = index.clusters[c].CompactCluster();
+            for (const auto& [row_id, new_idx] : moves) {
+                row_id_cluster_mapping[row_id] = {c, new_idx};
+            }
+        }
+        // Compact L0 clusters (no mapping to update for meso-clusters)
+        for (uint32_t c = 0; c < index.l0.num_clusters; c++) {
+            index.l0.clusters[c].CompactCluster();
+        }
+
         std::ofstream out(path, std::ios::binary);
 
         // Index type flag
@@ -540,6 +571,134 @@ class PDXTreeIndex : public IPDXIndex {
     ) const override {
         auto evaluator = CreatePredicateEvaluator(passing_row_ids);
         return searcher->FilteredSearch(query_embedding, knn, evaluator);
+    }
+
+    // TODO: Concurrent writes always go through a single writer thread
+    void Append(size_t row_id, const float* PDX_RESTRICT embedding){
+        // Row ids must be dense and sequential (next expected = current size of the mapping)
+        if (row_id != row_id_cluster_mapping.size()) {
+            throw std::invalid_argument(
+                "Append: row_id " + std::to_string(row_id) + " is not sequential (expected " +
+                std::to_string(row_id_cluster_mapping.size()) + ")"
+            );
+        }
+
+        const auto num_dimensions = index.num_dimensions;
+        const bool normalize =
+            config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
+
+        auto preprocessed = NormalizeAndRotate(
+            embedding, 1, num_dimensions, normalize, *pruner
+        );
+
+        // Find nearest centroid for the new embedding
+        auto n_probe_top_level = GetTopLevelNumClusters();
+        // We confidently prune a quarter of the search space
+        n_probe_top_level = std::max(1, n_probe_top_level / 4);
+        top_level_searcher->SetNProbe(n_probe_top_level);
+        std::vector<KNNCandidate> centroid_candidates = top_level_searcher->Search(preprocessed.get(), 1);
+        uint32_t closest_centroid_idx = centroid_candidates[0].index;
+
+        // Assign to the corresponding cluster
+        auto& cluster = index.clusters[closest_centroid_idx];
+
+        // Lock the cluster for the entire append + health check sequence
+        std::lock_guard<std::mutex> lock(cluster.cluster_mutex);
+        uint32_t index_in_cluster;
+        if constexpr (Q == U8) {
+            ScalarQuantizer<Q> quantizer(num_dimensions);
+            auto quantized = std::make_unique<embedding_storage_t[]>(num_dimensions);
+            quantizer.QuantizeEmbedding(preprocessed.get(), index.quantization_base, index.quantization_scale, quantized.get());
+            index_in_cluster = cluster.AppendEmbedding(static_cast<uint32_t>(row_id), quantized.get());
+        } else {
+            index_in_cluster = cluster.AppendEmbedding(static_cast<uint32_t>(row_id), preprocessed.get());
+        }
+        row_id_cluster_mapping.emplace_back(closest_centroid_idx, index_in_cluster);
+        index.total_num_embeddings++;
+        CheckClusterHealth(closest_centroid_idx, cluster);
+    }
+
+    // TODO: Concurrent writes always go through a single writer thread
+    void Delete(size_t row_id){
+        // Find the cluster and index in cluster for the given row_id
+        const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
+        auto& cluster = index.clusters[cluster_id];
+
+        // Lock the cluster for the entire delete + health check sequence
+        std::lock_guard<std::mutex> lock(cluster.cluster_mutex);
+
+        cluster.DeleteEmbedding(index_in_cluster);
+        // As row_ids are assumed to be non-replacable,
+        // we don't need to remove the entry from row_id_cluster_mapping
+        index.total_num_embeddings--;
+        CheckClusterHealth(cluster_id, cluster);
+    }
+
+    // Caller must hold cluster.cluster_mutex
+    void CheckClusterHealth(uint32_t cluster_id, cluster_t& cluster) {
+        if (cluster.used_capacity == cluster.max_capacity) {
+            if (cluster.num_embeddings < cluster.used_capacity) {
+                // There are tombstone slots we can reclaim
+                auto moves = cluster.CompactCluster();
+                for (const auto& [row_id, new_idx] : moves) {
+                    row_id_cluster_mapping[row_id] = {cluster_id, new_idx};
+                }
+            } else {
+                // Cluster is truly full, split it
+                SplitCluster(cluster);
+            }
+        } else if (cluster.num_embeddings == cluster.min_capacity) {
+            DestroyAndMergeCluster(cluster);
+        }
+    }
+
+    // Caller must hold cluster.cluster_mutex
+    void DestroyAndMergeCluster(cluster_t& cluster){
+        cluster.CompactCluster();
+        std::unique_ptr<float[]> cluster_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
+        ReassignEmbeddings(cluster, cluster_embeddings.get());
+        // Remove the cluster from index.clusters
+        // Remove the centroid from this cluster from index.centroids
+        // For this, we can swap with the last cluster and centroid in the respective arrays and pop_back, then update the row_id_cluster_mapping for the affected clusters
+
+    }
+
+    // Caller must hold cluster.cluster_mutex
+    void SplitCluster(cluster_t& cluster){
+        // Split the cluster into two, with the new centroids having a small symmetric perturbation
+        // Get inspired from: SuperKMeans::SplitCluster in superkmeans.hpp, but we need to adapt it to our data layout and also update the IVF tree structure accordingly
+        // Replace cluster and centroid from Clusters array with one of the new ones
+        // Add a new cluster to the cluster array
+        // For every point in the deleted cluster:
+        // Is the distance to one of the new centroids smaller than to the deleted centroid?
+        // --> Then this is the best assignment in the mesocluster
+        // Most points will go to either of one of the two new centroids. So we just need to compact 
+        // the horizontal buffers for each of these centroids, and call StoreClusterEmbeddings to properly create 
+        // the cluster's buffer
+        // Then, compute the centroids manually (easy, just average every dimension, we have the horizontal layout)
+        // And, update the index.l0 structure. The two new clusters are going to the same mesocluster
+        // In the remaining points (should be few), compact buffer and call REASSIGN
+    }
+
+    void ReassignEmbeddings(cluster_t& cluster, const embedding_storage_t* cluster_embeddings){
+        // Cluster embeddings are assumed to be in the horizontal layout
+        // Dequantize the cluster_embeddings
+        // For each embedding in the cluster, find the closest centroid among all clusters in the same mesocluster and reassign
+        // We need to exclude the deleted cluster's centroid from the candidates when reassigning, otherwise all embeddings will be assigned to the same closest centroid (the one from the deleted cluster)
+        // This is called after splitting or merging a cluster, so we only need to reassign embeddings in the affected mesocluster
+        // If coming from SPLIT:
+        // --> Take the closest splitted centroid as current assignment
+        // --> Run a GEMM+PRUNING iteration to get the new assignments (you need to call superkmeans API)
+        // If coming from MERGE:
+        // --> Run a GEMM iteration to get the new assignments
+        std::unique_ptr<uint32_t[]> new_assignments(new uint32_t[cluster.num_embeddings]);
+        // Assume new_assignments is filled already with the new cluster assignments for each embedding in the cluster
+        for (size_t i = 0; i < cluster.num_embeddings; i++) {
+            uint32_t new_cluster_id = new_assignments[i];
+            uint32_t row_id = cluster.indices[i];
+            auto new_index_in_cluster = index.clusters[new_cluster_id].AppendEmbedding(row_id, cluster_embeddings + i * cluster.num_dimensions);
+            row_id_cluster_mapping[row_id] = {new_cluster_id, new_index_in_cluster};
+        }
     }
 
     void BuildIndex(const float* const embeddings, const size_t num_embeddings) override {
@@ -669,7 +828,14 @@ class PDXTreeIndex : public IPDXIndex {
 
     std::vector<uint32_t> GetClusterRowIds(uint32_t cluster_id) const override {
         const auto& cluster = index.clusters[cluster_id];
-        return {cluster.indices, cluster.indices + cluster.num_embeddings};
+        std::vector<uint32_t> row_ids;
+        row_ids.reserve(cluster.num_embeddings);
+        for (uint32_t i = 0; i < cluster.used_capacity; i++) {
+            if (!cluster.HasTombstone(i)) {
+                row_ids.push_back(cluster.indices[i]);
+            }
+        }
+        return row_ids;
     }
 
     uint32_t GetTopLevelNumClusters() const { return index.l0.num_clusters; }
@@ -689,15 +855,11 @@ class PDXTreeIndex : public IPDXIndex {
                 size += pruner->num_dimensions * sizeof(uint32_t); // flip_masks
             }
         }
-        // L1 searcher: cluster_offsets array
         if (searcher) {
             size += sizeof(*searcher);
-            size += index.num_clusters * sizeof(size_t);
         }
-        // L0 top-level searcher: cluster_offsets array
         if (top_level_searcher) {
             size += sizeof(*top_level_searcher);
-            size += index.l0.num_clusters * sizeof(size_t);
         }
         // Row ID to cluster mapping
         size += row_id_cluster_mapping.capacity() * sizeof(std::pair<uint32_t, uint32_t>);
