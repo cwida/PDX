@@ -4,6 +4,7 @@
 #include "pdx/db_mock/predicate_evaluator.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/ivf_wrapper.hpp"
+#include "pdx/cluster.hpp"
 #include "pdx/pruners/adsampling.hpp"
 #include "pdx/quantizers/scalar.hpp"
 #include "pdx/utils.hpp"
