@@ -43,12 +43,16 @@ target_link_libraries(test_filtered_search.out PRIVATE ${TEST_COMMON_LIBS})
 add_executable(test_index_properties.out test_index_properties.cpp)
 target_link_libraries(test_index_properties.out PRIVATE ${TEST_COMMON_LIBS})
 
+add_executable(test_maintenance.out test_maintenance.cpp)
+target_link_libraries(test_maintenance.out PRIVATE ${TEST_COMMON_LIBS})
+
 include(GoogleTest)
 gtest_discover_tests(test_distance_computers.out)
 gtest_discover_tests(test_search.out)
 gtest_discover_tests(test_serialization.out)
 gtest_discover_tests(test_filtered_search.out)
 gtest_discover_tests(test_index_properties.out)
+gtest_discover_tests(test_maintenance.out)
 
 add_custom_target(tests
     DEPENDS
@@ -57,4 +61,5 @@ add_custom_target(tests
         test_serialization.out
         test_filtered_search.out
         test_index_properties.out
+        test_maintenance.out
 )

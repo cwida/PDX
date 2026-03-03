@@ -104,6 +104,7 @@ cmake_install.cmake
 /benchmarks/BenchmarkPDXIVF
 /benchmarks/BenchmarkFiltered
 /benchmarks/BenchmarkSpecialFilters
+/benchmarks/BenchmarkInsertion
 
 # Test binaries (but keep the committed test data)
 *.bin

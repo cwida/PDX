@@ -555,6 +555,10 @@ class PDXTreeIndex : public IPDXIndex {
 
     std::vector<PDX::KNNCandidate> Search(const float* query_embedding, size_t knn) const override {
         PDX_PROFILE_SCOPE("Search");
+        auto n_probe = searcher->GetNProbe();
+        if (n_probe == 0) {
+            searcher->SetNProbe(GetNumClusters());
+        }
         auto n_probe_top_level = GetTopLevelNumClusters();
         // We confidently prune half of the search space
         if (searcher->GetNProbe() < GetNumClusters() / 2) {
@@ -614,11 +618,12 @@ class PDXTreeIndex : public IPDXIndex {
         );
 
         // Find nearest centroid for the new embedding
+        // Pass the RAW embedding to the L0 search — PDXearch::Search internally
+        // normalizes and rotates the query. Passing `preprocessed` would double-rotate.
         auto n_probe_top_level = GetTopLevelNumClusters();
-        // We confidently prune a quarter of the search space
-        n_probe_top_level = std::max(1, n_probe_top_level / 4);
+        n_probe_top_level = std::max(1u, n_probe_top_level / 4);
         top_level_searcher->SetNProbe(n_probe_top_level);
-        std::vector<KNNCandidate> centroid_candidates = top_level_searcher->Search(preprocessed.get(), 1);
+        std::vector<KNNCandidate> centroid_candidates = top_level_searcher->Search(embedding, 1);
         uint32_t closest_centroid_idx = centroid_candidates[0].index;
 
         // Ensure the clusters vector won't reallocate while we hold a reference/lock
@@ -818,6 +823,8 @@ class PDXTreeIndex : public IPDXIndex {
         group_rest.reserve(cluster.num_embeddings);
         for (size_t i = 0; i < cluster.num_embeddings; i++) {
             const float* embedding_ptr = cluster_embeddings.get() + i * index.num_dimensions;
+            // We could avoid this one if we maintain as part of each cluster, the distance 
+            // of each point to its centroid, which would actually be easy to maintain
             float distance_to_centroid_to_split = distance_computer_f32_t::Horizontal(
                 embedding_ptr, centroid_to_split, index.num_dimensions
             );
@@ -851,9 +858,10 @@ class PDXTreeIndex : public IPDXIndex {
                     true_centroid_a[d] += emb[d];
                 }
             }
+            auto inv_group_a_size = 1.0f / static_cast<float>(group_a.size());
 #pragma clang loop vectorize(enable)
             for (size_t d = 0; d < index.num_dimensions; d++) {
-                true_centroid_a[d] /= static_cast<float>(group_a.size());
+                true_centroid_a[d] *= inv_group_a_size;
             }
         }
         if (group_b.empty()) {
@@ -867,9 +875,10 @@ class PDXTreeIndex : public IPDXIndex {
                     true_centroid_b[d] += emb[d];
                 }
             }
+            auto inv_group_b_size = 1.0f / static_cast<float>(group_b.size());
 #pragma clang loop vectorize(enable)
             for (size_t d = 0; d < index.num_dimensions; d++) {
-                true_centroid_b[d] /= static_cast<float>(group_b.size());
+                true_centroid_b[d] *= inv_group_b_size;
             }
         }
 

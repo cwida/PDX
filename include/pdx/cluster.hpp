@@ -19,7 +19,7 @@ struct Cluster {
     using data_t = pdx_data_t<Q>;
     using tombstones_t = std::unordered_set<uint32_t>;
 
-    constexpr static float CAPACITY_THRESHOLD = 1.1f; // 10% more than the current capacity
+    constexpr static float CAPACITY_THRESHOLD = 1.2f; // 20% more than the current capacity
     constexpr static uint32_t MIN_MAX_CAPACITY = 100;
 
     Cluster(uint32_t num_embeddings, uint32_t num_dimensions)
