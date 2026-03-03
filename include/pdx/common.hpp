@@ -48,6 +48,8 @@ static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[20] = {16,  16,  32,  32,   
                                                            64,  64,  64,  128,  128,  128,  128,
                                                            256, 256, 512, 1024, 2048, 16384};
 
+static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
+
 static constexpr bool AllFetchingSizesMultipleOfU8InterleaveSize() {
     for (auto s : DIMENSIONS_FETCHING_SIZES) {
         if (s % U8_INTERLEAVE_SIZE != 0) {

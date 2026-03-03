@@ -99,6 +99,7 @@ class IVF {
             uint32_t n_emb = cluster_headers[i * 2];
             uint32_t max_cap = cluster_headers[i * 2 + 1];
             clusters.emplace_back(n_emb, max_cap, num_dimensions);
+            clusters[i].id = i;
             clusters[i].LoadPDXData(next_value);
         }
         for (size_t i = 0; i < num_clusters; ++i) {
@@ -239,6 +240,7 @@ class IVFTree : public IVF<Q> {
             uint32_t n_emb = l0_headers[i * 2];
             uint32_t max_cap = l0_headers[i * 2 + 1];
             l0.clusters.emplace_back(n_emb, max_cap, dims);
+            l0.clusters[i].id = i;
             l0.clusters[i].LoadPDXData(next_value);
         }
         for (size_t i = 0; i < n_clusters_l0; ++i) {
@@ -262,6 +264,7 @@ class IVFTree : public IVF<Q> {
             uint32_t n_emb = l1_headers[i * 2];
             uint32_t max_cap = l1_headers[i * 2 + 1];
             this->clusters.emplace_back(n_emb, max_cap, dims);
+            this->clusters[i].id = i;
             this->clusters[i].LoadPDXData(next_value);
         }
         for (size_t i = 0; i < n_clusters_l1; ++i) {
@@ -293,6 +296,14 @@ class IVFTree : public IVF<Q> {
             this->quantization_scale_squared = this->quantization_scale * this->quantization_scale;
             this->inverse_quantization_scale_squared = 1.0f / this->quantization_scale_squared;
         }
+        // Set mesocluster_id on L1 clusters by scanning L0
+        for (uint32_t mc = 0; mc < n_clusters_l0; mc++) {
+            auto& l0c = l0.clusters[mc];
+            for (uint32_t p = 0; p < l0c.num_embeddings; p++) {
+                this->clusters[l0c.indices[p]].mesocluster_id = mc;
+            }
+        }
+
         l0.ComputeClusterOffsets();
         this->ComputeClusterOffsets();
     }

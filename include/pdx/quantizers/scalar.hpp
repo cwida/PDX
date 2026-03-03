@@ -92,6 +92,18 @@ class ScalarQuantizer : public Quantizer {
             }
         }
     }
+
+    void DequantizeEmbedding(
+        const quantized_embedding_t* quantized_embedding,
+        const float quantization_base,
+        const float quantization_scale,
+        float* output_embedding
+    ) {
+        for (size_t i = 0; i < num_dimensions; ++i) {
+            output_embedding[i] =
+                static_cast<float>(quantized_embedding[i]) / quantization_scale + quantization_base;
+        }
+    }
 };
 
 } // namespace PDX

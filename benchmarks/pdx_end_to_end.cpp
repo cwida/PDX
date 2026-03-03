@@ -7,12 +7,12 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <numeric>
 #include <vector>
 
 #include "benchmark_utils.hpp"
 #include "pdx/index.hpp"
 #include "pdx/utils.hpp"
+#include "pdx/profiler.hpp"
 
 template <typename IndexT>
 void RunBenchmark(
@@ -106,6 +106,8 @@ void RunBenchmark(
                 runtimes[j + l * NUM_MEASURE_RUNS] = {clock.accum_time};
             }
         }
+        PDX::Profiler::Get().PrintHierarchical();
+        
 
         BenchmarkMetadata results_metadata = {
             dataset,
