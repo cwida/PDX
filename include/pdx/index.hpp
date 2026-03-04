@@ -877,36 +877,36 @@ class PDXTreeIndex : public IPDXIndex {
             );
             float min_ab = std::min(distance_to_a, distance_to_b);
 
-            // if (min_ab <= distance_to_centroid_to_split) {
+            if (min_ab <= distance_to_centroid_to_split) {
                 // A or B is at least as close as the original — just pick the closer one
                 if (distance_to_a <= distance_to_b) {
                     group_a_idx.push_back(i);
                 } else {
                     group_b_idx.push_back(i);
                 }
-            // } else {
-            //     // Original was closer than both A and B, but it's being deleted.
-            //     // Check if some other existing centroid is even closer.
-            //     bool closer_elsewhere = false;
-            //     for (uint32_t c = 0; c < index.num_clusters; c++) {
-            //         if (c == cluster_id) continue;
-            //         float d = distance_computer_f32_t::Horizontal(
-            //             embedding_ptr,
-            //             index.centroids.data() + static_cast<size_t>(c) * num_dims, num_dims
-            //         );
-            //         if (d < min_ab) {
-            //             closer_elsewhere = true;
-            //             break;
-            //         }
-            //     }
-            //     if (closer_elsewhere) {
-            //         group_rest_idx.push_back(i);
-            //     } else if (distance_to_a <= distance_to_b) {
-            //         group_a_idx.push_back(i);
-            //     } else {
-            //         group_b_idx.push_back(i);
-            //     }
-            // }
+            } else {
+                // Original was closer than both A and B, but it's being deleted.
+                // Check if some other existing centroid is even closer.
+                bool closer_elsewhere = false;
+                for (uint32_t c = 0; c < index.num_clusters; c++) {
+                    if (c == cluster_id) continue;
+                    float d = distance_computer_f32_t::Horizontal(
+                        embedding_ptr,
+                        index.centroids.data() + static_cast<size_t>(c) * num_dims, num_dims
+                    );
+                    if (d < min_ab) {
+                        closer_elsewhere = true;
+                        break;
+                    }
+                }
+                if (closer_elsewhere) {
+                    group_rest_idx.push_back(i);
+                } else if (distance_to_a <= distance_to_b) {
+                    group_a_idx.push_back(i);
+                } else {
+                    group_b_idx.push_back(i);
+                }
+            }
         }
 
         // 4. Gather embeddings and IDs into growable vectors + accumulate centroid sums.
@@ -958,7 +958,7 @@ class PDXTreeIndex : public IPDXIndex {
             ids_rest[i] = cluster.indices[group_rest_idx[i]];
         }
 
-        // 6. SPFresh neighbor reassignment using new centroids.
+        // 6. SPFresh neighbor reassignment using new centroids. Very important to maintain recall
         //    Clusters A and B don't exist yet — they're just buffers — so there's no
         //    risk of overflow, cascading splits/merges, or dangling references.
         {
