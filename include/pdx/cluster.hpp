@@ -19,14 +19,15 @@ struct Cluster {
     using data_t = pdx_data_t<Q>;
     using tombstones_t = std::unordered_set<uint32_t>;
 
-    constexpr static float CAPACITY_THRESHOLD = 1.2f; // 20% more than the current capacity
-    constexpr static uint32_t MIN_MAX_CAPACITY = 100;
+    constexpr static float CAPACITY_THRESHOLD = 1.3f; // 30% more than the current capacity
+    constexpr static float MIN_CAPACITY_THRESHOLD = 0.5f;
+    constexpr static uint32_t MIN_MAX_CAPACITY = 256;
 
     Cluster(uint32_t num_embeddings, uint32_t num_dimensions)
         : num_embeddings(num_embeddings),
           used_capacity(num_embeddings),
           max_capacity(std::max(static_cast<uint32_t>(num_embeddings * CAPACITY_THRESHOLD), MIN_MAX_CAPACITY)),
-          min_capacity(static_cast<uint32_t>(num_embeddings / CAPACITY_THRESHOLD)),
+          min_capacity(static_cast<uint32_t>(num_embeddings * MIN_CAPACITY_THRESHOLD)),
           num_dimensions(num_dimensions),
           indices(new uint32_t[max_capacity]),
           data(new data_t[static_cast<uint64_t>(max_capacity) * num_dimensions]) {}
@@ -35,7 +36,7 @@ struct Cluster {
         : num_embeddings(num_embeddings),
           used_capacity(num_embeddings),
           max_capacity(max_capacity),
-          min_capacity(static_cast<uint32_t>(num_embeddings / CAPACITY_THRESHOLD)),
+          min_capacity(static_cast<uint32_t>(num_embeddings * MIN_CAPACITY_THRESHOLD)),
           num_dimensions(num_dimensions),
           indices(new uint32_t[max_capacity]),
           data(new data_t[static_cast<uint64_t>(max_capacity) * num_dimensions]) {}

@@ -1,0 +1,5 @@
+dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
+mxbai,workload_pdx_tree_f32,0.253887,0.479,0.106416,0.939651,30,0,20,1000,0,1,0.2574,0.5822,0.1064
+mxbai,workload_pdx_tree_f32,0.265593,0.500708,0.102625,0.934901,30,0,20,1000,0,1,0.2685,0.5861,0.1026
+mxbai,workload_pdx_tree_f32,0.274552,0.53125,0.110542,0.941101,30,0,20,1000,0,1,0.2768,0.5679,0.1105
+mxbai,workload_pdx_tree_f32,0.28167,0.530584,0.119375,0.941051,30,0,20,1000,0,1,0.2853,0.5977,0.1194

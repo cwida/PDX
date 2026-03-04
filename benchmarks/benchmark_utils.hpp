@@ -88,6 +88,13 @@ struct PhasesRuntime {
     size_t end_to_end{0};
 };
 
+enum class StepType { BUILD, INSERT, DELETE };
+
+struct WorkloadStep {
+    StepType type;
+    float proportion; // fraction of total dataset size N
+};
+
 class BenchmarkUtils {
   public:
     inline static std::string PDX_DATA =

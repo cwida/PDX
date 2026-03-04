@@ -20,12 +20,12 @@ void RunBenchmark(
     const std::string& algorithm,
     const float* data,
     const float* queries,
-    const std::vector<size_t>& nprobes_to_use
+    const std::vector<size_t>& nprobes_to_use,
+    const float proportion_to_build
 ) {
     const size_t d = info.num_dimensions;
     const size_t n = info.num_embeddings;
     const size_t n_queries = info.num_queries;
-    const float proportion_to_build = 0.75f;
     uint8_t KNN = BenchmarkUtils::KNN;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
     std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "INSERTION_PDX.csv";
@@ -61,6 +61,7 @@ void RunBenchmark(
     clock.Tic();
     for (size_t i = 0; i < n_insert; ++i) {
         size_t row_id = n_build + i;
+        std::cout << "Inserting embedding " << row_id << " / " << n - 1 << "\r" << std::flush;
         pdx_index.Append(row_id, data + row_id * d);
     }
     clock.Toc();
@@ -122,7 +123,7 @@ void RunBenchmark(
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe]\n";
+        std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe] [build_fraction]\n";
         std::cerr << "Index types: pdx_tree_f32 (default), pdx_tree_u8\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
@@ -134,6 +135,12 @@ int main(int argc, char* argv[]) {
     std::string dataset = argv[1];
     std::string index_type = (argc > 2) ? argv[2] : "pdx_tree_f32";
     size_t arg_ivf_nprobe = (argc > 3) ? std::atoi(argv[3]) : 0;
+    float proportion_to_build = (argc > 4) ? std::atof(argv[4]) : 0.75f;
+
+    if (proportion_to_build <= 0.0f || proportion_to_build >= 1.0f) {
+        std::cerr << "Error: build_fraction must be in (0, 1). Got: " << proportion_to_build << "\n";
+        return 1;
+    }
 
     if (index_type != "pdx_tree_f32" && index_type != "pdx_tree_u8") {
         std::cerr << "Error: Only pdx_tree_f32 and pdx_tree_u8 support maintenance (insertion).\n";
@@ -151,7 +158,8 @@ int main(int argc, char* argv[]) {
     const size_t d = info.num_dimensions;
     const size_t n_queries = info.num_queries;
 
-    std::cout << "==> PDX Insertion Benchmark (Build 75% + Insert 25% + Search)\n";
+    std::cout << "==> PDX Insertion Benchmark (Build " << static_cast<int>(proportion_to_build * 100)
+              << "% + Insert " << static_cast<int>((1.0f - proportion_to_build) * 100) << "% + Search)\n";
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "Index type: " << index_type << "\n";
 
@@ -192,11 +200,11 @@ int main(int argc, char* argv[]) {
 
     if (index_type == "pdx_tree_f32") {
         RunBenchmark<PDX::PDXTreeIndexF32>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
+            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, proportion_to_build
         );
     } else if (index_type == "pdx_tree_u8") {
         RunBenchmark<PDX::PDXTreeIndexU8>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
+            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, proportion_to_build
         );
     }
 
