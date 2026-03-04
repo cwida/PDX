@@ -180,6 +180,12 @@ class IPDXIndex {
     virtual uint32_t GetClusterSize(uint32_t cluster_id) const = 0;
     virtual std::vector<uint32_t> GetClusterRowIds(uint32_t cluster_id) const = 0;
     virtual size_t GetInMemorySizeInBytes() const = 0;
+    virtual void Append(size_t /*row_id*/, const float* /*embedding*/) {
+        throw std::runtime_error("Append is not supported by this index type. Use PDXTreeIndex.");
+    }
+    virtual void Delete(size_t /*row_id*/) {
+        throw std::runtime_error("Delete is not supported by this index type. Use PDXTreeIndex.");
+    }
 };
 
 template <PDX::Quantization Q>
@@ -396,12 +402,12 @@ class PDXIndex : public IPDXIndex {
         BuildRowIdClusterMapping();
     }
 
-    void Append(size_t /*row_id*/, const float* /*embedding*/) {
+    void Append(size_t /*row_id*/, const float* /*embedding*/) override {
         throw std::runtime_error("Append is not implemented in PDXIndex. Use PDXTreeIndex instead."
         );
     }
 
-    void Delete(size_t /*row_id*/) {
+    void Delete(size_t /*row_id*/) override {
         throw std::runtime_error("Delete is not implemented in PDXIndex. Use PDXTreeIndex instead."
         );
     }
@@ -456,6 +462,8 @@ class PDXTreeIndex : public IPDXIndex {
     using VectorR = Eigen::VectorXf;
 
   private:
+    static constexpr uint32_t DELETED_MARKER = std::numeric_limits<uint32_t>::max();
+
     PDXIndexConfig config{};
     PDX::IVFTree<Q> index;
     std::unique_ptr<PDX::ADSamplingPruner> pruner;
@@ -572,7 +580,7 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     // Concurrent writes must always go through a single writer thread
-    void Append(size_t row_id, const float* PDX_RESTRICT embedding) {
+    void Append(size_t row_id, const float* PDX_RESTRICT embedding) override {
         PDX_PROFILE_SCOPE("Append");
         if (row_id != row_id_cluster_mapping.size()) {
             throw std::invalid_argument(
@@ -613,18 +621,23 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     // Concurrent deletes must always go through a single writer thread
-    void Delete(size_t row_id) {
+    void Delete(size_t row_id) override {
         PDX_PROFILE_SCOPE("Delete");
         if (row_id >= row_id_cluster_mapping.size()) {
             throw std::invalid_argument(
                 "Delete: row_id " + std::to_string(row_id) + " is not in the index"
             );
         }
-        ReserveClusterSlotIfNeeded();
         const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
+        if (cluster_id == DELETED_MARKER) {
+            throw std::invalid_argument(
+                "Delete: row_id " + std::to_string(row_id) + " was already deleted"
+            );
+        }
+        ReserveClusterSlotIfNeeded();
         auto& cluster = index.clusters[cluster_id];
         cluster.DeleteEmbedding(index_in_cluster);
-        // We don't remove from row_id_cluster_mapping (row_ids are assumed to be stable)
+        row_id_cluster_mapping[row_id] = {DELETED_MARKER, DELETED_MARKER};
         index.total_num_embeddings--;
         CheckClusterHealth(cluster);
     }
@@ -828,6 +841,8 @@ class PDXTreeIndex : public IPDXIndex {
         PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
         for (const auto row_id : passing_row_ids) {
             const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
+            if (cluster_id == DELETED_MARKER)
+                continue;
             evaluator.n_passing_tuples[cluster_id]++;
             evaluator.selection_vector[index.cluster_offsets[cluster_id] + index_in_cluster] = 1;
         }

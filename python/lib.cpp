@@ -47,7 +47,9 @@ PYBIND11_MODULE(compiled, m) {
         .def("get_num_clusters", &PDX::PyPDXIndex::GetNumClusters)
         .def("get_cluster_size", &PDX::PyPDXIndex::GetClusterSize, py::arg("cluster_id"))
         .def("get_cluster_row_ids", &PDX::PyPDXIndex::GetClusterRowIds, py::arg("cluster_id"))
-        .def("get_in_memory_size_in_bytes", &PDX::PyPDXIndex::GetInMemorySizeInBytes);
+        .def("get_in_memory_size_in_bytes", &PDX::PyPDXIndex::GetInMemorySizeInBytes)
+        .def("append", &PDX::PyPDXIndex::Append, py::arg("row_id"), py::arg("embedding"))
+        .def("delete", &PDX::PyPDXIndex::Delete, py::arg("row_id"));
 
     m.def(
         "load_index",

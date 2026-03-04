@@ -162,6 +162,16 @@ class PyPDXIndex {
     }
 
     size_t GetInMemorySizeInBytes() const { return index->GetInMemorySizeInBytes(); }
+
+    void Append(size_t row_id, const py::array_t<float>& embedding) {
+        auto buf = embedding.request();
+        if (buf.ndim != 1) {
+            throw std::runtime_error("embedding must be a 1D numpy array");
+        }
+        index->Append(row_id, static_cast<const float*>(buf.ptr));
+    }
+
+    void Delete(size_t row_id) { index->Delete(row_id); }
 };
 
 } // namespace PDX

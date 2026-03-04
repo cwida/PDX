@@ -15,7 +15,7 @@
 
 // ---- Edit workload here ----
 static const std::vector<WorkloadStep> WORKLOAD = {
-    // {StepType::BUILD,  0.50f},
+    // {StepType::BUILD, 0.50f},
     // {StepType::INSERT, 0.20f},
     // {StepType::DELETE, 0.10f},
     // {StepType::INSERT, 0.30f},

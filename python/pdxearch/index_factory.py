@@ -44,6 +44,12 @@ class IndexPDXIVF:
             np.ascontiguousarray(row_ids, dtype=np.uint64),
         )
 
+    def append(self, row_id: int, embedding: np.ndarray) -> None:
+        self._index.append(row_id, np.ascontiguousarray(embedding, dtype=np.float32))
+
+    def delete(self, row_id: int) -> None:
+        self._index.delete(row_id)
+
     def save(self, path: str) -> None:
         self._index.save(path)
 
@@ -96,6 +102,12 @@ class IndexPDXIVFSQ8:
             np.ascontiguousarray(query, dtype=np.float32), knn,
             np.ascontiguousarray(row_ids, dtype=np.uint64),
         )
+
+    def append(self, row_id: int, embedding: np.ndarray) -> None:
+        self._index.append(row_id, np.ascontiguousarray(embedding, dtype=np.float32))
+
+    def delete(self, row_id: int) -> None:
+        self._index.delete(row_id)
 
     def save(self, path: str) -> None:
         self._index.save(path)
@@ -151,6 +163,12 @@ class IndexPDXIVFTree:
             np.ascontiguousarray(row_ids, dtype=np.uint64),
         )
 
+    def append(self, row_id: int, embedding: np.ndarray) -> None:
+        self._index.append(row_id, np.ascontiguousarray(embedding, dtype=np.float32))
+
+    def delete(self, row_id: int) -> None:
+        self._index.delete(row_id)
+
     def save(self, path: str) -> None:
         self._index.save(path)
 
@@ -204,6 +222,12 @@ class IndexPDXIVFTreeSQ8:
             np.ascontiguousarray(query, dtype=np.float32), knn,
             np.ascontiguousarray(row_ids, dtype=np.uint64),
         )
+
+    def append(self, row_id: int, embedding: np.ndarray) -> None:
+        self._index.append(row_id, np.ascontiguousarray(embedding, dtype=np.float32))
+
+    def delete(self, row_id: int) -> None:
+        self._index.delete(row_id)
 
     def save(self, path: str) -> None:
         self._index.save(path)
