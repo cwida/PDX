@@ -1,8 +1,8 @@
 #pragma once
 
+#include "pdx/cluster.hpp"
 #include "pdx/common.hpp"
 #include "pdx/utils.hpp"
-#include "pdx/cluster.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -71,7 +71,8 @@ class IVF {
     }
 
     // Compute cluster_offsets, total_capacity, and max_cluster_capacity from current clusters.
-    // Must be called after all clusters have been created or after structural changes (split/merge).
+    // Must be called after all clusters have been created or after structural changes
+    // (split/merge).
     void ComputeClusterOffsets() {
         PDX_PROFILE_SCOPE("ComputeClusterOffsets");
         cluster_offsets.reset(new size_t[num_clusters]);
@@ -80,7 +81,8 @@ class IVF {
         for (size_t i = 0; i < num_clusters; ++i) {
             cluster_offsets[i] = total_capacity;
             total_capacity += clusters[i].max_capacity;
-            max_cluster_capacity = std::max(max_cluster_capacity, static_cast<size_t>(clusters[i].max_capacity));
+            max_cluster_capacity =
+                std::max(max_cluster_capacity, static_cast<size_t>(clusters[i].max_capacity));
         }
     }
 

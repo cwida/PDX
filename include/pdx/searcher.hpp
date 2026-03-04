@@ -1,14 +1,14 @@
 #pragma once
 
+#include "pdx/cluster.hpp"
 #include "pdx/common.hpp"
 #include "pdx/db_mock/predicate_evaluator.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/ivf_wrapper.hpp"
-#include "pdx/cluster.hpp"
+#include "pdx/profiler.hpp"
 #include "pdx/pruners/adsampling.hpp"
 #include "pdx/quantizers/scalar.hpp"
 #include "pdx/utils.hpp"
-#include "pdx/profiler.hpp"
 #include <algorithm>
 #include <cassert>
 #include <limits>
@@ -170,7 +170,8 @@ class PDXearch {
         const typename cluster_t::tombstones_t& tombstones,
         distance_t* pruning_distances
     ) {
-        if (tombstones.empty()) return;
+        if (tombstones.empty())
+            return;
         const distance_t mask = std::numeric_limits<distance_t>::max() / 2;
         for (uint32_t idx : tombstones) {
             pruning_distances[idx] = mask;
@@ -242,7 +243,8 @@ class PDXearch {
              horizontal_dimension += H_DIM_SIZE) {
             for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
                 size_t data_pos = (pdx_data.num_vertical_dimensions * buffer_stride) +
-                                  (horizontal_dimension * buffer_stride) + (vector_idx * H_DIM_SIZE);
+                                  (horizontal_dimension * buffer_stride) +
+                                  (vector_idx * H_DIM_SIZE);
                 pruning_distances[vector_idx] += distance_computer_t::Horizontal(
                     query + pdx_data.num_vertical_dimensions + horizontal_dimension,
                     data + data_pos,
@@ -304,8 +306,8 @@ class PDXearch {
         for (size_t horizontal_dimension = 0;
              horizontal_dimension < pdx_data.num_horizontal_dimensions;
              horizontal_dimension += H_DIM_SIZE) {
-            size_t offset_data =
-                (pdx_data.num_vertical_dimensions * buffer_stride) + (horizontal_dimension * buffer_stride);
+            size_t offset_data = (pdx_data.num_vertical_dimensions * buffer_stride) +
+                                 (horizontal_dimension * buffer_stride);
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
@@ -591,7 +593,11 @@ class PDXearch {
     }
 
   public:
-    std::vector<KNNCandidate> Search(const float* PDX_RESTRICT const raw_query, const uint32_t k, const bool is_query_trasnformed = false) {
+    std::vector<KNNCandidate> Search(
+        const float* PDX_RESTRICT const raw_query,
+        const uint32_t k,
+        const bool is_query_trasnformed = false
+    ) {
         Heap local_heap{};
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
         if (is_query_trasnformed) {
@@ -641,7 +647,9 @@ class PDXearch {
             local_prepared_query = query.get();
         }
 
-        std::unique_ptr<distance_t[]> pruning_distances(new distance_t[pdx_data.max_cluster_capacity]);
+        std::unique_ptr<distance_t[]> pruning_distances(
+            new distance_t[pdx_data.max_cluster_capacity]
+        );
         std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[pdx_data.max_cluster_capacity]);
 
         for (size_t cluster_idx = 0; cluster_idx < clusters_to_visit; ++cluster_idx) {
@@ -760,7 +768,9 @@ class PDXearch {
             local_prepared_query = query.get();
         }
 
-        std::unique_ptr<distance_t[]> pruning_distances(new distance_t[pdx_data.max_cluster_capacity]);
+        std::unique_ptr<distance_t[]> pruning_distances(
+            new distance_t[pdx_data.max_cluster_capacity]
+        );
         std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[pdx_data.max_cluster_capacity]);
 
         for (size_t cluster_idx = 0; cluster_idx < clusters_to_visit; ++cluster_idx) {

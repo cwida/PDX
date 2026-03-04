@@ -11,8 +11,8 @@
 
 #include "benchmark_utils.hpp"
 #include "pdx/index.hpp"
-#include "pdx/utils.hpp"
 #include "pdx/profiler.hpp"
+#include "pdx/utils.hpp"
 
 template <typename IndexT>
 void RunBenchmark(
@@ -107,7 +107,6 @@ void RunBenchmark(
             }
         }
         PDX::Profiler::Get().PrintHierarchical();
-        
 
         BenchmarkMetadata results_metadata = {
             dataset,

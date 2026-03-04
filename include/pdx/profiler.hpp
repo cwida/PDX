@@ -230,14 +230,16 @@ class Profiler {
                         total_ns > 0 ? (child_data.accum_time_ns * 100.0 / total_ns) : 0.0;
                     std::string short_name = "  - " + child.substr(name.length() + 1);
 
-                    double child_ms_per_call = child_data.call_count > 0
-                                                  ? (child_data.accum_time_ns / 1e6 / child_data.call_count)
-                                                  : 0.0;
+                    double child_ms_per_call =
+                        child_data.call_count > 0
+                            ? (child_data.accum_time_ns / 1e6 / child_data.call_count)
+                            : 0.0;
                     os << std::left << std::setw(40) << short_name << std::right << std::setw(10)
                        << child_secs << "s"
                        << " (" << std::setw(5) << child_pct << "%)";
                     if (child_data.call_count > 1) {
-                        os << " [" << child_data.call_count << " calls, " << child_ms_per_call << " ms/call]";
+                        os << " [" << child_data.call_count << " calls, " << child_ms_per_call
+                           << " ms/call]";
                     }
                     os << "\n";
                 }

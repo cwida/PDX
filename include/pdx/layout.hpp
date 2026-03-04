@@ -74,9 +74,7 @@ inline void StoreClusterEmbeddings<PDX::Quantization::U8, uint8_t>(
     }
     if (dim < vertical_d) {
         auto remaining = static_cast<Eigen::Index>(vertical_d - dim);
-        Eigen::Map<u8_matrix_t> out_v(
-            cluster.data + dim * stride, num_embeddings, remaining
-        );
+        Eigen::Map<u8_matrix_t> out_v(cluster.data + dim * stride, num_embeddings, remaining);
         out_v.noalias() = in.block(0, dim, num_embeddings, remaining);
     }
 

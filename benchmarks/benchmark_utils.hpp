@@ -43,7 +43,8 @@ class TicToc {
 };
 
 // Raw binary data paths (SuperKMeans convention: data_<name>.bin / data_<name>_test.bin)
-inline std::string RAW_DATA_DIR = std::string{CMAKE_SOURCE_DIR} + "/../../SuperKMeans/benchmarks/data";
+inline std::string RAW_DATA_DIR =
+    std::string{CMAKE_SOURCE_DIR} + "/../../SuperKMeans/benchmarks/data";
 inline std::string GROUND_TRUTH_JSON_DIR =
     std::string{CMAKE_SOURCE_DIR} + "/../SuperKMeans/benchmarks/ground_truth";
 

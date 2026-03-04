@@ -80,9 +80,10 @@ struct KMeansResult {
         config.n_threads = n_threads > 0 ? n_threads : PDX::g_n_threads;
         auto kmeans = skmeans::HierarchicalSuperKMeans(num_clusters, num_dimensions, config);
         result.centroids = kmeans.Train(embeddings, num_embeddings);
-        if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING){
-            assignments =
-                kmeans.FastAssign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
+        if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+            assignments = kmeans.FastAssign(
+                embeddings, result.centroids.data(), num_embeddings, num_clusters
+            );
         } else {
             assignments =
                 kmeans.Assign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
@@ -99,17 +100,17 @@ struct KMeansResult {
         config.n_threads = n_threads > 0 ? n_threads : PDX::g_n_threads;
         auto kmeans = skmeans::SuperKMeans(num_clusters, num_dimensions, config);
         result.centroids = kmeans.Train(embeddings, num_embeddings);
-        if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING){
-            assignments =
-                kmeans.FastAssign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
+        if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+            assignments = kmeans.FastAssign(
+                embeddings, result.centroids.data(), num_embeddings, num_clusters
+            );
         } else {
             assignments =
                 kmeans.Assign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
         }
-
     }
 
-    if (num_embeddings > 100000){
+    if (num_embeddings > 100000) {
         skmeans::Profiler::Get().Reset();
     }
 

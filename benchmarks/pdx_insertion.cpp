@@ -10,8 +10,8 @@
 
 #include "benchmark_utils.hpp"
 #include "pdx/index.hpp"
-#include "pdx/utils.hpp"
 #include "pdx/profiler.hpp"
+#include "pdx/utils.hpp"
 
 template <typename IndexT>
 void RunBenchmark(
@@ -75,8 +75,7 @@ void RunBenchmark(
     PDX::Profiler::Get().PrintHierarchical();
 
     // Load ground truth
-    std::string gt_path =
-        BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm";
+    std::string gt_path = BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm";
     auto gt_buffer = MmapFile(gt_path);
     uint32_t* int_ground_truth = reinterpret_cast<uint32_t*>(gt_buffer.get());
     std::cout << "Ground truth loaded: " << gt_path << "\n";
@@ -138,7 +137,8 @@ int main(int argc, char* argv[]) {
     float proportion_to_build = (argc > 4) ? std::atof(argv[4]) : 0.75f;
 
     if (proportion_to_build <= 0.0f || proportion_to_build >= 1.0f) {
-        std::cerr << "Error: build_fraction must be in (0, 1). Got: " << proportion_to_build << "\n";
+        std::cerr << "Error: build_fraction must be in (0, 1). Got: " << proportion_to_build
+                  << "\n";
         return 1;
     }
 
@@ -158,8 +158,9 @@ int main(int argc, char* argv[]) {
     const size_t d = info.num_dimensions;
     const size_t n_queries = info.num_queries;
 
-    std::cout << "==> PDX Insertion Benchmark (Build " << static_cast<int>(proportion_to_build * 100)
-              << "% + Insert " << static_cast<int>((1.0f - proportion_to_build) * 100) << "% + Search)\n";
+    std::cout << "==> PDX Insertion Benchmark (Build "
+              << static_cast<int>(proportion_to_build * 100) << "% + Insert "
+              << static_cast<int>((1.0f - proportion_to_build) * 100) << "% + Search)\n";
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "Index type: " << index_type << "\n";
 
@@ -200,11 +201,23 @@ int main(int argc, char* argv[]) {
 
     if (index_type == "pdx_tree_f32") {
         RunBenchmark<PDX::PDXTreeIndexF32>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, proportion_to_build
+            info,
+            dataset,
+            algorithm,
+            data.data(),
+            queries.data(),
+            nprobes_to_use,
+            proportion_to_build
         );
     } else if (index_type == "pdx_tree_u8") {
         RunBenchmark<PDX::PDXTreeIndexU8>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, proportion_to_build
+            info,
+            dataset,
+            algorithm,
+            data.data(),
+            queries.data(),
+            nprobes_to_use,
+            proportion_to_build
         );
     }
 

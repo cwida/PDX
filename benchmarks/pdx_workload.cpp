@@ -10,8 +10,8 @@
 
 #include "benchmark_utils.hpp"
 #include "pdx/index.hpp"
-#include "pdx/utils.hpp"
 #include "pdx/profiler.hpp"
+#include "pdx/utils.hpp"
 
 // ---- Edit workload here ----
 static const std::vector<WorkloadStep> WORKLOAD = {
@@ -22,8 +22,7 @@ static const std::vector<WorkloadStep> WORKLOAD = {
     // {StepType::DELETE, 0.20f},
     // {StepType::INSERT, 0.30f},
 
-
-    {StepType::BUILD,  0.50f},
+    {StepType::BUILD, 0.50f},
     {StepType::INSERT, 0.50f}
 };
 
@@ -91,8 +90,8 @@ void RunWorkload(
         }
         case StepType::INSERT: {
             if (available_data.size() + (n - next_data_cursor) < count) {
-                std::cerr << "Step " << step_idx << ": INSERT " << count
-                          << " but only " << available_data.size() + (n - next_data_cursor)
+                std::cerr << "Step " << step_idx << ": INSERT " << count << " but only "
+                          << available_data.size() + (n - next_data_cursor)
                           << " data points available\n";
                 return;
             }
@@ -109,20 +108,22 @@ void RunWorkload(
                     data_idx = next_data_cursor++;
                 }
                 size_t row_id = next_row_id++;
-                std::cout << "Inserting row_id=" << row_id << " (data=" << data_idx << ")\r" << std::flush;
+                std::cout << "Inserting row_id=" << row_id << " (data=" << data_idx << ")\r"
+                          << std::flush;
                 pdx_index.Append(row_id, data + data_idx * d);
                 live_entries.push_back({row_id, data_idx});
                 data_to_row_id[data_idx] = static_cast<uint32_t>(row_id);
             }
             clock.Toc();
             std::cout << "\nInsertion time: " << clock.GetMilliseconds() << " ms\n";
-            std::cout << "Avg insertion time: " << clock.GetMilliseconds() / count << " ms/embedding\n";
+            std::cout << "Avg insertion time: " << clock.GetMilliseconds() / count
+                      << " ms/embedding\n";
             break;
         }
         case StepType::DELETE: {
             if (count > live_entries.size()) {
-                std::cerr << "Step " << step_idx << ": DELETE " << count
-                          << " but only " << live_entries.size() << " live entries\n";
+                std::cerr << "Step " << step_idx << ": DELETE " << count << " but only "
+                          << live_entries.size() << " live entries\n";
                 return;
             }
             std::cout << "\n=== Step " << step_idx << ": DELETE " << count << " embeddings ===\n";
@@ -131,13 +132,15 @@ void RunWorkload(
             for (size_t i = 0; i < count; ++i) {
                 auto [row_id, data_idx] = live_entries.back();
                 live_entries.pop_back();
-                std::cout << "Deleting row_id=" << row_id << " (" << i + 1 << "/" << count << ")\r" << std::flush;
+                std::cout << "Deleting row_id=" << row_id << " (" << i + 1 << "/" << count << ")\r"
+                          << std::flush;
                 pdx_index.Delete(row_id);
                 available_data.push_back(data_idx);
             }
             clock.Toc();
             std::cout << "\nDeletion time: " << clock.GetMilliseconds() << " ms\n";
-            std::cout << "Avg deletion time: " << clock.GetMilliseconds() / count << " ms/embedding\n";
+            std::cout << "Avg deletion time: " << clock.GetMilliseconds() / count
+                      << " ms/embedding\n";
             break;
         }
         }
@@ -154,8 +157,7 @@ void RunWorkload(
     // Load ground truth and remap data indices → current row_ids.
     // Ground truth entries are data indices (0..N-1). After deletes + re-inserts,
     // some data points have new row_ids. We remap so VerifyResult can compare.
-    std::string gt_path =
-        BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm";
+    std::string gt_path = BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm";
     auto gt_buffer = MmapFile(gt_path);
     uint32_t* original_gt = reinterpret_cast<uint32_t*>(gt_buffer.get());
 
@@ -263,11 +265,18 @@ int main(int argc, char* argv[]) {
     std::cout << "Index type: " << index_type << "\n";
     std::cout << "Workload: ";
     for (size_t i = 0; i < workload.size(); ++i) {
-        if (i > 0) std::cout << " -> ";
+        if (i > 0)
+            std::cout << " -> ";
         switch (workload[i].type) {
-            case StepType::BUILD:  std::cout << "build("  << workload[i].proportion << ")"; break;
-            case StepType::INSERT: std::cout << "insert(" << workload[i].proportion << ")"; break;
-            case StepType::DELETE: std::cout << "delete(" << workload[i].proportion << ")"; break;
+        case StepType::BUILD:
+            std::cout << "build(" << workload[i].proportion << ")";
+            break;
+        case StepType::INSERT:
+            std::cout << "insert(" << workload[i].proportion << ")";
+            break;
+        case StepType::DELETE:
+            std::cout << "delete(" << workload[i].proportion << ")";
+            break;
         }
     }
     std::cout << "\n";
