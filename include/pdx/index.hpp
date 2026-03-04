@@ -465,6 +465,7 @@ class PDXTreeIndex : public IPDXIndex {
     static constexpr uint32_t DELETED_MARKER = std::numeric_limits<uint32_t>::max();
 
     PDXIndexConfig config{};
+    uint32_t d = 0;
     PDX::IVFTree<Q> index;
     std::unique_ptr<PDX::ADSamplingPruner> pruner;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
@@ -476,7 +477,7 @@ class PDXTreeIndex : public IPDXIndex {
     PDXTreeIndex() = default;
 
     explicit PDXTreeIndex(PDXIndexConfig config)
-        : config(config), quantizer(config.num_dimensions) {
+        : config(config), d(config.num_dimensions), quantizer(config.num_dimensions) {
         config.Validate();
         PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
         pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
@@ -535,10 +536,10 @@ class PDXTreeIndex : public IPDXIndex {
 
         // Load IVFTree data
         index.Load(ptr);
+        d = index.num_dimensions;
 
         // Create pruner and searchers
-        pruner =
-            std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, aligned_matrix.get());
+        pruner = std::make_unique<PDX::ADSamplingPruner>(d, aligned_matrix.get());
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
         BuildRowIdClusterMapping();
@@ -590,7 +591,6 @@ class PDXTreeIndex : public IPDXIndex {
         }
         ReserveClusterSlotIfNeeded();
 
-        const auto d = index.num_dimensions;
         const bool normalize =
             config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
 
@@ -766,7 +766,7 @@ class PDXTreeIndex : public IPDXIndex {
 
     const PDX::PDXearch<Q>& GetSearcher() const { return *searcher; }
 
-    uint32_t GetNumDimensions() const override { return index.num_dimensions; }
+    uint32_t GetNumDimensions() const override { return d; }
 
     uint32_t GetNumClusters() const override { return index.num_clusters; }
 
@@ -861,7 +861,6 @@ class PDXTreeIndex : public IPDXIndex {
         const embedding_storage_t* raw_embeddings,
         uint32_t n_emb
     ) const {
-        const uint32_t d = index.num_dimensions;
         std::unique_ptr<float[]> result(new float[static_cast<size_t>(n_emb) * d]);
         if constexpr (Q == U8) {
             for (size_t i = 0; i < n_emb; i++) {
@@ -882,7 +881,6 @@ class PDXTreeIndex : public IPDXIndex {
 
     // Quantize (if U8) and append a float embedding to a cluster.
     uint32_t QuantizeAndAppend(cluster_t& cluster, uint32_t row_id, const float* embedding) {
-        const uint32_t d = index.num_dimensions;
         if constexpr (Q == U8) {
             std::unique_ptr<embedding_storage_t[]> quantized(new embedding_storage_t[d]);
             quantizer.QuantizeEmbedding(
@@ -904,7 +902,6 @@ class PDXTreeIndex : public IPDXIndex {
         std::vector<uint32_t>& ids_out,
         float* centroid_sum
     ) const {
-        const uint32_t d = index.num_dimensions;
         for (uint32_t idx : group_idx) {
             embs_out.insert(
                 embs_out.end(),
@@ -926,7 +923,6 @@ class PDXTreeIndex : public IPDXIndex {
         const float* fallback,
         float* output
     ) const {
-        const uint32_t d = index.num_dimensions;
         if (count == 0) {
             std::memcpy(output, fallback, d * sizeof(float));
         } else {
@@ -950,7 +946,6 @@ class PDXTreeIndex : public IPDXIndex {
         size_t max_neighbors = 32
     ) const {
         PDX_PROFILE_SCOPE("GetNeighboringClusters");
-        const uint32_t d = index.num_dimensions;
         std::vector<uint32_t> neighbor_ids;
         auto& mesocluster = index.l0.clusters[mesocluster_id];
         for (uint32_t pos = 0; pos < mesocluster.used_capacity; pos++) {
@@ -1019,7 +1014,6 @@ class PDXTreeIndex : public IPDXIndex {
         cluster.CompactCluster();
         const uint32_t cluster_id = cluster.id;
         const uint32_t mesocluster_id = cluster.mesocluster_id;
-        const uint32_t num_dims = index.num_dimensions;
         const uint32_t n_emb = cluster.num_embeddings;
 
         auto raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
@@ -1039,9 +1033,9 @@ class PDXTreeIndex : public IPDXIndex {
 
             auto& moved_cluster = index.clusters[cluster_id];
             std::memcpy(
-                index.centroids.data() + static_cast<size_t>(cluster_id) * num_dims,
-                index.centroids.data() + static_cast<size_t>(last_id) * num_dims,
-                num_dims * sizeof(float)
+                index.centroids.data() + static_cast<size_t>(cluster_id) * d,
+                index.centroids.data() + static_cast<size_t>(last_id) * d,
+                d * sizeof(float)
             );
             for (uint32_t i = 0; i < moved_cluster.used_capacity; i++) {
                 if (!moved_cluster.HasTombstone(i)) {
@@ -1057,7 +1051,7 @@ class PDXTreeIndex : public IPDXIndex {
 
         // Pop the dead cluster and its centroid (ensured to be at the end)
         index.clusters.pop_back();
-        index.centroids.resize(index.centroids.size() - num_dims);
+        index.centroids.resize(index.centroids.size() - d);
         index.num_clusters--;
 
         index.ComputeClusterOffsets();
@@ -1072,7 +1066,6 @@ class PDXTreeIndex : public IPDXIndex {
         PDX_PROFILE_SCOPE("Split");
         const uint32_t cluster_id = cluster.id;
         const uint32_t mesocluster_id = cluster.mesocluster_id;
-        const uint32_t d = index.num_dimensions;
 
         auto raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
         auto cluster_embeddings =
@@ -1333,7 +1326,6 @@ class PDXTreeIndex : public IPDXIndex {
         bool allow_merges = true
     ) {
         PDX_PROFILE_SCOPE("Reassign");
-        const uint32_t d = index.num_dimensions;
 
         std::unique_ptr<uint32_t[]> assignments(new uint32_t[num_embeddings]);
         std::unique_ptr<float[]> result_distances(new float[num_embeddings]);
