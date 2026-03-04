@@ -610,12 +610,12 @@ class PDXTreeIndex : public IPDXIndex {
         }
         ReserveClusterSlotIfNeeded();
 
-        const auto num_dimensions = index.num_dimensions;
+        const auto d = index.num_dimensions;
         const bool normalize =
             config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
 
         auto preprocessed = NormalizeAndRotate(
-            embedding, 1, num_dimensions, normalize, *pruner
+            embedding, 1, d, normalize, *pruner
         );
 
         // Find nearest centroid for the new embedding
@@ -635,7 +635,7 @@ class PDXTreeIndex : public IPDXIndex {
         {
             std::lock_guard<std::mutex> lock(cluster.cluster_mutex);
             if constexpr (Q == U8) {
-                auto quantized = std::make_unique<embedding_storage_t[]>(num_dimensions);
+                auto quantized = std::make_unique<embedding_storage_t[]>(d);
                 quantizer.QuantizeEmbedding(preprocessed.get(), index.quantization_base, index.quantization_scale, quantized.get());
                 new_index_in_cluster = cluster.AppendEmbedding(static_cast<uint32_t>(row_id), quantized.get());
             } else {
@@ -687,6 +687,7 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     uint32_t FindPositionInMesoCluster(uint32_t l1_cluster_id, uint32_t mesocluster_id) const {
+        PDX_PROFILE_SCOPE("FindPositionInMesoCluster");
         auto& l0_cluster = index.l0.clusters[mesocluster_id];
         for (uint32_t idx = 0; idx < l0_cluster.used_capacity; idx++) {
             if (!l0_cluster.HasTombstone(idx) && l0_cluster.indices[idx] == l1_cluster_id) {
@@ -774,111 +775,105 @@ class PDXTreeIndex : public IPDXIndex {
     void SplitCluster(cluster_t& cluster){
         PDX_PROFILE_SCOPE("Split");
         const uint32_t cluster_id = cluster.id;
-        const uint32_t mc = cluster.mesocluster_id;
-        const uint32_t num_dims = index.num_dimensions;
+        const uint32_t mesocluster_id = cluster.mesocluster_id;
+        const uint32_t d = index.num_dimensions;
 
-        // 1. Extract all embeddings from PDX layout (row-major)
+        // Extract all embeddings from PDX layout (row-major)
         std::unique_ptr<embedding_storage_t[]> raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
-        std::unique_ptr<float[]> cluster_embeddings(new float[cluster.num_embeddings * num_dims]);
-        if constexpr (Q == U8) {
-            for (size_t i = 0; i < cluster.num_embeddings; i++) {
-                searcher->quantizer.DequantizeEmbedding(
-                    raw_embeddings.get() + i * num_dims,
-                    index.quantization_base,
-                    index.quantization_scale,
-                    cluster_embeddings.get() + i * num_dims
+        std::unique_ptr<float[]> cluster_embeddings(new float[cluster.num_embeddings * d]);
+        {
+            PDX_PROFILE_SCOPE("Split/Dequantization");
+            if constexpr (Q == U8) {
+                for (size_t i = 0; i < cluster.num_embeddings; i++) {
+                    searcher->quantizer.DequantizeEmbedding(
+                        raw_embeddings.get() + i * d,
+                        index.quantization_base,
+                        index.quantization_scale,
+                        cluster_embeddings.get() + i * d
+                    );
+                }
+            } else {
+                std::memcpy(
+                    cluster_embeddings.get(),
+                    raw_embeddings.get(),
+                    cluster.num_embeddings * d * sizeof(float)
                 );
             }
-        } else {
-            std::memcpy(
-                cluster_embeddings.get(),
-                raw_embeddings.get(),
-                cluster.num_embeddings * num_dims * sizeof(float)
-            );
         }
 
-        // 2. Split using 2-means clustering (balanced split, avoids degenerate perturbation)
-        auto centroid_to_split = index.centroids.data() + static_cast<size_t>(cluster_id) * num_dims;
-        KMeansResult split_result = ComputeKMeans(
-            cluster_embeddings.get(),
-            cluster.num_embeddings,
-            num_dims,
-            2,                          // k=2
-            config.distance_metric,
-            config.seed,
-            true,                      // already preprocessed, don't normalize
-            1.0f,                       // use all points (small cluster)
-            4,                          // iterations
-            false                       // no hierarchical for 2 clusters
-        );
-        auto centroid_a = std::make_unique<float[]>(num_dims);
-        auto centroid_b = std::make_unique<float[]>(num_dims);
-        std::memcpy(centroid_a.get(), split_result.centroids.data(), num_dims * sizeof(float));
-        std::memcpy(centroid_b.get(), split_result.centroids.data() + num_dims, num_dims * sizeof(float));
-
-        // [Old perturbation-based split — replaced by 2-means above]
-        // auto centroid_a = std::make_unique<float[]>(num_dims);
-        // auto centroid_b = std::make_unique<float[]>(num_dims);
-        // for (size_t j = 0; j < num_dims; j++) {
-        //     if (j % 2 == 0) {
-        //         centroid_a[j] = centroid_to_split[j] * (1 + CENTROID_PERTURBATION_EPS);
-        //         centroid_b[j] = centroid_to_split[j] * (1 - CENTROID_PERTURBATION_EPS);
-        //     } else {
-        //         centroid_a[j] = centroid_to_split[j] * (1 - CENTROID_PERTURBATION_EPS);
-        //         centroid_b[j] = centroid_to_split[j] * (1 + CENTROID_PERTURBATION_EPS);
-        //     }
-        // }
+        std::vector<uint32_t> group_a_idx, group_b_idx, group_rest_idx;
+        auto centroid_a = std::make_unique<float[]>(d);
+        auto centroid_b = std::make_unique<float[]>(d);
+        auto centroid_to_split = index.centroids.data() + static_cast<size_t>(cluster_id) * d;
+        // Split centroid by running k-means with k=2 on the cluster's embeddings
+        {
+            PDX_PROFILE_SCOPE("Split/KMeans");
+            KMeansResult split_result = ComputeKMeans(
+                cluster_embeddings.get(),
+                cluster.num_embeddings,
+                d,
+                2,                          // k=2
+                config.distance_metric,
+                config.seed,
+                true,                      // already preprocessed, don't normalize
+                1.0f,                       // use all points (small cluster)
+                4,                          // iterations
+                false                       // no hierarchical for 2 clusters
+            );
+            std::memcpy(centroid_a.get(), split_result.centroids.data(), d * sizeof(float));
+            std::memcpy(centroid_b.get(), split_result.centroids.data() + d, d * sizeof(float));
+            group_a_idx.reserve(split_result.assignments[0].size());
+            group_b_idx.reserve(split_result.assignments[1].size());
+        }
 
         // 3. Partition embeddings using KMeans centroids + SPFresh Condition 1.
         //    If A or B is closer than the original centroid → assign directly.
         //    Otherwise the original was closest but is being deleted — check if some
         //    OTHER existing centroid is even closer → group_rest for global reassignment.
-        std::vector<uint32_t> group_a_idx, group_b_idx, group_rest_idx;
-        group_a_idx.reserve(split_result.assignments[0].size());
-        group_b_idx.reserve(split_result.assignments[1].size());
-        // std::cout << "Split cluster " << cluster_id << " into A(num=" << split_result.assignments[0].size()
-        //           << ") and B(num=" << split_result.assignments[1].size() << ")\n";
-        for (size_t i = 0; i < cluster.num_embeddings; i++) {
-            const float* embedding_ptr = cluster_embeddings.get() + i * num_dims;
-            float distance_to_centroid_to_split = distance_computer_f32_t::Horizontal(
-                embedding_ptr, centroid_to_split, num_dims
-            );
-            float distance_to_a = distance_computer_f32_t::Horizontal(
-                embedding_ptr, centroid_a.get(), num_dims
-            );
-            float distance_to_b = distance_computer_f32_t::Horizontal(
-                embedding_ptr, centroid_b.get(), num_dims
-            );
-            float min_ab = std::min(distance_to_a, distance_to_b);
+        {
+            PDX_PROFILE_SCOPE("Split/Partition");
+            for (size_t i = 0; i < cluster.num_embeddings; i++) {
+                const float* embedding_ptr = cluster_embeddings.get() + i * d;
+                float distance_to_centroid_to_split = distance_computer_f32_t::Horizontal(
+                    embedding_ptr, centroid_to_split, d
+                );
+                float distance_to_a = distance_computer_f32_t::Horizontal(
+                    embedding_ptr, centroid_a.get(), d
+                );
+                float distance_to_b = distance_computer_f32_t::Horizontal(
+                    embedding_ptr, centroid_b.get(), d
+                );
+                float min_ab = std::min(distance_to_a, distance_to_b);
 
-            if (min_ab <= distance_to_centroid_to_split) {
-                // A or B is at least as close as the original — just pick the closer one
-                if (distance_to_a <= distance_to_b) {
-                    group_a_idx.push_back(i);
-                } else {
-                    group_b_idx.push_back(i);
-                }
-            } else {
-                // Original was closer than both A and B, but it's being deleted.
-                // Check if some other existing centroid is even closer.
-                bool closer_elsewhere = false;
-                for (uint32_t c = 0; c < index.num_clusters; c++) {
-                    if (c == cluster_id) continue;
-                    float d = distance_computer_f32_t::Horizontal(
-                        embedding_ptr,
-                        index.centroids.data() + static_cast<size_t>(c) * num_dims, num_dims
-                    );
-                    if (d < min_ab) {
-                        closer_elsewhere = true;
-                        break;
+                if (min_ab <= distance_to_centroid_to_split) {
+                    // A or B is at least as close as the original — just pick the closer one
+                    if (distance_to_a <= distance_to_b) {
+                        group_a_idx.push_back(i);
+                    } else {
+                        group_b_idx.push_back(i);
                     }
-                }
-                if (closer_elsewhere) {
-                    group_rest_idx.push_back(i);
-                } else if (distance_to_a <= distance_to_b) {
-                    group_a_idx.push_back(i);
                 } else {
-                    group_b_idx.push_back(i);
+                    // Original was closer than both A and B, but it's being deleted.
+                    // Check if some other existing centroid is even closer.
+                    bool closer_elsewhere = false;
+                    for (uint32_t c = 0; c < index.num_clusters; c++) {
+                        if (c == cluster_id) continue;
+                        float dist = distance_computer_f32_t::Horizontal(
+                            embedding_ptr,
+                            index.centroids.data() + static_cast<size_t>(c) * d, d
+                        );
+                        if (dist < min_ab) {
+                            closer_elsewhere = true;
+                            break;
+                        }
+                    }
+                    if (closer_elsewhere) {
+                        group_rest_idx.push_back(i);
+                    } else if (distance_to_a <= distance_to_b) {
+                        group_a_idx.push_back(i);
+                    } else {
+                        group_b_idx.push_back(i);
+                    }
                 }
             }
         }
@@ -887,74 +882,72 @@ class PDXTreeIndex : public IPDXIndex {
         //    These vectors will also receive stolen neighbor embeddings before clusters are created.
         std::vector<embedding_storage_t> embs_a, embs_b;
         std::vector<uint32_t> ids_a, ids_b;
-        embs_a.reserve(group_a_idx.size() * num_dims);
-        embs_b.reserve(group_b_idx.size() * num_dims);
+        embs_a.reserve(group_a_idx.size() * d);
+        embs_b.reserve(group_b_idx.size() * d);
         ids_a.reserve(group_a_idx.size());
         ids_b.reserve(group_b_idx.size());
-
-        auto centroid_sum_a = std::make_unique<float[]>(num_dims);
-        auto centroid_sum_b = std::make_unique<float[]>(num_dims);
-        std::memset(centroid_sum_a.get(), 0, num_dims * sizeof(float));
-        std::memset(centroid_sum_b.get(), 0, num_dims * sizeof(float));
-
-        for (uint32_t idx : group_a_idx) {
-            embs_a.insert(embs_a.end(),
-                raw_embeddings.get() + static_cast<size_t>(idx) * num_dims,
-                raw_embeddings.get() + (static_cast<size_t>(idx) + 1) * num_dims
-            );
-            ids_a.push_back(cluster.indices[idx]);
-            const float* emb_f = cluster_embeddings.get() + static_cast<size_t>(idx) * num_dims;
-            for (size_t d = 0; d < num_dims; d++) {
-                centroid_sum_a[d] += emb_f[d];
+        auto centroid_sum_a = std::make_unique<float[]>(d);
+        auto centroid_sum_b = std::make_unique<float[]>(d);
+        std::memset(centroid_sum_a.get(), 0, d * sizeof(float));
+        std::memset(centroid_sum_b.get(), 0, d * sizeof(float));
+        {
+            PDX_PROFILE_SCOPE("Split/GatherEmbeddings");
+            for (uint32_t idx : group_a_idx) {
+                embs_a.insert(embs_a.end(),
+                    raw_embeddings.get() + static_cast<size_t>(idx) * d,
+                    raw_embeddings.get() + (static_cast<size_t>(idx) + 1) * d
+                );
+                ids_a.push_back(cluster.indices[idx]);
+                const float* emb_f = cluster_embeddings.get() + static_cast<size_t>(idx) * d;
+                for (size_t j = 0; j < d; j++) {
+                    centroid_sum_a[j] += emb_f[j];
+                }
+            }
+            for (uint32_t idx : group_b_idx) {
+                embs_b.insert(embs_b.end(),
+                    raw_embeddings.get() + static_cast<size_t>(idx) * d,
+                    raw_embeddings.get() + (static_cast<size_t>(idx) + 1) * d
+                );
+                ids_b.push_back(cluster.indices[idx]);
+                const float* emb_f = cluster_embeddings.get() + static_cast<size_t>(idx) * d;
+                for (size_t j = 0; j < d; j++) {
+                    centroid_sum_b[j] += emb_f[j];
+                }
             }
         }
-        for (uint32_t idx : group_b_idx) {
-            embs_b.insert(embs_b.end(),
-                raw_embeddings.get() + static_cast<size_t>(idx) * num_dims,
-                raw_embeddings.get() + (static_cast<size_t>(idx) + 1) * num_dims
-            );
-            ids_b.push_back(cluster.indices[idx]);
-            const float* emb_f = cluster_embeddings.get() + static_cast<size_t>(idx) * num_dims;
-            for (size_t d = 0; d < num_dims; d++) {
-                centroid_sum_b[d] += emb_f[d];
-            }
-        }
 
-        // 5. Gather group_rest float embeddings and IDs NOW, before the cluster is replaced
-        auto float_rest = std::make_unique<float[]>(group_rest_idx.size() * num_dims);
+        // Gather group_rest float embeddings and IDs NOW, before the cluster is replaced
+        auto float_rest = std::make_unique<float[]>(group_rest_idx.size() * d);
         auto ids_rest = std::make_unique<uint32_t[]>(group_rest_idx.size());
         for (size_t i = 0; i < group_rest_idx.size(); i++) {
             std::memcpy(
-                float_rest.get() + i * num_dims,
-                cluster_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * num_dims,
-                num_dims * sizeof(float)
+                float_rest.get() + i * d,
+                cluster_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * d,
+                d * sizeof(float)
             );
             ids_rest[i] = cluster.indices[group_rest_idx[i]];
         }
 
-        // 6. SPFresh neighbor reassignment using new centroids. Very important to maintain recall
-        //    Clusters A and B don't exist yet — they're just buffers — so there's no
-        //    risk of overflow, cascading splits/merges, or dangling references.
+        // Evaluate the mesocluster of the split cluster to identify neighbors that should go
+        // to A or B
         {
             PDX_PROFILE_SCOPE("Split/NeighborReassign");
-            //std::cout << "Split reassign" << "\n";
-            auto& l0_mc = index.l0.clusters[mc];
-            std::vector<uint32_t> neighbor_ids;
-            for (uint32_t p = 0; p < l0_mc.used_capacity; p++) {
-                if (l0_mc.HasTombstone(p)) continue;
-                uint32_t nid = l0_mc.indices[p];
-                if (nid == cluster_id) continue; // cluster B doesn't exist yet
-                neighbor_ids.push_back(nid);
+            auto& mesocluster = index.l0.clusters[mesocluster_id];
+            std::vector<uint32_t> neighboring_clusters_ids;
+            for (uint32_t cluster_pos = 0; cluster_pos < mesocluster.used_capacity; cluster_pos++) {
+                if (mesocluster.HasTombstone(cluster_pos)) continue;
+                uint32_t nid = mesocluster.indices[cluster_pos];
+                if (nid == cluster_id) continue; // Don't consider the split cluster itself
+                neighboring_clusters_ids.push_back(nid);
             }
 
-            for (uint32_t neighbor_id : neighbor_ids) {
+            size_t total_dist_computations = 0;
+            for (uint32_t neighbor_id : neighboring_clusters_ids) {
                 auto& neighbor = index.clusters[neighbor_id];
                 const float* neighbor_centroid = index.centroids.data() +
-                    static_cast<size_t>(neighbor_id) * num_dims;
+                    static_cast<size_t>(neighbor_id) * d;
 
-                //std::cout << "Neighbor " << neighbor_id << "\n";
-                // Single-pass: scan embeddings, identify candidates, and immediately
-                // delete + buffer. DeleteEmbedding only tombstones so data stays readable.
+                total_dist_computations += neighbor.used_capacity * 3;
                 for (uint32_t p = 0; p < neighbor.used_capacity; p++) {
                     if (neighbor.HasTombstone(p)) continue;
 
@@ -962,7 +955,7 @@ class PDXTreeIndex : public IPDXIndex {
                     const float* emb_ptr;
                     std::unique_ptr<float[]> emb_f32;
                     if constexpr (Q == U8) {
-                        emb_f32 = std::make_unique<float[]>(num_dims);
+                        emb_f32 = std::make_unique<float[]>(d);
                         searcher->quantizer.DequantizeEmbedding(
                             raw_emb.get(), index.quantization_base,
                             index.quantization_scale, emb_f32.get()
@@ -973,135 +966,131 @@ class PDXTreeIndex : public IPDXIndex {
                     }
 
                     float dist_own = distance_computer_f32_t::Horizontal(
-                        emb_ptr, neighbor_centroid, num_dims
+                        emb_ptr, neighbor_centroid, d
                     );
                     float dist_a = distance_computer_f32_t::Horizontal(
-                        emb_ptr, centroid_a.get(), num_dims
+                        emb_ptr, centroid_a.get(), d
                     );
                     float dist_b = distance_computer_f32_t::Horizontal(
-                        emb_ptr, centroid_b.get(), num_dims
+                        emb_ptr, centroid_b.get(), d
                     );
 
                     if (dist_a < dist_own && dist_a <= dist_b) {
                         uint32_t row_id = neighbor.indices[p];
                         neighbor.DeleteEmbedding(p);
-                        embs_a.insert(embs_a.end(), raw_emb.get(), raw_emb.get() + num_dims);
+                        embs_a.insert(embs_a.end(), raw_emb.get(), raw_emb.get() + d);
                         ids_a.push_back(row_id);
-                        for (size_t d = 0; d < num_dims; d++) {
-                            centroid_sum_a[d] += emb_ptr[d];
+                        for (size_t j = 0; j < d; j++) {
+                            centroid_sum_a[j] += emb_ptr[j];
                         }
                     } else if (dist_b < dist_own && dist_b < dist_a) {
                         uint32_t row_id = neighbor.indices[p];
                         neighbor.DeleteEmbedding(p);
-                        embs_b.insert(embs_b.end(), raw_emb.get(), raw_emb.get() + num_dims);
+                        embs_b.insert(embs_b.end(), raw_emb.get(), raw_emb.get() + d);
                         ids_b.push_back(row_id);
-                        for (size_t d = 0; d < num_dims; d++) {
-                            centroid_sum_b[d] += emb_ptr[d];
+                        for (size_t j = 0; j < d; j++) {
+                            centroid_sum_b[j] += emb_ptr[j];
                         }
                     }
                 }
             }
+            std::cout << "Performed " << total_dist_computations << " distance computations\n";
         }
 
-        // 7. Compute true centroids from accumulated sums (includes stolen neighbors)
+        // Compute true centroids from accumulated sums (includes stolen neighbors)
         size_t count_a = ids_a.size();
         size_t count_b = ids_b.size();
-        auto true_centroid_a = std::make_unique<float[]>(num_dims);
-        auto true_centroid_b = std::make_unique<float[]>(num_dims);
+        auto true_centroid_a = std::make_unique<float[]>(d);
+        auto true_centroid_b = std::make_unique<float[]>(d);
 
-        if (count_a == 0) {
-            std::memcpy(true_centroid_a.get(), centroid_a.get(), num_dims * sizeof(float));
-        } else {
-            float inv = 1.0f / static_cast<float>(count_a);
-#pragma clang loop vectorize(enable)
-            for (size_t d = 0; d < num_dims; d++) {
-                true_centroid_a[d] = centroid_sum_a[d] * inv;
+        {
+            PDX_PROFILE_SCOPE("Split/ComputeTrueCentroids");
+            if (count_a == 0) {
+                std::memcpy(true_centroid_a.get(), centroid_a.get(), d * sizeof(float));
+            } else {
+                float inv = 1.0f / static_cast<float>(count_a);
+    #pragma clang loop vectorize(enable)
+                for (size_t j = 0; j < d; j++) {
+                    true_centroid_a[j] = centroid_sum_a[j] * inv;
+                }
+            }
+            if (count_b == 0) {
+                std::memcpy(true_centroid_b.get(), centroid_b.get(), d * sizeof(float));
+            } else {
+                float inv = 1.0f / static_cast<float>(count_b);
+    #pragma clang loop vectorize(enable)
+                for (size_t j = 0; j < d; j++) {
+                    true_centroid_b[j] = centroid_sum_b[j] * inv;
+                }
+            }
+            if (config.normalize){
+                Quantizer quantizer(d);
+                quantizer.NormalizeQuery(
+                    true_centroid_a.get(), true_centroid_a.get()
+                );
+                quantizer.NormalizeQuery(
+                    true_centroid_b.get(), true_centroid_b.get()
+                );
             }
         }
-        if (count_b == 0) {
-            std::memcpy(true_centroid_b.get(), centroid_b.get(), num_dims * sizeof(float));
-        } else {
-            float inv = 1.0f / static_cast<float>(count_b);
-#pragma clang loop vectorize(enable)
-            for (size_t d = 0; d < num_dims; d++) {
-                true_centroid_b[d] = centroid_sum_b[d] * inv;
+
+        {
+            PDX_PROFILE_SCOPE("Split/ConsolidateNewClusters");
+            // Create new cluster A (replaces old cluster at cluster_id)
+            cluster_t new_cluster_a(static_cast<uint32_t>(count_a), d);
+            new_cluster_a.id = cluster_id;
+            new_cluster_a.mesocluster_id = mesocluster_id;
+            if (count_a > 0) {
+                std::memcpy(new_cluster_a.indices, ids_a.data(), count_a * sizeof(uint32_t));
+                StoreClusterEmbeddings<Q, embedding_storage_t>(new_cluster_a, index, embs_a.data(), count_a);
             }
-        }
-
-        if (config.normalize){
-            Quantizer quantizer(index.num_dimensions);
-            quantizer.NormalizeQuery(
-                true_centroid_a.get(), true_centroid_a.get()
+            // Create new cluster B (will be appended)
+            uint32_t new_cluster_b_id = index.num_clusters;
+            cluster_t new_cluster_b(static_cast<uint32_t>(count_b), d);
+            new_cluster_b.id = new_cluster_b_id;
+            new_cluster_b.mesocluster_id = mesocluster_id;
+            if (count_b > 0) {
+                std::memcpy(new_cluster_b.indices, ids_b.data(), count_b * sizeof(uint32_t));
+                StoreClusterEmbeddings<Q, embedding_storage_t>(new_cluster_b, index, embs_b.data(), count_b);
+            }
+            // 10. Replace old cluster with A, append B.
+            //     The caller must have reserved capacity before taking a reference/lock
+            //     (see ReserveClusterSlotIfNeeded), so push_back will not reallocate.
+            index.clusters[cluster_id] = std::move(new_cluster_a);
+            index.clusters.push_back(std::move(new_cluster_b));
+            index.num_clusters++;
+            // 11. Update centroids: replace old centroid with A's, append B's
+            std::memcpy(
+                index.centroids.data() + static_cast<size_t>(cluster_id) * d,
+                true_centroid_a.get(),
+                d * sizeof(float)
             );
-            quantizer.NormalizeQuery(
-                true_centroid_b.get(), true_centroid_b.get()
+            index.centroids.insert(
+                index.centroids.end(),
+                true_centroid_b.get(),
+                true_centroid_b.get() + d
             );
+            // 12. Update row_id_cluster_mapping (includes both original and stolen-neighbor points)
+            for (size_t i = 0; i < count_a; i++) {
+                row_id_cluster_mapping[ids_a[i]] = {cluster_id, static_cast<uint32_t>(i)};
+            }
+            for (size_t i = 0; i < count_b; i++) {
+                row_id_cluster_mapping[ids_b[i]] = {new_cluster_b_id, static_cast<uint32_t>(i)};
+            }
+            // 13. Update L0: remove old centroid, add both new centroids
+            uint32_t pos = FindPositionInMesoCluster(cluster_id, mesocluster_id);
+            auto& l0_cluster = index.l0.clusters[mesocluster_id];
+            l0_cluster.DeleteEmbedding(pos);
+            l0_cluster.CompactCluster();
+            if (l0_cluster.used_capacity + 2 > l0_cluster.max_capacity) {
+                l0_cluster.GrowCluster(std::max(l0_cluster.max_capacity * 2, l0_cluster.used_capacity + 2));
+            }
+            l0_cluster.AppendEmbedding(cluster_id, true_centroid_a.get());
+            l0_cluster.AppendEmbedding(new_cluster_b_id, true_centroid_b.get());
+            index.l0.total_num_embeddings++;
         }
 
-        // 8. Create new cluster A (replaces old cluster at cluster_id)
-        // std::cout << "Split cluster " << cluster_id << " (" << cluster_num_embeddings << " embeddings) into A (count=" << count_a << ") and B (count=" << count_b
-        //           << "), stealing " << (count_a + count_b - split_result.assignments[0].size() - split_result.assignments[1].size())
-        //           << " neighbors\n";
-        cluster_t new_cluster_a(static_cast<uint32_t>(count_a), num_dims);
-        new_cluster_a.id = cluster_id;
-        new_cluster_a.mesocluster_id = mc;
-        if (count_a > 0) {
-            std::memcpy(new_cluster_a.indices, ids_a.data(), count_a * sizeof(uint32_t));
-            StoreClusterEmbeddings<Q, embedding_storage_t>(new_cluster_a, index, embs_a.data(), count_a);
-        }
-
-        // 9. Create new cluster B (will be appended)
-        uint32_t new_cluster_b_id = index.num_clusters;
-        cluster_t new_cluster_b(static_cast<uint32_t>(count_b), num_dims);
-        new_cluster_b.id = new_cluster_b_id;
-        new_cluster_b.mesocluster_id = mc;
-        if (count_b > 0) {
-            std::memcpy(new_cluster_b.indices, ids_b.data(), count_b * sizeof(uint32_t));
-            StoreClusterEmbeddings<Q, embedding_storage_t>(new_cluster_b, index, embs_b.data(), count_b);
-        }
-
-        // 10. Replace old cluster with A, append B.
-        //     The caller must have reserved capacity before taking a reference/lock
-        //     (see ReserveClusterSlotIfNeeded), so push_back will not reallocate.
-        index.clusters[cluster_id] = std::move(new_cluster_a);
-        index.clusters.push_back(std::move(new_cluster_b));
-        index.num_clusters++;
-
-        // 11. Update centroids: replace old centroid with A's, append B's
-        std::memcpy(
-            index.centroids.data() + static_cast<size_t>(cluster_id) * num_dims,
-            true_centroid_a.get(),
-            num_dims * sizeof(float)
-        );
-        index.centroids.insert(
-            index.centroids.end(),
-            true_centroid_b.get(),
-            true_centroid_b.get() + num_dims
-        );
-
-        // 12. Update row_id_cluster_mapping (includes both original and stolen-neighbor points)
-        for (size_t i = 0; i < count_a; i++) {
-            row_id_cluster_mapping[ids_a[i]] = {cluster_id, static_cast<uint32_t>(i)};
-        }
-        for (size_t i = 0; i < count_b; i++) {
-            row_id_cluster_mapping[ids_b[i]] = {new_cluster_b_id, static_cast<uint32_t>(i)};
-        }
-
-        // 13. Update L0: remove old centroid, add both new centroids
-        uint32_t pos = FindPositionInMesoCluster(cluster_id, mc);
-        auto& l0_cluster = index.l0.clusters[mc];
-        l0_cluster.DeleteEmbedding(pos);
-        l0_cluster.CompactCluster();
-        if (l0_cluster.used_capacity + 2 > l0_cluster.max_capacity) {
-            l0_cluster.GrowCluster(std::max(l0_cluster.max_capacity * 2, l0_cluster.used_capacity + 2));
-        }
-        l0_cluster.AppendEmbedding(cluster_id, true_centroid_a.get());
-        l0_cluster.AppendEmbedding(new_cluster_b_id, true_centroid_b.get());
-        index.l0.total_num_embeddings++;
-
-        // std::cout << "Size of rest: " << group_rest_idx.size() << "\n";
-
-        // 14. Reassign undecided points (equidistant from both new centroids)
+        // Reassign points from the splitted cluster that are closer to other centroids than A or B.
         if (!group_rest_idx.empty()) {
             ReassignEmbeddings(ids_rest.get(), float_rest.get(), static_cast<uint32_t>(group_rest_idx.size()));
         }

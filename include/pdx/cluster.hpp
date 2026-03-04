@@ -331,6 +331,7 @@ struct Cluster {
     // Returns: vector of (row_id, new_index_in_cluster) for each moved embedding
     // TODO(@lkuffo, high): I dont like this while loops too much. Its confusing (but it works)
     std::vector<std::pair<uint32_t, uint32_t>> CompactCluster(){
+        PDX_PROFILE_SCOPE("CompactCluster");
         std::vector<std::pair<uint32_t, uint32_t>> moves;
         if (tombstones.empty()){
             return moves;
