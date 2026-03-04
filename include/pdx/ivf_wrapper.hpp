@@ -73,6 +73,7 @@ class IVF {
     // Compute cluster_offsets, total_capacity, and max_cluster_capacity from current clusters.
     // Must be called after all clusters have been created or after structural changes (split/merge).
     void ComputeClusterOffsets() {
+        PDX_PROFILE_SCOPE("ComputeClusterOffsets");
         cluster_offsets.reset(new size_t[num_clusters]);
         total_capacity = 0;
         max_cluster_capacity = 0;

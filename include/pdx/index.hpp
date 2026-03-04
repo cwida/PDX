@@ -440,6 +440,9 @@ class PDXTreeIndex : public IPDXIndex {
     using cluster_t = PDX::Cluster<Q>;
     using distance_computer_t = DistanceComputer<DistanceMetric::L2SQ, Q>;
     using distance_computer_f32_t = DistanceComputer<DistanceMetric::L2SQ, F32>;
+    using batch_computer = skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>;
+    using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+    using VectorR = Eigen::VectorXf;
 
   private:
     PDXIndexConfig config{};
@@ -447,6 +450,7 @@ class PDXTreeIndex : public IPDXIndex {
     std::unique_ptr<PDX::ADSamplingPruner> pruner;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
     std::unique_ptr<PDX::PDXearch<F32>> top_level_searcher;
+    ScalarQuantizer<Q> quantizer{0};
     std::vector<std::pair<uint32_t, uint32_t>> row_id_cluster_mapping;
 
     static constexpr PDXIndexType GetIndexType() {
@@ -485,7 +489,7 @@ class PDXTreeIndex : public IPDXIndex {
   public:
     PDXTreeIndex() = default;
 
-    explicit PDXTreeIndex(PDXIndexConfig config) : config(config) {
+    explicit PDXTreeIndex(PDXIndexConfig config) : config(config), quantizer(config.num_dimensions) {
         config.Validate();
         PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
         pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
@@ -588,26 +592,23 @@ class PDXTreeIndex : public IPDXIndex {
         }
     }
 
-    // Ensure index.clusters has room for at least one more element so that
-    // push_back inside SplitCluster / ReassignEmbeddings→CheckClusterHealth
-    // will never reallocate.  Must be called BEFORE taking any reference or
-    // lock into the clusters vector.
-    void EnsureClusterVectorHeadroom() {
+    // Ensure the clusters vector won't reallocate while we hold a reference/lock
+    void ReserveClusterSlotIfNeeded() {
         if (index.clusters.size() == index.clusters.capacity()) {
             index.clusters.reserve(index.clusters.capacity() * 2);
         }
     }
 
-    // TODO: Concurrent writes always go through a single writer thread
+    // Concurrent writes must always go through a single writer thread
     void Append(size_t row_id, const float* PDX_RESTRICT embedding){
         PDX_PROFILE_SCOPE("Append");
-        // Row ids must be dense and sequential (next expected = current size of the mapping)
         if (row_id != row_id_cluster_mapping.size()) {
             throw std::invalid_argument(
                 "Append: row_id " + std::to_string(row_id) + " is not sequential (expected " +
                 std::to_string(row_id_cluster_mapping.size()) + ")"
             );
         }
+        ReserveClusterSlotIfNeeded();
 
         const auto num_dimensions = index.num_dimensions;
         const bool normalize =
@@ -618,50 +619,42 @@ class PDXTreeIndex : public IPDXIndex {
         );
 
         // Find nearest centroid for the new embedding
-        // Pass the RAW embedding to the L0 search — PDXearch::Search internally
-        // normalizes and rotates the query. Passing `preprocessed` would double-rotate.
         auto n_probe_top_level = GetTopLevelNumClusters();
         n_probe_top_level = std::max(1u, n_probe_top_level / 4);
         top_level_searcher->SetNProbe(n_probe_top_level);
+        // We must pass the raw embedding to the top-level searcher
         std::vector<KNNCandidate> centroid_candidates = top_level_searcher->Search(embedding, 1);
         uint32_t closest_centroid_idx = centroid_candidates[0].index;
 
-        // Ensure the clusters vector won't reallocate while we hold a reference/lock
-        EnsureClusterVectorHeadroom();
-
-        // Assign to the corresponding cluster
         auto& cluster = index.clusters[closest_centroid_idx];
 
         // Lock only for the mutation; unlock before health check which may
-        // trigger SplitCluster → ReassignEmbeddings → EnsureClusterVectorHeadroom,
+        // trigger SplitCluster → ReassignEmbeddings → ReserveClusterSlotIfNeeded,
         // causing vector reallocation that invalidates the cluster reference.
-        uint32_t index_in_cluster;
+        uint32_t new_index_in_cluster;
         {
             std::lock_guard<std::mutex> lock(cluster.cluster_mutex);
             if constexpr (Q == U8) {
-                ScalarQuantizer<Q> quantizer(num_dimensions);
                 auto quantized = std::make_unique<embedding_storage_t[]>(num_dimensions);
                 quantizer.QuantizeEmbedding(preprocessed.get(), index.quantization_base, index.quantization_scale, quantized.get());
-                index_in_cluster = cluster.AppendEmbedding(static_cast<uint32_t>(row_id), quantized.get());
+                new_index_in_cluster = cluster.AppendEmbedding(static_cast<uint32_t>(row_id), quantized.get());
             } else {
-                index_in_cluster = cluster.AppendEmbedding(static_cast<uint32_t>(row_id), preprocessed.get());
+                new_index_in_cluster = cluster.AppendEmbedding(static_cast<uint32_t>(row_id), preprocessed.get());
             }
         }
-        row_id_cluster_mapping.emplace_back(closest_centroid_idx, index_in_cluster);
+        row_id_cluster_mapping.emplace_back(closest_centroid_idx, new_index_in_cluster);
         index.total_num_embeddings++;
         CheckClusterHealth(cluster);
     }
 
-    // TODO: Concurrent writes always go through a single writer thread
+    // Concurrent writes must always go through a single writer thread
     void Delete(size_t row_id){
         PDX_PROFILE_SCOPE("Delete");
-        // Find the cluster and index in cluster for the given row_id
+        if (row_id >= row_id_cluster_mapping.size()) {
+            throw std::invalid_argument("Delete: row_id " + std::to_string(row_id) + " is not in the index");
+        }
+        ReserveClusterSlotIfNeeded();
         const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
-
-        // Ensure the clusters vector won't reallocate while we hold a reference/lock
-        // (DestroyAndMergeCluster→ReassignEmbeddings→CheckClusterHealth can split)
-        EnsureClusterVectorHeadroom();
-
         auto& cluster = index.clusters[cluster_id];
 
         {
@@ -671,27 +664,21 @@ class PDXTreeIndex : public IPDXIndex {
             std::lock_guard<std::mutex> lock(cluster.cluster_mutex);
             cluster.DeleteEmbedding(index_in_cluster);
         }
-        // As row_ids are assumed to be non-replacable,
-        // we don't need to remove the entry from row_id_cluster_mapping
+        // We don't remove from row_id_cluster_mapping (row_ids are assumed to be stable)
         index.total_num_embeddings--;
         CheckClusterHealth(cluster);
     }
 
-    // Caller must hold cluster.cluster_mutex.
-    // allow_merges: when false, underfull clusters are not merged (only compaction
-    // and splits are performed).  SPFresh triggers merges lazily from the search
-    // path, not during reassignment — suppressing merges here prevents cascading
-    // merge ping-pong where two underfull clusters keep destroying each other.
+    // Caller must hold cluster.cluster_mutex
     void CheckClusterHealth(cluster_t& cluster, bool allow_merges = true) {
         if (cluster.used_capacity == cluster.max_capacity) {
+            // Its less expensive to compact than to Split
             if (cluster.num_embeddings < cluster.used_capacity) {
-                // There are tombstone slots we can reclaim
                 auto moves = cluster.CompactCluster();
                 for (const auto& [row_id, new_idx] : moves) {
                     row_id_cluster_mapping[row_id] = {cluster.id, new_idx};
                 }
             } else {
-                // Cluster is truly full and compacted, split it
                 SplitCluster(cluster);
             }
         } else if (allow_merges && cluster.num_embeddings <= cluster.min_capacity) {
@@ -699,12 +686,11 @@ class PDXTreeIndex : public IPDXIndex {
         }
     }
 
-    // Find the position of an L1 cluster within its known L0 meso-cluster.
     uint32_t FindPositionInMesoCluster(uint32_t l1_cluster_id, uint32_t mesocluster_id) const {
         auto& l0_cluster = index.l0.clusters[mesocluster_id];
-        for (uint32_t p = 0; p < l0_cluster.used_capacity; p++) {
-            if (!l0_cluster.HasTombstone(p) && l0_cluster.indices[p] == l1_cluster_id) {
-                return p;
+        for (uint32_t idx = 0; idx < l0_cluster.used_capacity; idx++) {
+            if (!l0_cluster.HasTombstone(idx) && l0_cluster.indices[idx] == l1_cluster_id) {
+                return idx;
             }
         }
         throw std::runtime_error(
@@ -716,18 +702,14 @@ class PDXTreeIndex : public IPDXIndex {
     // Caller must hold cluster.cluster_mutex
     void DestroyAndMergeCluster(cluster_t& cluster) {
         PDX_PROFILE_SCOPE("Merge");
-        //std::cout << "Destroy and Merge cluster " << cluster.id << " (num_embeddings=" << cluster.num_embeddings
-        //          << ", used_capacity=" << cluster.used_capacity << ")\n";
-        const uint32_t cluster_id = cluster.id;
-        const uint32_t mc = cluster.mesocluster_id;
-        const uint32_t num_dims = index.num_dimensions;
         cluster.CompactCluster();
+        const uint32_t cluster_id = cluster.id;
+        const uint32_t mesocluster_id = cluster.mesocluster_id;
+        const uint32_t num_dims = index.num_dimensions;
         const uint32_t n_emb = cluster.num_embeddings;
         auto raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
 
-        // Copy indices and dequantized embeddings into local buffers BEFORE
-        // destroying the cluster — after swap-and-pop the cluster object is gone.
-        std::vector<uint32_t> local_indices(cluster.indices, cluster.indices + n_emb);
+        std::vector<uint32_t> cluster_indices(cluster.indices, cluster.indices + n_emb);
         std::unique_ptr<float[]> cluster_embeddings(new float[n_emb * num_dims]);
         if constexpr (Q == U8) {
             for (size_t i = 0; i < n_emb; i++) {
@@ -746,52 +728,45 @@ class PDXTreeIndex : public IPDXIndex {
             );
         }
 
-        // ---- Fully destroy the cluster BEFORE reassignment ----
-        // This ensures the dying cluster has no centroid and no slot in
-        // index.clusters, so no cascading operation (split→group_rest→reassign)
-        // can accidentally assign new points to it or try to merge it again.
-
-        // 1. Remove from L0
-        uint32_t pos_del = FindPositionInMesoCluster(cluster_id, mc);
-        index.l0.clusters[mc].DeleteEmbedding(pos_del);
+        // Remove from L0
+        uint32_t position_in_mesocluster = FindPositionInMesoCluster(cluster_id, mesocluster_id);
+        index.l0.clusters[mesocluster_id].DeleteEmbedding(position_in_mesocluster);
         index.l0.total_num_embeddings--;
 
-        // 2. Swap-and-pop: move last cluster into the dead slot
+        // Swap-and-pop: move last cluster into the dead slot
         uint32_t last_id = index.num_clusters - 1;
         if (cluster_id != last_id) {
             index.clusters[cluster_id] = std::move(index.clusters[last_id]);
             index.clusters[cluster_id].id = cluster_id;
 
+            auto& moved_cluster = index.clusters[cluster_id];
             std::memcpy(
                 index.centroids.data() + static_cast<size_t>(cluster_id) * num_dims,
                 index.centroids.data() + static_cast<size_t>(last_id) * num_dims,
                 num_dims * sizeof(float)
             );
-
-            auto& moved = index.clusters[cluster_id];
-            for (uint32_t i = 0; i < moved.used_capacity; i++) {
-                if (!moved.HasTombstone(i)) {
-                    row_id_cluster_mapping[moved.indices[i]] = {cluster_id, i};
+            for (uint32_t i = 0; i < moved_cluster.used_capacity; i++) {
+                if (!moved_cluster.HasTombstone(i)) {
+                    row_id_cluster_mapping[moved_cluster.indices[i]] = {cluster_id, i};
                 }
             }
 
-            uint32_t pos_last = FindPositionInMesoCluster(last_id, moved.mesocluster_id);
-            index.l0.clusters[moved.mesocluster_id].indices[pos_last] = cluster_id;
+            // We need to update the mesocluster's indices to reflect 
+            // the new cluster_id for the cluster that we moved from the last position.
+            uint32_t l0_moved_cluster_position = FindPositionInMesoCluster(last_id, moved_cluster.mesocluster_id);
+            index.l0.clusters[moved_cluster.mesocluster_id].indices[l0_moved_cluster_position] = cluster_id;
         }
 
-        // 3. Pop the dead cluster and shrink centroids
+        // Pop the dead cluster and its centroid (ensured to be at the end)
         index.clusters.pop_back();
         index.centroids.resize(index.centroids.size() - num_dims);
         index.num_clusters--;
 
         index.ComputeClusterOffsets();
         index.l0.ComputeClusterOffsets();
-
-        // ---- Now reassign the extracted points ----
-        // The dead cluster is fully removed: no slot, no centroid, no L0 entry.
-        // No exclude_cluster_id needed — the slot is occupied by the moved cluster.
-        ReassignEmbeddings(local_indices.data(), cluster_embeddings.get(), n_emb,
-                           /*exclude_cluster_id=*/UINT32_MAX, /*allow_merges=*/false);
+        
+        // !We fully removed the dying cluster before reassignment 
+        ReassignEmbeddings(cluster_indices.data(), cluster_embeddings.get(), n_emb, false);
     }
 
     // Caller must hold cluster.cluster_mutex
@@ -801,7 +776,6 @@ class PDXTreeIndex : public IPDXIndex {
         const uint32_t cluster_id = cluster.id;
         const uint32_t mc = cluster.mesocluster_id;
         const uint32_t num_dims = index.num_dimensions;
-        const uint32_t cluster_num_embeddings = cluster.num_embeddings;
 
         // 1. Extract all embeddings from PDX layout (row-major)
         std::unique_ptr<embedding_storage_t[]> raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
@@ -1088,7 +1062,7 @@ class PDXTreeIndex : public IPDXIndex {
 
         // 10. Replace old cluster with A, append B.
         //     The caller must have reserved capacity before taking a reference/lock
-        //     (see EnsureClusterVectorHeadroom), so push_back will not reallocate.
+        //     (see ReserveClusterSlotIfNeeded), so push_back will not reallocate.
         index.clusters[cluster_id] = std::move(new_cluster_a);
         index.clusters.push_back(std::move(new_cluster_b));
         index.num_clusters++;
@@ -1137,53 +1111,46 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     // Reassign dequantized (float) embeddings to their closest centroid.
-    // exclude_cluster_id: skip this cluster during nearest-centroid search (use UINT32_MAX for no exclusion).
     // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
+    // TODO: We can optimize reassignments by:
+    // 1. Only checking clusters inside an incoming mesocluster
+    // 2. Doing GEMM+PRUNING for assignments
     void ReassignEmbeddings(
         uint32_t* row_ids,
         const float* embeddings,
         uint32_t num_embeddings,
-        uint32_t exclude_cluster_id = UINT32_MAX,
         bool allow_merges = true
     ) {
         PDX_PROFILE_SCOPE("Reassign");
-        const uint32_t num_dims = index.num_dimensions;
+        const uint32_t d = index.num_dimensions;
 
+        std::unique_ptr<uint32_t[]> assignments(new uint32_t[num_embeddings]);
+        std::unique_ptr<float[]> result_distances(new float[num_embeddings]);
+        std::unique_ptr<float[]> tmp_distances_buf(new float[skmeans::X_BATCH_SIZE * skmeans::Y_BATCH_SIZE]);
+        std::vector<float> embeddings_norms(num_embeddings);
+        Eigen::Map<const MatrixR> embeddings_matrix(embeddings, num_embeddings, d);
+        Eigen::Map<VectorR> v_norms(embeddings_norms.data(), num_embeddings);
+        v_norms.noalias() = embeddings_matrix.rowwise().squaredNorm();
+        batch_computer::FindNearestNeighbor(
+            embeddings, index.centroids.data(), num_embeddings, index.num_clusters, d,
+            embeddings_norms.data(), embeddings_norms.data(), 
+            assignments.get(), result_distances.get(), tmp_distances_buf.get()
+        );
         for (size_t i = 0; i < num_embeddings; i++) {
-            const float* emb = embeddings + i * num_dims;
-
-            // Find closest centroid
-            uint32_t best_cluster = UINT32_MAX;
-            float best_dist = std::numeric_limits<float>::max();
-            for (uint32_t c = 0; c < index.num_clusters; c++) {
-                if (c == exclude_cluster_id) {
-                    continue;
-                }
-                float dist = distance_computer_f32_t::Horizontal(
-                    emb, index.centroids.data() + static_cast<size_t>(c) * num_dims, num_dims
-                );
-                if (dist < best_dist) {
-                    best_dist = dist;
-                    best_cluster = c;
-                }
-            }
-
-            // Quantize back to storage type if needed, then append
+            auto best_cluster = assignments[i];
             uint32_t row_id = row_ids[i];
-            uint32_t new_idx;
+            uint32_t new_pos_in_cluster;
             if constexpr (Q == U8) {
-                ScalarQuantizer<Q> quantizer(num_dims);
-                auto quantized = std::make_unique<embedding_storage_t[]>(num_dims);
+                auto quantized = std::make_unique<embedding_storage_t[]>(d);
                 quantizer.QuantizeEmbedding(
-                    emb, index.quantization_base, index.quantization_scale, quantized.get()
+                    embeddings + i * d, index.quantization_base, index.quantization_scale, quantized.get()
                 );
-                new_idx = index.clusters[best_cluster].AppendEmbedding(row_id, quantized.get());
+                new_pos_in_cluster = index.clusters[best_cluster].AppendEmbedding(row_id, quantized.get());
             } else {
-                new_idx = index.clusters[best_cluster].AppendEmbedding(row_id, emb);
+                new_pos_in_cluster = index.clusters[best_cluster].AppendEmbedding(row_id, embeddings + i * d);
             }
-            row_id_cluster_mapping[row_id] = {best_cluster, new_idx};
-            // Health check may split → push_back, so ensure headroom each iteration
-            EnsureClusterVectorHeadroom();
+            row_id_cluster_mapping[row_id] = {best_cluster, new_pos_in_cluster};
+            ReserveClusterSlotIfNeeded();
             CheckClusterHealth(index.clusters[best_cluster], allow_merges);
         }
     }
