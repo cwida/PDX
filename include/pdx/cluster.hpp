@@ -134,6 +134,7 @@ struct Cluster {
     // Returns the index in cluster of the newly appended embedding
     uint32_t AppendEmbedding(uint32_t row_id, const data_t* PDX_RESTRICT embedding) {
         PDX_PROFILE_SCOPE("LeafAppend");
+        std::lock_guard<std::mutex> lock(cluster_mutex);
         uint32_t next_free_idx = used_capacity;
         bool replaced_tombstone = false;
         if (!tombstones.empty()) {
@@ -160,11 +161,9 @@ struct Cluster {
 
     void DeleteEmbedding(uint32_t index_in_cluster) {
         PDX_PROFILE_SCOPE("LeafDelete");
+        std::lock_guard<std::mutex> lock(cluster_mutex);
         AddTombstone(index_in_cluster);
         num_embeddings--;
-        // Used Capacity remains the same because we are not compacting the cluster
-        // Should we compact directly? Moving the last embedding to the tombstone
-        // Maybe worth if we are in memory
         n_deleted++;
     }
 
