@@ -591,15 +591,19 @@ class PDXearch {
     }
 
   public:
-    std::vector<KNNCandidate> Search(const float* PDX_RESTRICT const raw_query, const uint32_t k) {
+    std::vector<KNNCandidate> Search(const float* PDX_RESTRICT const raw_query, const uint32_t k, const bool is_query_trasnformed = false) {
         Heap local_heap{};
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
-        if (!pdx_data.is_normalized) {
-            pruner.PreprocessQuery(raw_query, query.get());
+        if (is_query_trasnformed) {
+            std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
         } else {
-            std::unique_ptr<float[]> normalized_query(new float[pdx_data.num_dimensions]);
-            quantizer.NormalizeQuery(raw_query, normalized_query.get());
-            pruner.PreprocessQuery(normalized_query.get(), query.get());
+            if (!pdx_data.is_normalized) {
+                pruner.PreprocessQuery(raw_query, query.get());
+            } else {
+                std::unique_ptr<float[]> normalized_query(new float[pdx_data.num_dimensions]);
+                quantizer.NormalizeQuery(raw_query, normalized_query.get());
+                pruner.PreprocessQuery(normalized_query.get(), query.get());
+            }
         }
         size_t clusters_to_visit = (ivf_nprobe == 0 || ivf_nprobe > pdx_data.num_clusters)
                                        ? pdx_data.num_clusters
@@ -714,16 +718,21 @@ class PDXearch {
     std::vector<KNNCandidate> FilteredSearch(
         const float* PDX_RESTRICT const raw_query,
         const uint32_t k,
-        const PredicateEvaluator& predicate_evaluator
+        const PredicateEvaluator& predicate_evaluator,
+        const bool is_query_transformed = false
     ) {
         Heap local_heap{};
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
-        if (!pdx_data.is_normalized) {
-            pruner.PreprocessQuery(raw_query, query.get());
+        if (is_query_transformed) {
+            std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
         } else {
-            std::unique_ptr<float[]> normalized_query(new float[pdx_data.num_dimensions]);
-            quantizer.NormalizeQuery(raw_query, normalized_query.get());
-            pruner.PreprocessQuery(normalized_query.get(), query.get());
+            if (!pdx_data.is_normalized) {
+                pruner.PreprocessQuery(raw_query, query.get());
+            } else {
+                std::unique_ptr<float[]> normalized_query(new float[pdx_data.num_dimensions]);
+                quantizer.NormalizeQuery(raw_query, normalized_query.get());
+                pruner.PreprocessQuery(normalized_query.get(), query.get());
+            }
         }
 
         size_t clusters_to_visit = (ivf_nprobe == 0 || ivf_nprobe > pdx_data.num_clusters)

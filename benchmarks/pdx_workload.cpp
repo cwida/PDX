@@ -23,8 +23,8 @@ static const std::vector<WorkloadStep> WORKLOAD = {
     // {StepType::INSERT, 0.30f},
 
 
-    {StepType::BUILD,  0.75f},
-    {StepType::INSERT, 0.25f}
+    {StepType::BUILD,  0.50f},
+    {StepType::INSERT, 0.50f}
 };
 
 template <typename IndexT>

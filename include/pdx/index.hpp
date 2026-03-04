@@ -85,7 +85,7 @@ inline std::unique_ptr<float[]> NormalizeAndRotate(
     if (normalize) {
         normalized.reset(new float[total_floats]);
         Quantizer quantizer(num_dimensions);
-#pragma omp parallel for num_threads(PDX::g_n_threads)
+#pragma omp parallel for if(num_embeddings > 1) num_threads(PDX::g_n_threads)
         for (size_t i = 0; i < num_embeddings; i++) {
             quantizer.NormalizeQuery(
                 embeddings + i * num_dimensions, normalized.get() + i * num_dimensions
@@ -619,12 +619,18 @@ class PDXTreeIndex : public IPDXIndex {
         );
 
         // Find nearest centroid for the new embedding
-        auto n_probe_top_level = GetTopLevelNumClusters();
-        n_probe_top_level = std::max(1u, n_probe_top_level / 4);
-        top_level_searcher->SetNProbe(n_probe_top_level);
-        // We must pass the raw embedding to the top-level searcher
-        std::vector<KNNCandidate> centroid_candidates = top_level_searcher->Search(embedding, 1);
-        uint32_t closest_centroid_idx = centroid_candidates[0].index;
+        uint32_t closest_centroid_idx;
+        {
+            PDX_PROFILE_SCOPE("Append/FindNearestCentroid");
+            auto n_probe_top_level = GetTopLevelNumClusters();
+            // We confidently prune 1/4 of the search space
+            n_probe_top_level = std::max(1u, n_probe_top_level / 4);
+            top_level_searcher->SetNProbe(n_probe_top_level);
+            // We must pass the raw embedding to the top-level searcher
+            // TODO: We should be able to avoid this by changing the search interface
+            std::vector<KNNCandidate> centroid_candidates = top_level_searcher->Search(preprocessed.get(), 1, true);
+            closest_centroid_idx = centroid_candidates[0].index;
+        }
 
         auto& cluster = index.clusters[closest_centroid_idx];
 
@@ -805,7 +811,43 @@ class PDXTreeIndex : public IPDXIndex {
         auto centroid_a = std::make_unique<float[]>(d);
         auto centroid_b = std::make_unique<float[]>(d);
         auto centroid_to_split = index.centroids.data() + static_cast<size_t>(cluster_id) * d;
-        // Split centroid by running k-means with k=2 on the cluster's embeddings
+
+        std::vector<uint32_t> neighboring_clusters_ids;
+        {
+            PDX_PROFILE_SCOPE("Split/GetNeighboringClusters");
+            auto& mesocluster = index.l0.clusters[mesocluster_id];
+            for (uint32_t cluster_pos = 0; cluster_pos < mesocluster.used_capacity; cluster_pos++) {
+                if (mesocluster.HasTombstone(cluster_pos)) continue;
+                uint32_t nid = mesocluster.indices[cluster_pos];
+                if (nid == cluster_id) continue; // Don't consider the split cluster itself
+                neighboring_clusters_ids.push_back(nid);
+            }
+
+            // Keep only the 32 nearest neighbors (by centroid distance to the old centroid)
+            constexpr size_t MAX_NEIGHBORS = 32;
+            if (neighboring_clusters_ids.size() > MAX_NEIGHBORS) {
+                // Compute distances once
+                std::vector<std::pair<float, uint32_t>> neighbor_dists;
+                neighbor_dists.reserve(neighboring_clusters_ids.size());
+                for (uint32_t nid : neighboring_clusters_ids) {
+                    float dist = distance_computer_f32_t::Horizontal(
+                        centroid_to_split, index.centroids.data() + static_cast<size_t>(nid) * d, d
+                    );
+                    neighbor_dists.push_back({dist, nid});
+                }
+                std::nth_element(
+                    neighbor_dists.begin(),
+                    neighbor_dists.begin() + MAX_NEIGHBORS,
+                    neighbor_dists.end(),
+                    [](const auto& a, const auto& b) { return a.first < b.first; }
+                );
+                neighboring_clusters_ids.clear();
+                for (size_t i = 0; i < MAX_NEIGHBORS; ++i) {
+                    neighboring_clusters_ids.push_back(neighbor_dists[i].second);
+                }
+            }
+        }
+
         {
             PDX_PROFILE_SCOPE("Split/KMeans");
             KMeansResult split_result = ComputeKMeans(
@@ -815,10 +857,11 @@ class PDXTreeIndex : public IPDXIndex {
                 2,                          // k=2
                 config.distance_metric,
                 config.seed,
-                true,                      // already preprocessed, don't normalize
+                true,                     
                 1.0f,                       // use all points (small cluster)
                 4,                          // iterations
-                false                       // no hierarchical for 2 clusters
+                false,                      // no hierarchical for 2 clusters
+                1                           // 1 thread
             );
             std::memcpy(centroid_a.get(), split_result.centroids.data(), d * sizeof(float));
             std::memcpy(centroid_b.get(), split_result.centroids.data() + d, d * sizeof(float));
@@ -826,10 +869,9 @@ class PDXTreeIndex : public IPDXIndex {
             group_b_idx.reserve(split_result.assignments[1].size());
         }
 
-        // 3. Partition embeddings using KMeans centroids + SPFresh Condition 1.
-        //    If A or B is closer than the original centroid → assign directly.
-        //    Otherwise the original was closest but is being deleted — check if some
-        //    OTHER existing centroid is even closer → group_rest for global reassignment.
+        // If A or B is closer than the original centroid → assign directly.
+        // Otherwise the original was closest but is being deleted: check if some
+        // OTHER existing centroid is even closer → group_rest for reassignment.
         {
             PDX_PROFILE_SCOPE("Split/Partition");
             for (size_t i = 0; i < cluster.num_embeddings; i++) {
@@ -837,6 +879,8 @@ class PDXTreeIndex : public IPDXIndex {
                 float distance_to_centroid_to_split = distance_computer_f32_t::Horizontal(
                     embedding_ptr, centroid_to_split, d
                 );
+                // TODO(@lkuffo, high): We can avoid this since we have the distance
+                // from k-means, we just need to bring it here!
                 float distance_to_a = distance_computer_f32_t::Horizontal(
                     embedding_ptr, centroid_a.get(), d
                 );
@@ -856,7 +900,8 @@ class PDXTreeIndex : public IPDXIndex {
                     // Original was closer than both A and B, but it's being deleted.
                     // Check if some other existing centroid is even closer.
                     bool closer_elsewhere = false;
-                    for (uint32_t c = 0; c < index.num_clusters; c++) {
+                    // Iterate over neighboring clusters
+                    for (uint32_t c : neighboring_clusters_ids) {
                         if (c == cluster_id) continue;
                         float dist = distance_computer_f32_t::Horizontal(
                             embedding_ptr,
@@ -928,26 +973,15 @@ class PDXTreeIndex : public IPDXIndex {
             ids_rest[i] = cluster.indices[group_rest_idx[i]];
         }
 
-        // Evaluate the mesocluster of the split cluster to identify neighbors that should go
-        // to A or B
+        // Evaluate the mesocluster of the split cluster to identify neighbors that should go to A or B
         {
             PDX_PROFILE_SCOPE("Split/NeighborReassign");
-            auto& mesocluster = index.l0.clusters[mesocluster_id];
-            std::vector<uint32_t> neighboring_clusters_ids;
-            for (uint32_t cluster_pos = 0; cluster_pos < mesocluster.used_capacity; cluster_pos++) {
-                if (mesocluster.HasTombstone(cluster_pos)) continue;
-                uint32_t nid = mesocluster.indices[cluster_pos];
-                if (nid == cluster_id) continue; // Don't consider the split cluster itself
-                neighboring_clusters_ids.push_back(nid);
-            }
-
-            size_t total_dist_computations = 0;
+            // TODO: (@lkuffo, med): I believe we can make this better
             for (uint32_t neighbor_id : neighboring_clusters_ids) {
                 auto& neighbor = index.clusters[neighbor_id];
                 const float* neighbor_centroid = index.centroids.data() +
                     static_cast<size_t>(neighbor_id) * d;
 
-                total_dist_computations += neighbor.used_capacity * 3;
                 for (uint32_t p = 0; p < neighbor.used_capacity; p++) {
                     if (neighbor.HasTombstone(p)) continue;
 
@@ -994,7 +1028,6 @@ class PDXTreeIndex : public IPDXIndex {
                     }
                 }
             }
-            std::cout << "Performed " << total_dist_computations << " distance computations\n";
         }
 
         // Compute true centroids from accumulated sums (includes stolen neighbors)
