@@ -1058,7 +1058,9 @@ class PDXTreeIndex : public IPDXIndex {
         index.l0.ComputeClusterOffsets();
 
         // Fully removed the dying cluster before reassignment
-        ReassignEmbeddings(cluster_indices.data(), cluster_embeddings.get(), n_emb, false);
+        ReassignEmbeddings(
+            cluster_indices.data(), cluster_embeddings.get(), n_emb, mesocluster_id, false
+        );
     }
 
     // Assumes cluster is compacted and has no tombstones
@@ -1306,7 +1308,10 @@ class PDXTreeIndex : public IPDXIndex {
         // Reassign rest group (closer to other centroids than A or B)
         if (!group_rest_idx.empty()) {
             ReassignEmbeddings(
-                ids_rest.get(), float_rest.get(), static_cast<uint32_t>(group_rest_idx.size())
+                ids_rest.get(),
+                float_rest.get(),
+                static_cast<uint32_t>(group_rest_idx.size()),
+                mesocluster_id
             );
         }
 
@@ -1314,18 +1319,38 @@ class PDXTreeIndex : public IPDXIndex {
         index.l0.ComputeClusterOffsets();
     }
 
-    // Reassign dequantized (float) embeddings to their closest centroid.
+    // Reassign dequantized (float) embeddings to their closest centroid
+    // within the given mesocluster.
     // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
-    // TODO: We can optimize reassignments by:
-    // 1. Only checking clusters inside an incoming mesocluster
-    // 2. Doing GEMM+PRUNING for assignments
+    // TODO: We can optimize reassignments by doing GEMM+PRUNING for assignments
     void ReassignEmbeddings(
         uint32_t* row_ids,
         const float* embeddings,
         uint32_t num_embeddings,
+        uint32_t mesocluster_id,
         bool allow_merges = true
     ) {
         PDX_PROFILE_SCOPE("Reassign");
+
+        // Gather cluster IDs and centroids from the mesocluster
+        auto& meso = index.l0.clusters[mesocluster_id];
+        std::vector<uint32_t> candidate_ids;
+        candidate_ids.reserve(meso.used_capacity);
+        for (uint32_t p = 0; p < meso.used_capacity; p++) {
+            if (!meso.HasTombstone(p)) {
+                candidate_ids.push_back(meso.indices[p]);
+            }
+        }
+        const uint32_t n_candidates = static_cast<uint32_t>(candidate_ids.size());
+
+        std::vector<float> candidate_centroids(static_cast<size_t>(n_candidates) * d);
+        for (size_t i = 0; i < n_candidates; i++) {
+            std::memcpy(
+                candidate_centroids.data() + i * d,
+                index.centroids.data() + static_cast<size_t>(candidate_ids[i]) * d,
+                d * sizeof(float)
+            );
+        }
 
         std::unique_ptr<uint32_t[]> assignments(new uint32_t[num_embeddings]);
         std::unique_ptr<float[]> result_distances(new float[num_embeddings]);
@@ -1338,16 +1363,16 @@ class PDXTreeIndex : public IPDXIndex {
         Eigen::Map<VectorR> v_norms(embeddings_norms.data(), num_embeddings);
         v_norms.noalias() = embeddings_matrix.rowwise().squaredNorm();
 
-        std::vector<float> centroid_norms(index.num_clusters);
-        Eigen::Map<const MatrixR> centroids_matrix(index.centroids.data(), index.num_clusters, d);
-        Eigen::Map<VectorR> c_norms(centroid_norms.data(), index.num_clusters);
+        std::vector<float> centroid_norms(n_candidates);
+        Eigen::Map<const MatrixR> centroids_matrix(candidate_centroids.data(), n_candidates, d);
+        Eigen::Map<VectorR> c_norms(centroid_norms.data(), n_candidates);
         c_norms.noalias() = centroids_matrix.rowwise().squaredNorm();
 
         batch_computer::FindNearestNeighbor(
             embeddings,
-            index.centroids.data(),
+            candidate_centroids.data(),
             num_embeddings,
-            index.num_clusters,
+            n_candidates,
             d,
             embeddings_norms.data(),
             centroid_norms.data(),
@@ -1356,8 +1381,9 @@ class PDXTreeIndex : public IPDXIndex {
             tmp_distances_buf.get()
         );
 
+        // assignments[i] is an index into candidate_ids, map back to actual cluster ID
         for (size_t i = 0; i < num_embeddings; i++) {
-            auto best_cluster = assignments[i];
+            uint32_t best_cluster = candidate_ids[assignments[i]];
             uint32_t row_id = row_ids[i];
             uint32_t new_pos =
                 QuantizeAndAppend(index.clusters[best_cluster], row_id, embeddings + i * d);
