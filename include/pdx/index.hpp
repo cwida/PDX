@@ -420,9 +420,6 @@ class PDXIndex : public IPDXIndex {
             return PDXIndexType::PDX_U8;
     }
 
-    // Known bug: When the cluster is compacted, row_id_cluster_mapping is not updated,
-    // Which leads to inconsistency between the cluster's internal state and the mapping.
-    // This can cause errors in subsequent deletions or filtered searches that rely on the mapping.
     void BuildRowIdClusterMapping() {
         size_t total = 0;
         for (size_t c = 0; c < index.num_clusters; c++) {
@@ -604,8 +601,6 @@ class PDXTreeIndex : public IPDXIndex {
             // We confidently prune 1/8 of the search space
             n_probe_top_level = std::max(1u, n_probe_top_level / 8);
             top_level_searcher->SetNProbe(n_probe_top_level);
-            // We must pass the raw embedding to the top-level searcher
-            // TODO: We should be able to avoid this by changing the search interface
             std::vector<KNNCandidate> centroid_candidates =
                 top_level_searcher->Search(preprocessed.get(), 1, true);
             closest_centroid_idx = centroid_candidates[0].index;
@@ -1360,8 +1355,8 @@ class PDXTreeIndex : public IPDXIndex {
             for (size_t i = 0; i < cluster.num_embeddings; i++) {
                 const float* emb = cluster_embeddings.get() + i * d;
                 float dist_old = distance_computer_f32_t::Horizontal(emb, centroid_to_split, d);
-                // TODO(@lkuffo, crit): We can avoid this since we have the distance
-                // from k-means, we just need to bring it here!
+                // TODO(@lkuffo, med): We could avoid one of these
+                // since we have the distance from k-means, we just need to bring it here
                 float dist_a = distance_computer_f32_t::Horizontal(emb, centroid_a.get(), d);
                 float dist_b = distance_computer_f32_t::Horizontal(emb, centroid_b.get(), d);
                 float min_ab = std::min(dist_a, dist_b);
