@@ -48,6 +48,8 @@ static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[20] = {16,  16,  32,  32,   
                                                            64,  64,  64,  128,  128,  128,  128,
                                                            256, 256, 512, 1024, 2048, 16384};
 
+static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
+
 static constexpr bool AllFetchingSizesMultipleOfU8InterleaveSize() {
     for (auto s : DIMENSIONS_FETCHING_SIZES) {
         if (s % U8_INTERLEAVE_SIZE != 0) {
@@ -75,7 +77,6 @@ enum Quantization { F32, U8, F16, BF };
 
 enum class PDXIndexType : uint8_t { PDX_F32 = 0, PDX_U8 = 1, PDX_TREE_F32 = 2, PDX_TREE_U8 = 3 };
 
-// TODO: Do the same for indexes?
 template <Quantization Q>
 struct DistanceType {
     using type = uint32_t;
@@ -87,7 +88,6 @@ struct DistanceType<F32> {
 template <Quantization Q>
 using pdx_distance_t = typename DistanceType<Q>::type;
 
-// TODO: Do the same for indexes?
 template <Quantization Q>
 struct DataType {
     using type = uint8_t; // U8

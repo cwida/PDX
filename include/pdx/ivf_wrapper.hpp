@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pdx/cluster.hpp"
 #include "pdx/common.hpp"
 #include "pdx/utils.hpp"
 #include <cassert>
@@ -10,31 +11,6 @@
 #include <vector>
 
 namespace PDX {
-
-template <Quantization Q>
-struct Cluster {
-    using data_t = pdx_data_t<Q>;
-
-    Cluster(uint32_t num_embeddings, uint32_t num_dimensions)
-        : num_embeddings(num_embeddings), num_dimensions(num_dimensions),
-          indices(new uint32_t[num_embeddings]),
-          data(new data_t[static_cast<uint64_t>(num_embeddings) * num_dimensions]) {}
-
-    ~Cluster() {
-        delete[] data;
-        delete[] indices;
-    }
-
-    uint32_t num_embeddings{};
-    const uint32_t num_dimensions{};
-    uint32_t* indices = nullptr;
-    data_t* data = nullptr;
-
-    size_t GetInMemorySizeInBytes() const {
-        return sizeof(*this) + num_embeddings * sizeof(*indices) +
-               num_embeddings * static_cast<uint64_t>(num_dimensions) * sizeof(*data);
-    }
-};
 
 template <Quantization Q>
 class IVF {
@@ -48,6 +24,9 @@ class IVF {
     uint32_t num_vertical_dimensions{};
     uint32_t num_horizontal_dimensions{};
     std::vector<cluster_t> clusters;
+    size_t max_cluster_capacity{0};
+    size_t total_capacity{0};
+    std::unique_ptr<size_t[]> cluster_offsets;
     bool is_normalized{};
     std::vector<float> centroids;
 
@@ -91,6 +70,22 @@ class IVF {
         clusters.reserve(num_clusters);
     }
 
+    // Compute cluster_offsets, total_capacity, and max_cluster_capacity from current clusters.
+    // Must be called after all clusters have been created or after structural changes
+    // (split/merge).
+    void ComputeClusterOffsets() {
+        PDX_PROFILE_SCOPE("ComputeClusterOffsets");
+        cluster_offsets.reset(new size_t[num_clusters]);
+        total_capacity = 0;
+        max_cluster_capacity = 0;
+        for (size_t i = 0; i < num_clusters; ++i) {
+            cluster_offsets[i] = total_capacity;
+            total_capacity += clusters[i].max_capacity;
+            max_cluster_capacity =
+                std::max(max_cluster_capacity, static_cast<size_t>(clusters[i].max_capacity));
+        }
+    }
+
     void Load(char* input) {
         char* next_value = input;
         num_dimensions = ((uint32_t*) input)[0];
@@ -100,17 +95,15 @@ class IVF {
         next_value += sizeof(uint32_t) * 3;
         num_clusters = ((uint32_t*) next_value)[0];
         next_value += sizeof(uint32_t);
-        auto* nums_embeddings = (uint32_t*) next_value;
-        next_value += num_clusters * sizeof(uint32_t);
+        auto* cluster_headers = (uint32_t*) next_value;
+        next_value += num_clusters * 2 * sizeof(uint32_t);
         clusters.reserve(num_clusters);
         for (size_t i = 0; i < num_clusters; ++i) {
-            clusters.emplace_back(nums_embeddings[i], num_dimensions);
-            memcpy(
-                clusters[i].data,
-                next_value,
-                sizeof(data_t) * clusters[i].num_embeddings * num_dimensions
-            );
-            next_value += sizeof(data_t) * clusters[i].num_embeddings * num_dimensions;
+            uint32_t n_emb = cluster_headers[i * 2];
+            uint32_t max_cap = cluster_headers[i * 2 + 1];
+            clusters.emplace_back(n_emb, max_cap, num_dimensions);
+            clusters[i].id = i;
+            clusters[i].LoadPDXData(next_value);
         }
         for (size_t i = 0; i < num_clusters; ++i) {
             memcpy(clusters[i].indices, next_value, sizeof(uint32_t) * clusters[i].num_embeddings);
@@ -134,6 +127,7 @@ class IVF {
             quantization_scale_squared = quantization_scale * quantization_scale;
             inverse_quantization_scale_squared = 1.0f / quantization_scale_squared;
         }
+        ComputeClusterOffsets();
     }
 
     void Save(std::ostream& out) const {
@@ -144,12 +138,10 @@ class IVF {
 
         for (size_t i = 0; i < num_clusters; ++i) {
             out.write(reinterpret_cast<const char*>(&clusters[i].num_embeddings), sizeof(uint32_t));
+            out.write(reinterpret_cast<const char*>(&clusters[i].max_capacity), sizeof(uint32_t));
         }
         for (size_t i = 0; i < num_clusters; ++i) {
-            out.write(
-                reinterpret_cast<const char*>(clusters[i].data),
-                sizeof(data_t) * clusters[i].num_embeddings * num_dimensions
-            );
+            clusters[i].SavePDXData(out);
         }
         for (size_t i = 0; i < num_clusters; ++i) {
             out.write(
@@ -181,6 +173,7 @@ class IVF {
         in_memory_size_in_bytes +=
             (clusters.capacity() - clusters.size()) * sizeof(*clusters.data());
         in_memory_size_in_bytes += centroids.capacity() * sizeof(*centroids.data());
+        in_memory_size_in_bytes += num_clusters * sizeof(size_t); // cluster_offsets
         return in_memory_size_in_bytes;
     }
 };
@@ -242,18 +235,16 @@ class IVFTree : public IVF<Q> {
         l0.num_horizontal_dimensions = h_dims;
         l0.num_clusters = n_clusters_l0;
 
-        auto* nums_embeddings_l0 = (uint32_t*) next_value;
-        next_value += n_clusters_l0 * sizeof(uint32_t);
+        auto* l0_headers = (uint32_t*) next_value;
+        next_value += n_clusters_l0 * 2 * sizeof(uint32_t);
 
         l0.clusters.reserve(n_clusters_l0);
         for (size_t i = 0; i < n_clusters_l0; ++i) {
-            l0.clusters.emplace_back(nums_embeddings_l0[i], dims);
-            memcpy(
-                l0.clusters[i].data,
-                next_value,
-                sizeof(float) * l0.clusters[i].num_embeddings * dims
-            );
-            next_value += sizeof(float) * l0.clusters[i].num_embeddings * dims;
+            uint32_t n_emb = l0_headers[i * 2];
+            uint32_t max_cap = l0_headers[i * 2 + 1];
+            l0.clusters.emplace_back(n_emb, max_cap, dims);
+            l0.clusters[i].id = i;
+            l0.clusters[i].LoadPDXData(next_value);
         }
         for (size_t i = 0; i < n_clusters_l0; ++i) {
             memcpy(
@@ -268,18 +259,16 @@ class IVFTree : public IVF<Q> {
         this->num_horizontal_dimensions = h_dims;
         this->num_clusters = n_clusters_l1;
 
-        auto* nums_embeddings_l1 = (uint32_t*) next_value;
-        next_value += n_clusters_l1 * sizeof(uint32_t);
+        auto* l1_headers = (uint32_t*) next_value;
+        next_value += n_clusters_l1 * 2 * sizeof(uint32_t);
 
         this->clusters.reserve(n_clusters_l1);
         for (size_t i = 0; i < n_clusters_l1; ++i) {
-            this->clusters.emplace_back(nums_embeddings_l1[i], dims);
-            memcpy(
-                this->clusters[i].data,
-                next_value,
-                sizeof(data_t) * this->clusters[i].num_embeddings * dims
-            );
-            next_value += sizeof(data_t) * this->clusters[i].num_embeddings * dims;
+            uint32_t n_emb = l1_headers[i * 2];
+            uint32_t max_cap = l1_headers[i * 2 + 1];
+            this->clusters.emplace_back(n_emb, max_cap, dims);
+            this->clusters[i].id = i;
+            this->clusters[i].LoadPDXData(next_value);
         }
         for (size_t i = 0; i < n_clusters_l1; ++i) {
             memcpy(
@@ -310,6 +299,16 @@ class IVFTree : public IVF<Q> {
             this->quantization_scale_squared = this->quantization_scale * this->quantization_scale;
             this->inverse_quantization_scale_squared = 1.0f / this->quantization_scale_squared;
         }
+        // Set mesocluster_id on L1 clusters by scanning L0
+        for (uint32_t mc = 0; mc < n_clusters_l0; mc++) {
+            auto& l0c = l0.clusters[mc];
+            for (uint32_t p = 0; p < l0c.num_embeddings; p++) {
+                this->clusters[l0c.indices[p]].mesocluster_id = mc;
+            }
+        }
+
+        l0.ComputeClusterOffsets();
+        this->ComputeClusterOffsets();
     }
 
     void Save(std::ostream& out) const {
@@ -330,12 +329,12 @@ class IVFTree : public IVF<Q> {
             out.write(
                 reinterpret_cast<const char*>(&l0.clusters[i].num_embeddings), sizeof(uint32_t)
             );
+            out.write(
+                reinterpret_cast<const char*>(&l0.clusters[i].max_capacity), sizeof(uint32_t)
+            );
         }
         for (size_t i = 0; i < n_clusters_l0; ++i) {
-            out.write(
-                reinterpret_cast<const char*>(l0.clusters[i].data),
-                sizeof(float) * l0.clusters[i].num_embeddings * this->num_dimensions
-            );
+            l0.clusters[i].SavePDXData(out);
         }
         for (size_t i = 0; i < n_clusters_l0; ++i) {
             out.write(
@@ -349,12 +348,12 @@ class IVFTree : public IVF<Q> {
             out.write(
                 reinterpret_cast<const char*>(&this->clusters[i].num_embeddings), sizeof(uint32_t)
             );
+            out.write(
+                reinterpret_cast<const char*>(&this->clusters[i].max_capacity), sizeof(uint32_t)
+            );
         }
         for (size_t i = 0; i < this->num_clusters; ++i) {
-            out.write(
-                reinterpret_cast<const char*>(this->clusters[i].data),
-                sizeof(data_t) * this->clusters[i].num_embeddings * this->num_dimensions
-            );
+            this->clusters[i].SavePDXData(out);
         }
         for (size_t i = 0; i < this->num_clusters; ++i) {
             out.write(

@@ -12,12 +12,16 @@ add_executable(BenchmarkEndToEnd pdx_end_to_end.cpp)
 add_executable(BenchmarkSerialization pdx_serialization.cpp)
 add_executable(BenchmarkFiltered pdx_filtered.cpp)
 add_executable(BenchmarkSpecialFilters pdx_special_filtered.cpp)
+add_executable(BenchmarkInsertion pdx_insertion.cpp)
+add_executable(BenchmarkWorkload pdx_workload.cpp)
 
 target_link_libraries(BenchmarkPDXIVF ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkEndToEnd ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkSerialization ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkFiltered ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkSpecialFilters ${BENCH_COMMON_LIBS})
+target_link_libraries(BenchmarkInsertion ${BENCH_COMMON_LIBS})
+target_link_libraries(BenchmarkWorkload ${BENCH_COMMON_LIBS})
 
 add_custom_target(benchmarks
     DEPENDS
@@ -26,4 +30,6 @@ add_custom_target(benchmarks
         BenchmarkSerialization
         BenchmarkFiltered
         BenchmarkSpecialFilters
+        BenchmarkInsertion
+        BenchmarkWorkload
 )

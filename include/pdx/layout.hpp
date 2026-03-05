@@ -29,17 +29,21 @@ inline void StoreClusterEmbeddings<PDX::Quantization::F32, float>(
 
     const auto vertical_d = index.num_vertical_dimensions;
     const auto horizontal_d = index.num_horizontal_dimensions;
+    const auto stride = static_cast<Eigen::Index>(cluster.max_capacity);
 
     Eigen::Map<const matrix_t> in(embeddings, num_embeddings, index.num_dimensions);
 
-    Eigen::Map<matrix_t> out(cluster.data, vertical_d, num_embeddings);
+    // Vertical block: (vertical_d x num_embeddings) with row stride = max_capacity
+    Eigen::Map<matrix_t, 0, Eigen::OuterStride<Eigen::Dynamic>> out(
+        cluster.data, vertical_d, num_embeddings, Eigen::OuterStride<Eigen::Dynamic>(stride)
+    );
     out.noalias() = in.leftCols(vertical_d).transpose();
 
-    float* horizontal_out = cluster.data + num_embeddings * vertical_d;
+    float* horizontal_out = cluster.data + stride * vertical_d;
     for (size_t j = 0; j < horizontal_d; j += PDX::H_DIM_SIZE) {
         Eigen::Map<h_matrix_t> out_h(horizontal_out, num_embeddings, PDX::H_DIM_SIZE);
         out_h.noalias() = in.block(0, vertical_d + j, num_embeddings, PDX::H_DIM_SIZE);
-        horizontal_out += num_embeddings * PDX::H_DIM_SIZE;
+        horizontal_out += stride * PDX::H_DIM_SIZE;
     }
 }
 
@@ -57,29 +61,28 @@ inline void StoreClusterEmbeddings<PDX::Quantization::U8, uint8_t>(
 
     const auto vertical_d = index.num_vertical_dimensions;
     const auto horizontal_d = index.num_horizontal_dimensions;
+    const auto stride = static_cast<size_t>(cluster.max_capacity);
 
     Eigen::Map<const u8_matrix_t> in(embeddings, num_embeddings, index.num_dimensions);
 
     size_t dim = 0;
     for (; dim + PDX::U8_INTERLEAVE_SIZE <= vertical_d; dim += PDX::U8_INTERLEAVE_SIZE) {
         Eigen::Map<u8_v_matrix_t> out_v(
-            cluster.data + dim * num_embeddings, num_embeddings, PDX::U8_INTERLEAVE_SIZE
+            cluster.data + dim * stride, num_embeddings, PDX::U8_INTERLEAVE_SIZE
         );
         out_v.noalias() = in.block(0, dim, num_embeddings, PDX::U8_INTERLEAVE_SIZE);
     }
     if (dim < vertical_d) {
         auto remaining = static_cast<Eigen::Index>(vertical_d - dim);
-        Eigen::Map<u8_matrix_t> out_v(
-            cluster.data + dim * num_embeddings, num_embeddings, remaining
-        );
+        Eigen::Map<u8_matrix_t> out_v(cluster.data + dim * stride, num_embeddings, remaining);
         out_v.noalias() = in.block(0, dim, num_embeddings, remaining);
     }
 
-    uint8_t* horizontal_out = cluster.data + num_embeddings * vertical_d;
+    uint8_t* horizontal_out = cluster.data + stride * vertical_d;
     for (size_t j = 0; j < horizontal_d; j += PDX::H_DIM_SIZE) {
         Eigen::Map<u8_h_matrix_t> out_h(horizontal_out, num_embeddings, PDX::H_DIM_SIZE);
         out_h.noalias() = in.block(0, vertical_d + j, num_embeddings, PDX::H_DIM_SIZE);
-        horizontal_out += num_embeddings * PDX::H_DIM_SIZE;
+        horizontal_out += stride * PDX::H_DIM_SIZE;
     }
 }
 

@@ -39,6 +39,9 @@ __pycache__/
 venv
 .venv
 /build/
+/.cache/
+/.vscode/
+/.claude/
 /cmake-build-debug/
 /cmake-build-release/
 /cmake-build*/
@@ -76,6 +79,7 @@ pdxearch.egg-info
 /benchmarks/datasets/queries
 /benchmarks/datasets/selection_vectors
 /benchmarks/datasets/ground_truth_filtered
+/benchmarks/results/DEFAULT/*.csv
 
 /benchmarks/gt_filtered
 
@@ -101,6 +105,8 @@ cmake_install.cmake
 /benchmarks/BenchmarkPDXIVF
 /benchmarks/BenchmarkFiltered
 /benchmarks/BenchmarkSpecialFilters
+/benchmarks/BenchmarkInsertion
+/benchmarks/BenchmarkWorkload
 
 # Test binaries (but keep the committed test data)
 *.bin

@@ -1,9 +1,11 @@
 #pragma once
 
+#include "pdx/cluster.hpp"
 #include "pdx/common.hpp"
 #include "pdx/db_mock/predicate_evaluator.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/ivf_wrapper.hpp"
+#include "pdx/profiler.hpp"
 #include "pdx/pruners/adsampling.hpp"
 #include "pdx/quantizers/scalar.hpp"
 #include "pdx/utils.hpp"
@@ -29,6 +31,7 @@ class PDXearch {
     using quantized_embedding_t = pdx_quantized_embedding_t<Q>;
     using index_t = Index;
     using cluster_t = Cluster<Q>;
+    using tombstones_t = typename cluster_t::tombstones_t;
     using distance_computer_t = DistanceComputer<alpha, Q>;
 
     Quantizer quantizer;
@@ -36,16 +39,7 @@ class PDXearch {
     index_t& pdx_data;
 
     PDXearch(index_t& data_index, Pruner& pruner)
-        : quantizer(data_index.num_dimensions), pruner(pruner), pdx_data(data_index),
-          cluster_offsets(new size_t[data_index.num_clusters]) {
-        for (size_t i = 0; i < data_index.num_clusters; ++i) {
-            cluster_offsets[i] = total_embeddings;
-            total_embeddings += data_index.clusters[i].num_embeddings;
-            max_cluster_size = std::max(
-                max_cluster_size, static_cast<size_t>(data_index.clusters[i].num_embeddings)
-            );
-        }
-    }
+        : quantizer(data_index.num_dimensions), pruner(pruner), pdx_data(data_index) {}
 
     void SetNProbe(size_t nprobe) { ivf_nprobe = nprobe; }
 
@@ -59,14 +53,9 @@ class PDXearch {
         );
     }
 
-    std::unique_ptr<size_t[]> cluster_offsets;
-
   protected:
     float selectivity_threshold = 0.80;
     size_t ivf_nprobe = 0;
-
-    size_t total_embeddings{0};
-    size_t max_cluster_size{0};
 
     // Prioritized list of indices of the clusters to probe. E.g., [0, 2, 1].
     std::unique_ptr<uint32_t[]> cluster_indices_in_access_order;
@@ -177,6 +166,18 @@ class PDXearch {
         }
     };
 
+    void MaskDistancesWithTombstones(
+        const typename cluster_t::tombstones_t& tombstones,
+        distance_t* pruning_distances
+    ) {
+        if (tombstones.empty())
+            return;
+        const distance_t mask = std::numeric_limits<distance_t>::max() / 2;
+        for (uint32_t idx : tombstones) {
+            pruning_distances[idx] = mask;
+        }
+    }
+
     static void GetClustersAccessOrderIVF(
         const float* PDX_RESTRICT query,
         const index_t& data,
@@ -218,18 +219,20 @@ class PDXearch {
         const quantized_embedding_t* PDX_RESTRICT query,
         const data_t* data,
         const size_t n_vectors,
+        const size_t buffer_stride,
         uint32_t k,
         const uint32_t* vector_indices,
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap
+        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
+        const tombstones_t& tombstones
     ) {
         ResetPruningDistances(n_vectors, pruning_distances);
         distance_computer_t::Vertical(
             query,
             data,
             n_vectors,
-            n_vectors,
+            buffer_stride,
             0,
             pdx_data.num_vertical_dimensions,
             pruning_distances,
@@ -239,8 +242,9 @@ class PDXearch {
              horizontal_dimension < pdx_data.num_horizontal_dimensions;
              horizontal_dimension += H_DIM_SIZE) {
             for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
-                size_t data_pos = (pdx_data.num_vertical_dimensions * n_vectors) +
-                                  (horizontal_dimension * n_vectors) + (vector_idx * H_DIM_SIZE);
+                size_t data_pos = (pdx_data.num_vertical_dimensions * buffer_stride) +
+                                  (horizontal_dimension * buffer_stride) +
+                                  (vector_idx * H_DIM_SIZE);
                 pruning_distances[vector_idx] += distance_computer_t::Horizontal(
                     query + pdx_data.num_vertical_dimensions + horizontal_dimension,
                     data + data_pos,
@@ -248,6 +252,7 @@ class PDXearch {
                 );
             }
         }
+        MaskDistancesWithTombstones(tombstones, pruning_distances);
         size_t max_possible_k = std::min(
             static_cast<size_t>(k) - heap.size(),
             n_vectors
@@ -280,13 +285,15 @@ class PDXearch {
         const quantized_embedding_t* PDX_RESTRICT query,
         const data_t* data,
         const size_t n_vectors,
+        const size_t buffer_stride,
         uint32_t k,
         const uint32_t* vector_indices,
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
         std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
         uint8_t* selection_vector,
-        uint32_t passing_tuples
+        uint32_t passing_tuples,
+        const tombstones_t& tombstones
     ) {
         ResetPruningDistances(n_vectors, pruning_distances);
         size_t n_vectors_not_pruned = 0;
@@ -299,8 +306,8 @@ class PDXearch {
         for (size_t horizontal_dimension = 0;
              horizontal_dimension < pdx_data.num_horizontal_dimensions;
              horizontal_dimension += H_DIM_SIZE) {
-            size_t offset_data =
-                (pdx_data.num_vertical_dimensions * n_vectors) + (horizontal_dimension * n_vectors);
+            size_t offset_data = (pdx_data.num_vertical_dimensions * buffer_stride) +
+                                 (horizontal_dimension * buffer_stride);
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
@@ -317,7 +324,7 @@ class PDXearch {
                 query,
                 data,
                 n_vectors,
-                n_vectors,
+                buffer_stride,
                 0,
                 pdx_data.num_vertical_dimensions,
                 pruning_distances,
@@ -329,7 +336,7 @@ class PDXearch {
                 query,
                 data,
                 n_vectors_not_pruned,
-                n_vectors,
+                buffer_stride,
                 0,
                 pdx_data.num_vertical_dimensions,
                 pruning_distances,
@@ -340,6 +347,7 @@ class PDXearch {
         size_t max_possible_k =
             std::min(static_cast<size_t>(k) - heap.size(), static_cast<size_t>(passing_tuples));
         MaskDistancesWithSelectionVector(n_vectors, pruning_distances, selection_vector);
+        MaskDistancesWithTombstones(tombstones, pruning_distances);
         std::unique_ptr<size_t[]> indices_sorted(new size_t[n_vectors]);
         std::iota(indices_sorted.get(), indices_sorted.get() + n_vectors, static_cast<size_t>(0));
         std::partial_sort(
@@ -370,6 +378,7 @@ class PDXearch {
         const quantized_embedding_t* PDX_RESTRICT query,
         const data_t* PDX_RESTRICT data,
         const size_t n_vectors,
+        const size_t buffer_stride,
         uint32_t k,
         float tuples_threshold,
         uint32_t* pruning_positions,
@@ -378,6 +387,7 @@ class PDXearch {
         std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
         uint32_t& current_dimension_idx,
         size_t& n_vectors_not_pruned,
+        const tombstones_t& tombstones,
         uint32_t passing_tuples = 0,
         uint8_t* selection_vector = nullptr
     ) {
@@ -386,6 +396,7 @@ class PDXearch {
         size_t tuples_needed_to_exit =
             static_cast<size_t>(std::ceil(tuples_threshold * static_cast<float>(n_vectors)));
         ResetPruningDistances(n_vectors, pruning_distances);
+        MaskDistancesWithTombstones(tombstones, pruning_distances);
         uint32_t n_tuples_to_prune = 0;
         if constexpr (FILTERED) {
             float selection_percentage =
@@ -407,7 +418,7 @@ class PDXearch {
                 query,
                 data,
                 n_vectors,
-                n_vectors,
+                buffer_stride,
                 current_dimension_idx,
                 last_dimension_to_fetch,
                 pruning_distances,
@@ -429,6 +440,7 @@ class PDXearch {
         const quantized_embedding_t* PDX_RESTRICT query,
         const data_t* PDX_RESTRICT data,
         const size_t n_vectors,
+        const size_t buffer_stride,
         uint32_t k,
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
@@ -436,9 +448,11 @@ class PDXearch {
         std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
         uint32_t& current_dimension_idx,
         size_t& n_vectors_not_pruned,
+        const tombstones_t& tombstones,
         const uint8_t* selection_vector = nullptr
     ) {
         GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx);
+        MaskDistancesWithTombstones(tombstones, pruning_distances);
         InitPositionsArray<FILTERED>(
             n_vectors,
             n_vectors_not_pruned,
@@ -453,8 +467,8 @@ class PDXearch {
         while (pdx_data.num_horizontal_dimensions && n_vectors_not_pruned &&
                current_horizontal_dimension < pdx_data.num_horizontal_dimensions) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
-            size_t offset_data = (pdx_data.num_vertical_dimensions * n_vectors) +
-                                 (current_horizontal_dimension * n_vectors);
+            size_t offset_data = (pdx_data.num_vertical_dimensions * buffer_stride) +
+                                 (current_horizontal_dimension * buffer_stride);
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
@@ -495,7 +509,7 @@ class PDXearch {
                 query,
                 data,
                 cur_n_vectors_not_pruned,
-                n_vectors,
+                buffer_stride,
                 current_vertical_dimension,
                 last_dimension_to_test_idx,
                 pruning_distances,
@@ -579,18 +593,23 @@ class PDXearch {
     }
 
   public:
-    /******************************************************************
-     * Search methods
-     ******************************************************************/
-    std::vector<KNNCandidate> Search(const float* PDX_RESTRICT const raw_query, const uint32_t k) {
+    std::vector<KNNCandidate> Search(
+        const float* PDX_RESTRICT const raw_query,
+        const uint32_t k,
+        const bool is_query_trasnformed = false
+    ) {
         Heap local_heap{};
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
-        if (!pdx_data.is_normalized) {
-            pruner.PreprocessQuery(raw_query, query.get());
+        if (is_query_trasnformed) {
+            std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
         } else {
-            std::unique_ptr<float[]> normalized_query(new float[pdx_data.num_dimensions]);
-            quantizer.NormalizeQuery(raw_query, normalized_query.get());
-            pruner.PreprocessQuery(normalized_query.get(), query.get());
+            if (!pdx_data.is_normalized) {
+                pruner.PreprocessQuery(raw_query, query.get());
+            } else {
+                std::unique_ptr<float[]> normalized_query(new float[pdx_data.num_dimensions]);
+                quantizer.NormalizeQuery(raw_query, normalized_query.get());
+                pruner.PreprocessQuery(normalized_query.get(), query.get());
+            }
         }
         size_t clusters_to_visit = (ivf_nprobe == 0 || ivf_nprobe > pdx_data.num_clusters)
                                        ? pdx_data.num_clusters
@@ -628,8 +647,10 @@ class PDXearch {
             local_prepared_query = query.get();
         }
 
-        std::unique_ptr<distance_t[]> pruning_distances(new distance_t[max_cluster_size]);
-        std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[max_cluster_size]);
+        std::unique_ptr<distance_t[]> pruning_distances(
+            new distance_t[pdx_data.max_cluster_capacity]
+        );
+        std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[pdx_data.max_cluster_capacity]);
 
         for (size_t cluster_idx = 0; cluster_idx < clusters_to_visit; ++cluster_idx) {
             distance_t pruning_threshold = std::numeric_limits<distance_t>::max();
@@ -641,24 +662,28 @@ class PDXearch {
             if (cluster.num_embeddings == 0) {
                 continue;
             }
+            cluster.n_accessed++;
             if (local_heap.size() < k) {
                 // We cannot prune until we fill the heap
                 Start(
                     local_prepared_query,
                     cluster.data,
-                    cluster.num_embeddings,
+                    cluster.used_capacity,
+                    cluster.max_capacity,
                     k,
                     cluster.indices,
                     pruning_positions.get(),
                     pruning_distances.get(),
-                    local_heap
+                    local_heap,
+                    cluster.tombstones
                 );
                 continue;
             }
             Warmup(
                 local_prepared_query,
                 cluster.data,
-                cluster.num_embeddings,
+                cluster.used_capacity,
+                cluster.max_capacity,
                 k,
                 selectivity_threshold,
                 pruning_positions.get(),
@@ -666,19 +691,22 @@ class PDXearch {
                 pruning_threshold,
                 local_heap,
                 current_dimension_idx,
-                n_vectors_not_pruned
+                n_vectors_not_pruned,
+                cluster.tombstones
             );
             Prune(
                 local_prepared_query,
                 cluster.data,
-                cluster.num_embeddings,
+                cluster.used_capacity,
+                cluster.max_capacity,
                 k,
                 pruning_positions.get(),
                 pruning_distances.get(),
                 pruning_threshold,
                 local_heap,
                 current_dimension_idx,
-                n_vectors_not_pruned
+                n_vectors_not_pruned,
+                cluster.tombstones
             );
             if (n_vectors_not_pruned) {
                 MergeIntoHeap(
@@ -698,16 +726,21 @@ class PDXearch {
     std::vector<KNNCandidate> FilteredSearch(
         const float* PDX_RESTRICT const raw_query,
         const uint32_t k,
-        const PredicateEvaluator& predicate_evaluator
+        const PredicateEvaluator& predicate_evaluator,
+        const bool is_query_transformed = false
     ) {
         Heap local_heap{};
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
-        if (!pdx_data.is_normalized) {
-            pruner.PreprocessQuery(raw_query, query.get());
+        if (is_query_transformed) {
+            std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
         } else {
-            std::unique_ptr<float[]> normalized_query(new float[pdx_data.num_dimensions]);
-            quantizer.NormalizeQuery(raw_query, normalized_query.get());
-            pruner.PreprocessQuery(normalized_query.get(), query.get());
+            if (!pdx_data.is_normalized) {
+                pruner.PreprocessQuery(raw_query, query.get());
+            } else {
+                std::unique_ptr<float[]> normalized_query(new float[pdx_data.num_dimensions]);
+                quantizer.NormalizeQuery(raw_query, normalized_query.get());
+                pruner.PreprocessQuery(normalized_query.get(), query.get());
+            }
         }
 
         size_t clusters_to_visit = (ivf_nprobe == 0 || ivf_nprobe > pdx_data.num_clusters)
@@ -735,8 +768,10 @@ class PDXearch {
             local_prepared_query = query.get();
         }
 
-        std::unique_ptr<distance_t[]> pruning_distances(new distance_t[max_cluster_size]);
-        std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[max_cluster_size]);
+        std::unique_ptr<distance_t[]> pruning_distances(
+            new distance_t[pdx_data.max_cluster_capacity]
+        );
+        std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[pdx_data.max_cluster_capacity]);
 
         for (size_t cluster_idx = 0; cluster_idx < clusters_to_visit; ++cluster_idx) {
             distance_t pruning_threshold = std::numeric_limits<distance_t>::max();
@@ -745,7 +780,7 @@ class PDXearch {
 
             const size_t current_cluster_idx = local_cluster_order[cluster_idx];
             auto [selection_vector, passing_tuples] = predicate_evaluator.GetSelectionVector(
-                current_cluster_idx, cluster_offsets[current_cluster_idx]
+                current_cluster_idx, pdx_data.cluster_offsets[current_cluster_idx]
             );
             if (passing_tuples == 0) {
                 continue;
@@ -754,26 +789,30 @@ class PDXearch {
             if (cluster.num_embeddings == 0) {
                 continue;
             }
+            cluster.n_accessed++;
             if (local_heap.size() < k) {
                 // We cannot prune until we fill the heap
                 FilteredStart(
                     local_prepared_query,
                     cluster.data,
-                    cluster.num_embeddings,
+                    cluster.used_capacity,
+                    cluster.max_capacity,
                     k,
                     cluster.indices,
                     pruning_positions.get(),
                     pruning_distances.get(),
                     local_heap,
                     selection_vector,
-                    passing_tuples
+                    passing_tuples,
+                    cluster.tombstones
                 );
                 continue;
             }
             Warmup<true>(
                 local_prepared_query,
                 cluster.data,
-                cluster.num_embeddings,
+                cluster.used_capacity,
+                cluster.max_capacity,
                 k,
                 selectivity_threshold,
                 pruning_positions.get(),
@@ -782,13 +821,15 @@ class PDXearch {
                 local_heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
+                cluster.tombstones,
                 passing_tuples,
                 selection_vector
             );
             Prune<true>(
                 local_prepared_query,
                 cluster.data,
-                cluster.num_embeddings,
+                cluster.used_capacity,
+                cluster.max_capacity,
                 k,
                 pruning_positions.get(),
                 pruning_distances.get(),
@@ -796,6 +837,7 @@ class PDXearch {
                 local_heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
+                cluster.tombstones,
                 selection_vector
             );
             if (n_vectors_not_pruned) {

@@ -2,7 +2,6 @@
 #define BENCHMARK_TIME = true
 #endif
 
-#include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -21,14 +20,18 @@ void RunBenchmark(
     const std::string& algorithm,
     const float* data,
     const float* queries,
-    const std::vector<size_t>& nprobes_to_use
+    const std::vector<size_t>& nprobes_to_use,
+    const float proportion_to_build
 ) {
     const size_t d = info.num_dimensions;
     const size_t n = info.num_embeddings;
     const size_t n_queries = info.num_queries;
     uint8_t KNN = BenchmarkUtils::KNN;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
-    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "END_TO_END_PDX_ADSAMPLING.csv";
+    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "INSERTION_PDX.csv";
+
+    const size_t n_build = static_cast<size_t>(n * proportion_to_build);
+    const size_t n_insert = n - n_build;
 
     PDX::PDXIndexConfig index_config{
         .num_dimensions = static_cast<uint32_t>(d),
@@ -38,39 +41,44 @@ void RunBenchmark(
         .sampling_fraction = 1.0f
     };
 
-    std::cout << "Building index (num_clusters=auto)...\n";
-    auto build_start = std::chrono::high_resolution_clock::now();
+    // Build index with 75% of the data
+    TicToc clock;
+    std::cout << "Building index with " << n_build << " / " << n << " embeddings...\n";
+    clock.Reset();
+    clock.Tic();
     IndexT pdx_index(index_config);
-    pdx_index.BuildIndex(data, n);
-    auto build_end = std::chrono::high_resolution_clock::now();
-    double build_ms = std::chrono::duration<double, std::milli>(build_end - build_start).count();
-    std::cout << "Build time: " << build_ms << " ms\n";
+    pdx_index.BuildIndex(data, n_build);
+    clock.Toc();
+    std::cout << "Build time: " << clock.GetMilliseconds() << " ms\n";
     std::cout << "Clusters: " << pdx_index.GetNumClusters() << "\n";
     std::cout << "Index in-memory size: " << std::fixed << std::setprecision(2)
               << static_cast<double>(pdx_index.GetInMemorySizeInBytes()) / (1024.0 * 1024.0)
               << " MB\n";
 
-    // Load ground truth
-    bool use_skmeans_gt = false;
-    std::unordered_map<int, std::vector<int>> gt_map;
-    std::unique_ptr<char[]> gt_buffer;
-    uint32_t* int_ground_truth = nullptr;
-
-    if (use_skmeans_gt) {
-        std::string gt_path = GROUND_TRUTH_JSON_DIR + "/" + dataset + ".json";
-        gt_map = ParseGroundTruthJson(gt_path);
-        if (gt_map.empty()) {
-            std::cerr << "No ground truth found at " << gt_path << "\n";
-            return;
-        }
-        std::cout << "Ground truth loaded (json): " << gt_map.size() << " queries\n";
-    } else {
-        std::string gt_path =
-            BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm";
-        gt_buffer = MmapFile(gt_path);
-        int_ground_truth = reinterpret_cast<uint32_t*>(gt_buffer.get());
-        std::cout << "Ground truth loaded (pdx binary): " << gt_path << "\n";
+    // Insert remaining 25%
+    std::cout << "Inserting " << n_insert << " embeddings...\n";
+    clock.Reset();
+    clock.Tic();
+    for (size_t i = 0; i < n_insert; ++i) {
+        size_t row_id = n_build + i;
+        std::cout << "Inserting embedding " << row_id << " / " << n - 1 << "\r" << std::flush;
+        pdx_index.Append(row_id, data + row_id * d);
     }
+    clock.Toc();
+    std::cout << "Insertion time: " << clock.GetMilliseconds() << " ms\n";
+    std::cout << "Avg insertion time: " << clock.GetMilliseconds() / n_insert << " ms/embedding\n";
+    std::cout << "Clusters after insertion: " << pdx_index.GetNumClusters() << "\n";
+    std::cout << "Index in-memory size after insertion: " << std::fixed << std::setprecision(2)
+              << static_cast<double>(pdx_index.GetInMemorySizeInBytes()) / (1024.0 * 1024.0)
+              << " MB\n";
+
+    PDX::Profiler::Get().PrintHierarchical();
+
+    // Load ground truth
+    std::string gt_path = BenchmarkUtils::GROUND_TRUTH_DATA + info.pdx_dataset_name + "_100_norm";
+    auto gt_buffer = MmapFile(gt_path);
+    uint32_t* int_ground_truth = reinterpret_cast<uint32_t*>(gt_buffer.get());
+    std::cout << "Ground truth loaded: " << gt_path << "\n";
 
     for (size_t ivf_nprobe : nprobes_to_use) {
         if (pdx_index.GetNumClusters() < ivf_nprobe)
@@ -80,33 +88,24 @@ void RunBenchmark(
 
         // Recall pass
         float recalls = 0;
-        if (use_skmeans_gt) {
-            for (size_t l = 0; l < n_queries; ++l) {
-                auto result = pdx_index.Search(queries + l * d, KNN);
-                if (gt_map.count(static_cast<int>(l))) {
-                    recalls += ComputeRecallFromJson(result, gt_map.at(static_cast<int>(l)), KNN);
-                }
-            }
-        } else {
-            for (size_t l = 0; l < n_queries; ++l) {
-                auto result = pdx_index.Search(queries + l * d, KNN);
-                BenchmarkUtils::VerifyResult<true>(recalls, result, KNN, int_ground_truth, l);
-            }
+        for (size_t l = 0; l < n_queries; ++l) {
+            auto result = pdx_index.Search(queries + l * d, KNN);
+            BenchmarkUtils::VerifyResult<true>(recalls, result, KNN, int_ground_truth, l);
         }
 
+        // Timing pass
         std::vector<PhasesRuntime> runtimes;
         runtimes.resize(NUM_MEASURE_RUNS * n_queries);
-        TicToc clock;
+        TicToc search_clock;
         for (size_t j = 0; j < NUM_MEASURE_RUNS; ++j) {
             for (size_t l = 0; l < n_queries; ++l) {
-                clock.Reset();
-                clock.Tic();
+                search_clock.Reset();
+                search_clock.Tic();
                 pdx_index.Search(queries + l * d, KNN);
-                clock.Toc();
-                runtimes[j + l * NUM_MEASURE_RUNS] = {clock.accum_time};
+                search_clock.Toc();
+                runtimes[j + l * NUM_MEASURE_RUNS] = {search_clock.accum_time};
             }
         }
-        PDX::Profiler::Get().PrintHierarchical();
 
         BenchmarkMetadata results_metadata = {
             dataset,
@@ -123,8 +122,8 @@ void RunBenchmark(
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe]\n";
-        std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe] [build_fraction]\n";
+        std::cerr << "Index types: pdx_tree_f32 (default), pdx_tree_u8\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
@@ -133,8 +132,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::string dataset = argv[1];
-    std::string index_type = (argc > 2) ? argv[2] : "pdx_f32";
+    std::string index_type = (argc > 2) ? argv[2] : "pdx_tree_f32";
     size_t arg_ivf_nprobe = (argc > 3) ? std::atoi(argv[3]) : 0;
+    float proportion_to_build = (argc > 4) ? std::atof(argv[4]) : 0.75f;
+
+    if (proportion_to_build <= 0.0f || proportion_to_build >= 1.0f) {
+        std::cerr << "Error: build_fraction must be in (0, 1). Got: " << proportion_to_build
+                  << "\n";
+        return 1;
+    }
+
+    if (index_type != "pdx_tree_f32" && index_type != "pdx_tree_u8") {
+        std::cerr << "Error: Only pdx_tree_f32 and pdx_tree_u8 support maintenance (insertion).\n";
+        std::cerr << "Got: " << index_type << "\n";
+        return 1;
+    }
 
     auto it = RAW_DATASET_PARAMS.find(dataset);
     if (it == RAW_DATASET_PARAMS.end()) {
@@ -146,7 +158,9 @@ int main(int argc, char* argv[]) {
     const size_t d = info.num_dimensions;
     const size_t n_queries = info.num_queries;
 
-    std::cout << "==> PDX End-to-End (Build + Search)\n";
+    std::cout << "==> PDX Insertion Benchmark (Build "
+              << static_cast<int>(proportion_to_build * 100) << "% + Insert "
+              << static_cast<int>((1.0f - proportion_to_build) * 100) << "% + Search)\n";
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "Index type: " << index_type << "\n";
 
@@ -183,28 +197,28 @@ int main(int argc, char* argv[]) {
         );
     }
 
-    std::string algorithm = "end_to_end_" + index_type;
+    std::string algorithm = "insertion_" + index_type;
 
-    if (index_type == "pdx_f32") {
-        RunBenchmark<PDX::PDXIndexF32>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
-        );
-    } else if (index_type == "pdx_u8") {
-        RunBenchmark<PDX::PDXIndexU8>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
-        );
-    } else if (index_type == "pdx_tree_f32") {
+    if (index_type == "pdx_tree_f32") {
         RunBenchmark<PDX::PDXTreeIndexF32>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
+            info,
+            dataset,
+            algorithm,
+            data.data(),
+            queries.data(),
+            nprobes_to_use,
+            proportion_to_build
         );
     } else if (index_type == "pdx_tree_u8") {
         RunBenchmark<PDX::PDXTreeIndexU8>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
+            info,
+            dataset,
+            algorithm,
+            data.data(),
+            queries.data(),
+            nprobes_to_use,
+            proportion_to_build
         );
-    } else {
-        std::cerr << "Unknown index type: " << index_type << "\n";
-        std::cerr << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
-        return 1;
     }
 
     return 0;

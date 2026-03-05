@@ -35,7 +35,8 @@ struct KMeansResult {
     const bool normalize = false,
     const float sampling_fraction = 0.0f,
     const uint32_t kmeans_iters = 8,
-    const bool hierarchical_indexing = true
+    const bool hierarchical_indexing = true,
+    const uint32_t n_threads = 0
 ) {
     assert(num_embeddings >= 1);
     assert(num_dimensions >= 1);
@@ -76,11 +77,17 @@ struct KMeansResult {
         config.iters_refinement = 0;
         config.seed = seed;
         // config.verbose = true;
-        config.n_threads = PDX::g_n_threads;
+        config.n_threads = n_threads > 0 ? n_threads : PDX::g_n_threads;
         auto kmeans = skmeans::HierarchicalSuperKMeans(num_clusters, num_dimensions, config);
         result.centroids = kmeans.Train(embeddings, num_embeddings);
-        assignments =
-            kmeans.FastAssign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
+        if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+            assignments = kmeans.FastAssign(
+                embeddings, result.centroids.data(), num_embeddings, num_clusters
+            );
+        } else {
+            assignments =
+                kmeans.Assign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
+        }
     } else {
         skmeans::SuperKMeansConfig config;
         config.sampling_fraction = chosen_sampling_fraction;
@@ -90,11 +97,17 @@ struct KMeansResult {
         config.iters = kmeans_iters;
         config.seed = seed;
         // config.verbose = true;
-        config.n_threads = PDX::g_n_threads;
+        config.n_threads = n_threads > 0 ? n_threads : PDX::g_n_threads;
         auto kmeans = skmeans::SuperKMeans(num_clusters, num_dimensions, config);
         result.centroids = kmeans.Train(embeddings, num_embeddings);
-        assignments =
-            kmeans.FastAssign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
+        if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+            assignments = kmeans.FastAssign(
+                embeddings, result.centroids.data(), num_embeddings, num_clusters
+            );
+        } else {
+            assignments =
+                kmeans.Assign(embeddings, result.centroids.data(), num_embeddings, num_clusters);
+        }
     }
 
     // Convert from vec_id -> centroid_idx into centroid_idx -> vec_id
