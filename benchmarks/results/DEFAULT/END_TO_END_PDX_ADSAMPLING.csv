@@ -1,6 +1,0 @@
-dataset,algorithm,avg,max,min,recall,ivf_nprobe,epsilon,knn,n_queries,selectivity,num_measure_runs,avg_all,max_all,min_all
-openai,end_to_end_pdx_tree_f32,0.814193,1.44021,0.271917,0.856001,30,0,20,1000,0,1,0.8259,2.165,0.2719
-arxiv,end_to_end_pdx_tree_f32,0.513065,0.907666,0.186458,0.900001,30,0,20,1000,0,1,0.531,2.396,0.1865
-arxiv,end_to_end_pdx_tree_u8,0.155841,0.238916,0.081291,0.857202,20,0,20,1000,0,1,0.1573,0.3477,0.08129
-arxiv,end_to_end_pdx_tree_u8,0.235583,0.3665,0.118583,0.913552,40,0,20,1000,0,1,0.2367,0.4637,0.1186
-arxiv,end_to_end_pdx_tree_u8,0.215276,0.329833,0.107459,0.906902,36,0,20,1000,0,1,0.2168,0.4074,0.1075

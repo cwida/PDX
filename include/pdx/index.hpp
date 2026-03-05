@@ -1037,9 +1037,17 @@ class PDXTreeIndex : public IPDXIndex {
         }
 
         KMeansResult split_result = ComputeKMeans(
-            l1_centroids.data(), num_embeddings, d,
-            2, config.distance_metric, config.seed,
-            true, 1.0f, 4, false, 1
+            l1_centroids.data(),
+            num_embeddings,
+            d,
+            2,
+            config.distance_metric,
+            config.seed,
+            true,
+            1.0f,
+            4,
+            false,
+            1
         );
         auto& group_a = split_result.assignments[0];
         auto& group_b = split_result.assignments[1];
@@ -1051,19 +1059,29 @@ class PDXTreeIndex : public IPDXIndex {
         for (size_t i = 0; i < group_a.size(); i++) {
             ids_a[i] = l1_ids[group_a[i]];
             const float* c = l1_centroids.data() + static_cast<size_t>(group_a[i]) * d;
-            for (uint32_t j = 0; j < d; j++) centroid_sum_a[j] += c[j];
+            for (uint32_t j = 0; j < d; j++)
+                centroid_sum_a[j] += c[j];
         }
         for (size_t i = 0; i < group_b.size(); i++) {
             ids_b[i] = l1_ids[group_b[i]];
             const float* c = l1_centroids.data() + static_cast<size_t>(group_b[i]) * d;
-            for (uint32_t j = 0; j < d; j++) centroid_sum_b[j] += c[j];
+            for (uint32_t j = 0; j < d; j++)
+                centroid_sum_b[j] += c[j];
         }
         std::unique_ptr<float[]> true_centroid_a(new float[d]);
         std::unique_ptr<float[]> true_centroid_b(new float[d]);
-        ComputeCentroidMean(centroid_sum_a.get(), group_a.size(),
-                            split_result.centroids.data(), true_centroid_a.get());
-        ComputeCentroidMean(centroid_sum_b.get(), group_b.size(),
-                            split_result.centroids.data() + d, true_centroid_b.get());
+        ComputeCentroidMean(
+            centroid_sum_a.get(),
+            group_a.size(),
+            split_result.centroids.data(),
+            true_centroid_a.get()
+        );
+        ComputeCentroidMean(
+            centroid_sum_b.get(),
+            group_b.size(),
+            split_result.centroids.data() + d,
+            true_centroid_b.get()
+        );
 
         // Create new L0 clusters
         ReserveL0ClusterSlotIfNeeded();
@@ -1105,7 +1123,8 @@ class PDXTreeIndex : public IPDXIndex {
         // Update L0 centroids
         std::memcpy(
             index.l0.centroids.data() + static_cast<size_t>(l0_cluster_id) * d,
-            true_centroid_a.get(), d * sizeof(float)
+            true_centroid_a.get(),
+            d * sizeof(float)
         );
         index.l0.centroids.insert(
             index.l0.centroids.end(), true_centroid_b.get(), true_centroid_b.get() + d
@@ -1430,16 +1449,22 @@ class PDXTreeIndex : public IPDXIndex {
                     q_a.reset(new query_t[d]);
                     q_b.reset(new query_t[d]);
                     searcher->quantizer.QuantizeEmbedding(
-                        neighbor_centroid, index.quantization_base,
-                        index.quantization_scale, q_own.get()
+                        neighbor_centroid,
+                        index.quantization_base,
+                        index.quantization_scale,
+                        q_own.get()
                     );
                     searcher->quantizer.QuantizeEmbedding(
-                        centroid_a.get(), index.quantization_base,
-                        index.quantization_scale, q_a.get()
+                        centroid_a.get(),
+                        index.quantization_base,
+                        index.quantization_scale,
+                        q_a.get()
                     );
                     searcher->quantizer.QuantizeEmbedding(
-                        centroid_b.get(), index.quantization_base,
-                        index.quantization_scale, q_b.get()
+                        centroid_b.get(),
+                        index.quantization_base,
+                        index.quantization_scale,
+                        q_b.get()
                     );
                     query_own = q_own.get();
                     query_a = q_a.get();
@@ -1450,15 +1475,12 @@ class PDXTreeIndex : public IPDXIndex {
                     query_b = centroid_b.get();
                 }
 
-                auto distances_to_own = CalculateDistanceFromEmbeddingToCluster(
-                    query_own, neighbor.data, neighbor
-                );
-                auto distances_to_a = CalculateDistanceFromEmbeddingToCluster(
-                    query_a, neighbor.data, neighbor
-                );
-                auto distances_to_b = CalculateDistanceFromEmbeddingToCluster(
-                    query_b, neighbor.data, neighbor
-                );
+                auto distances_to_own =
+                    CalculateDistanceFromEmbeddingToCluster(query_own, neighbor.data, neighbor);
+                auto distances_to_a =
+                    CalculateDistanceFromEmbeddingToCluster(query_a, neighbor.data, neighbor);
+                auto distances_to_b =
+                    CalculateDistanceFromEmbeddingToCluster(query_b, neighbor.data, neighbor);
 
                 for (uint32_t p = 0; p < neighbor.used_capacity; p++) {
                     if (neighbor.HasTombstone(p))
@@ -1568,9 +1590,7 @@ class PDXTreeIndex : public IPDXIndex {
             uint32_t pos = FindPositionInMesoCluster(cluster_id, mesocluster_id);
             index.l0.clusters[mesocluster_id].DeleteEmbedding(pos);
             index.l0.clusters[mesocluster_id].CompactCluster();
-            index.l0.clusters[mesocluster_id].AppendEmbedding(
-                cluster_id, true_centroid_a.get()
-            );
+            index.l0.clusters[mesocluster_id].AppendEmbedding(cluster_id, true_centroid_a.get());
             // CheckL0ClusterHealth may reallocate index.l0.clusters
             CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
             index.l0.clusters[mesocluster_id].AppendEmbedding(
@@ -1676,15 +1696,14 @@ class PDXTreeIndex : public IPDXIndex {
         const query_t* embedding,
         const embedding_storage_t* pdx_embeddings,
         cluster_t& cluster
-    ){
+    ) {
         PDX_PROFILE_SCOPE("Split/CalculatePDXDistance");
         using distance_computer_t = DistanceComputer<DistanceMetric::L2SQ, Q>;
 
         auto n_vectors = cluster.used_capacity;
         auto buffer_stride = cluster.max_capacity;
-        std::unique_ptr<distance_t[]> pruning_distances = std::make_unique<distance_t[]>(
-            cluster.used_capacity
-        );
+        std::unique_ptr<distance_t[]> pruning_distances =
+            std::make_unique<distance_t[]>(cluster.used_capacity);
         std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[cluster.used_capacity]);
         distance_computer_t::Vertical(
             embedding,
@@ -1697,12 +1716,12 @@ class PDXTreeIndex : public IPDXIndex {
             pruning_positions.get()
         );
         for (size_t horizontal_dimension = 0;
-                horizontal_dimension < index.num_horizontal_dimensions;
-                horizontal_dimension += H_DIM_SIZE) {
+             horizontal_dimension < index.num_horizontal_dimensions;
+             horizontal_dimension += H_DIM_SIZE) {
             for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
                 size_t data_pos = (index.num_vertical_dimensions * buffer_stride) +
-                                    (horizontal_dimension * buffer_stride) +
-                                    (vector_idx * H_DIM_SIZE);
+                                  (horizontal_dimension * buffer_stride) +
+                                  (vector_idx * H_DIM_SIZE);
                 pruning_distances[vector_idx] += distance_computer_t::Horizontal(
                     embedding + index.num_vertical_dimensions + horizontal_dimension,
                     pdx_embeddings + data_pos,
@@ -1712,7 +1731,6 @@ class PDXTreeIndex : public IPDXIndex {
         }
         return pruning_distances;
     }
-
 };
 
 using PDXIndexF32 = PDXIndex<PDX::F32>;

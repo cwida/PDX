@@ -79,6 +79,7 @@ pdxearch.egg-info
 /benchmarks/datasets/queries
 /benchmarks/datasets/selection_vectors
 /benchmarks/datasets/ground_truth_filtered
+/benchmarks/results/DEFAULT/*.csv
 
 /benchmarks/gt_filtered
 
