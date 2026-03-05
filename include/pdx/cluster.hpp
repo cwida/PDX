@@ -215,7 +215,8 @@ struct Cluster {
 
     // Gather all embeddings from the PDX layout into a contiguous row-major buffer.
     // Assumes no tombstones (call CompactCluster first).
-    // TODO(@lkuffo, high): Can we do better?
+    // Uses blocked transpose for the vertical block and group-first iteration for
+    // the horizontal block to maximise cache locality on the source side.
     std::unique_ptr<data_t[]> GetHorizontalEmbeddingsFromPDXBuffer() const {
         std::unique_ptr<data_t[]> out(
             new data_t[static_cast<size_t>(num_embeddings) * num_dimensions]

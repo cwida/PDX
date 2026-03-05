@@ -867,6 +867,7 @@ class PDXTreeIndex : public IPDXIndex {
         const embedding_storage_t* raw_embeddings,
         uint32_t n_emb
     ) const {
+        PDX_PROFILE_SCOPE("Dequantize");
         std::unique_ptr<float[]> result(new float[static_cast<size_t>(n_emb) * d]);
         if constexpr (Q == U8) {
             for (size_t i = 0; i < n_emb; i++) {
@@ -1002,7 +1003,7 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     // ******************************************
-    // L0 (Mesocluster) Maintenance
+    // L0 (Mesoclusters) Maintenance
     // ******************************************
 
     void CheckL0ClusterHealth(Cluster<F32>& l0_cluster, bool allow_merges = true) {
@@ -1220,7 +1221,7 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     // ******************************************
-    // L1 (Cluster) Maintenance
+    // L1 (Leaf Clusters) Maintenance
     // ******************************************
 
     void CheckClusterHealth(cluster_t& cluster, bool allow_merges = true) {
@@ -1419,10 +1420,59 @@ class PDXTreeIndex : public IPDXIndex {
                 const float* neighbor_centroid =
                     index.centroids.data() + static_cast<size_t>(neighbor_id) * d;
 
+                // Quantize centroids for U8, or use directly for F32
+                std::unique_ptr<query_t[]> q_own, q_a, q_b;
+                const query_t* query_own;
+                const query_t* query_a;
+                const query_t* query_b;
+                if constexpr (Q == U8) {
+                    q_own.reset(new query_t[d]);
+                    q_a.reset(new query_t[d]);
+                    q_b.reset(new query_t[d]);
+                    searcher->quantizer.QuantizeEmbedding(
+                        neighbor_centroid, index.quantization_base,
+                        index.quantization_scale, q_own.get()
+                    );
+                    searcher->quantizer.QuantizeEmbedding(
+                        centroid_a.get(), index.quantization_base,
+                        index.quantization_scale, q_a.get()
+                    );
+                    searcher->quantizer.QuantizeEmbedding(
+                        centroid_b.get(), index.quantization_base,
+                        index.quantization_scale, q_b.get()
+                    );
+                    query_own = q_own.get();
+                    query_a = q_a.get();
+                    query_b = q_b.get();
+                } else {
+                    query_own = neighbor_centroid;
+                    query_a = centroid_a.get();
+                    query_b = centroid_b.get();
+                }
+
+                auto distances_to_own = CalculateDistanceFromEmbeddingToCluster(
+                    query_own, neighbor.data, neighbor
+                );
+                auto distances_to_a = CalculateDistanceFromEmbeddingToCluster(
+                    query_a, neighbor.data, neighbor
+                );
+                auto distances_to_b = CalculateDistanceFromEmbeddingToCluster(
+                    query_b, neighbor.data, neighbor
+                );
+
                 for (uint32_t p = 0; p < neighbor.used_capacity; p++) {
                     if (neighbor.HasTombstone(p))
                         continue;
 
+                    distance_t dist_a = distances_to_a[p];
+                    distance_t dist_b = distances_to_b[p];
+                    distance_t dist_to_own = distances_to_own[p];
+
+                    if (dist_to_own < dist_a && dist_to_own < dist_b) {
+                        continue;
+                    }
+
+                    // We need the horizontal embedding (this happens in less than 1% of points)
                     auto raw_emb = neighbor.GetHorizontalEmbeddingFromPDXBuffer(p);
                     const float* emb_ptr;
                     std::unique_ptr<float[]> emb_f32;
@@ -1439,21 +1489,14 @@ class PDXTreeIndex : public IPDXIndex {
                         emb_ptr = raw_emb.get();
                     }
 
-                    float dist_own =
-                        distance_computer_f32_t::Horizontal(emb_ptr, neighbor_centroid, d);
-                    float dist_a =
-                        distance_computer_f32_t::Horizontal(emb_ptr, centroid_a.get(), d);
-                    float dist_b =
-                        distance_computer_f32_t::Horizontal(emb_ptr, centroid_b.get(), d);
-
-                    if (dist_a < dist_own && dist_a <= dist_b) {
+                    if (dist_a <= dist_b) {
                         uint32_t row_id = neighbor.indices[p];
                         neighbor.DeleteEmbedding(p);
                         embs_a.insert(embs_a.end(), raw_emb.get(), raw_emb.get() + d);
                         ids_a.push_back(row_id);
                         for (size_t j = 0; j < d; j++)
                             centroid_sum_a[j] += emb_ptr[j];
-                    } else if (dist_b < dist_own && dist_b < dist_a) {
+                    } else if (dist_b < dist_a) {
                         uint32_t row_id = neighbor.indices[p];
                         neighbor.DeleteEmbedding(p);
                         embs_b.insert(embs_b.end(), raw_emb.get(), raw_emb.get() + d);
@@ -1464,7 +1507,6 @@ class PDXTreeIndex : public IPDXIndex {
                 }
             }
         }
-
         // Compute true centroids from accumulated sums
         size_t count_a = ids_a.size();
         size_t count_b = ids_b.size();
@@ -1524,12 +1566,16 @@ class PDXTreeIndex : public IPDXIndex {
             }
             // Update L0: remove old centroid, add both new centroids
             uint32_t pos = FindPositionInMesoCluster(cluster_id, mesocluster_id);
-            auto& l0_cluster = index.l0.clusters[mesocluster_id];
-            l0_cluster.DeleteEmbedding(pos);
-            l0_cluster.CompactCluster();
-            l0_cluster.AppendEmbedding(cluster_id, true_centroid_a.get());
-            CheckL0ClusterHealth(l0_cluster);
-            l0_cluster.AppendEmbedding(new_cluster_b_id, true_centroid_b.get());
+            index.l0.clusters[mesocluster_id].DeleteEmbedding(pos);
+            index.l0.clusters[mesocluster_id].CompactCluster();
+            index.l0.clusters[mesocluster_id].AppendEmbedding(
+                cluster_id, true_centroid_a.get()
+            );
+            // CheckL0ClusterHealth may reallocate index.l0.clusters
+            CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
+            index.l0.clusters[mesocluster_id].AppendEmbedding(
+                new_cluster_b_id, true_centroid_b.get()
+            );
             index.l0.total_num_embeddings++;
         }
 
@@ -1622,6 +1668,51 @@ class PDXTreeIndex : public IPDXIndex {
             CheckClusterHealth(index.clusters[best_cluster], allow_merges);
         }
     }
+
+    using distance_t = pdx_distance_t<Q>;
+    using query_t = pdx_quantized_embedding_t<Q>;
+
+    inline std::unique_ptr<distance_t[]> CalculateDistanceFromEmbeddingToCluster(
+        const query_t* embedding,
+        const embedding_storage_t* pdx_embeddings,
+        cluster_t& cluster
+    ){
+        PDX_PROFILE_SCOPE("Split/CalculatePDXDistance");
+        using distance_computer_t = DistanceComputer<DistanceMetric::L2SQ, Q>;
+
+        auto n_vectors = cluster.used_capacity;
+        auto buffer_stride = cluster.max_capacity;
+        std::unique_ptr<distance_t[]> pruning_distances = std::make_unique<distance_t[]>(
+            cluster.used_capacity
+        );
+        std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[cluster.used_capacity]);
+        distance_computer_t::Vertical(
+            embedding,
+            pdx_embeddings,
+            n_vectors,
+            buffer_stride,
+            0,
+            index.num_vertical_dimensions,
+            pruning_distances.get(),
+            pruning_positions.get()
+        );
+        for (size_t horizontal_dimension = 0;
+                horizontal_dimension < index.num_horizontal_dimensions;
+                horizontal_dimension += H_DIM_SIZE) {
+            for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
+                size_t data_pos = (index.num_vertical_dimensions * buffer_stride) +
+                                    (horizontal_dimension * buffer_stride) +
+                                    (vector_idx * H_DIM_SIZE);
+                pruning_distances[vector_idx] += distance_computer_t::Horizontal(
+                    embedding + index.num_vertical_dimensions + horizontal_dimension,
+                    pdx_embeddings + data_pos,
+                    H_DIM_SIZE
+                );
+            }
+        }
+        return pruning_distances;
+    }
+
 };
 
 using PDXIndexF32 = PDXIndex<PDX::F32>;
