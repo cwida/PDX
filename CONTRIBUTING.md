@@ -5,11 +5,9 @@ We are actively developing PDX and accepting contributions! Any kind of PR is we
 These are our current priorities:
 
 **Features**:
-- Inserts and Updates (wip).
 - Out-of-core execution (disk-based setting).
 - Implement multi-threading capabilities.
 - Add PDX to the [VIBE benchmark](https://vector-index-bench.github.io/).
-- Create a documentation.
 
 **Improvements**:
 - Regression tests on CI.

@@ -21,7 +21,9 @@
 - ⚡ [**Sub-millisecond similarity search**](https://www.lkuffo.com/sub-milisecond-similarity-search-with-pdx/), up to [**10x faster**](./BENCHMARKING.md#two-level-ivf-ivf2-) than FAISS IVF.
 - ⚡ Up to [**30x faster**](./BENCHMARKING.md#exhaustive-search--ivf) exhaustive search.
 - 🔍 Efficient [**filtered search**](https://github.com/cwida/PDX/issues/7).
+- Fast and reliable [**index maintenance**](https://github.com/cwida/PDX/pull/13).
 - Query latency competitive with HNSW, with the ease of use of IVF.
+
 
 ## Our secret sauce
 
@@ -42,14 +44,20 @@ query = ... # Numpy 1D array
 d = 1024
 knn = 20
 
+# Build
 index = IndexPDXIVFTreeSQ8(num_dimensions=d)
 index.build(data)
 
+# Search
 ids, dists = index.search(query, knn)
+
+# Maintenance
+index.append(row_id_to_insert, new_embedding)
+index.delete(row_id_to_delete)
 
 ```
 
-`IndexPDXIVFTreeSQ8` is our fastest index that will give you the best performance. It is a two-level IVF index with 8-bit quantization.
+`IndexPDXIVFTreeSQ8` is our fastest index that will give you the best performance alongside lightweight maintenance. It is a two-level IVF index with 8-bit quantization.
 
 Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We support Flat (`float32`) and Quantized (`8-bit`) indexes, as well as the most common distance metrics. 
 

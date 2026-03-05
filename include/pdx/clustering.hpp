@@ -110,10 +110,6 @@ struct KMeansResult {
         }
     }
 
-    if (num_embeddings > 100000) {
-        skmeans::Profiler::Get().Reset();
-    }
-
     // Convert from vec_id -> centroid_idx into centroid_idx -> vec_id
     result.assignments.resize(num_clusters);
     for (uint64_t vec_id = 0; vec_id < num_embeddings; vec_id++) {
