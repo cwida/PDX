@@ -21,7 +21,7 @@
 - ⚡ [**Sub-millisecond similarity search**](https://www.lkuffo.com/sub-milisecond-similarity-search-with-pdx/), up to [**10x faster**](./BENCHMARKING.md#two-level-ivf-ivf2-) than FAISS IVF.
 - ⚡ Up to [**30x faster**](./BENCHMARKING.md#exhaustive-search--ivf) exhaustive search.
 - 🔍 Efficient [**filtered search**](https://github.com/cwida/PDX/issues/7).
-- Fast and reliable [**index maintenance**](https://github.com/cwida/PDX/pull/13).
+- ⚙️ Fast and reliable [**index maintenance**](https://github.com/cwida/PDX/pull/13).
 - Query latency competitive with HNSW, with the ease of use of IVF.
 
 
