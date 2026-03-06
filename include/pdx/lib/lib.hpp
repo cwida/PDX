@@ -7,7 +7,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 
 namespace py = pybind11;
 

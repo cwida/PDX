@@ -6,7 +6,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 #include "test_utils.hpp"
 
 namespace {

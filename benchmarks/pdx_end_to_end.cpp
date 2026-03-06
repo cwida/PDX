@@ -10,7 +10,8 @@
 #include <vector>
 
 #include "benchmark_utils.hpp"
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 #include "pdx/profiler.hpp"
 #include "pdx/utils.hpp"
 

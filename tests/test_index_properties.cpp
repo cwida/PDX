@@ -4,7 +4,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 #include "superkmeans/pdx/utils.h"
 #include "test_utils.hpp"
 

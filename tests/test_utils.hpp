@@ -12,7 +12,8 @@
 #include <vector>
 
 #include "pdx/distance_computers/scalar_computers.hpp"
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 
 namespace TestUtils {
 

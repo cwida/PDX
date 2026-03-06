@@ -1,10 +1,10 @@
 #pragma once
 
-#include "pdx/cluster.hpp"
 #include "pdx/common.hpp"
 #include "pdx/db_mock/predicate_evaluator.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
-#include "pdx/ivf_wrapper.hpp"
+#include "pdx/indexes/cluster.hpp"
+#include "pdx/indexes/ivf_core.hpp"
 #include "pdx/profiler.hpp"
 #include "pdx/pruners/adsampling.hpp"
 #include "pdx/quantizers/scalar.hpp"

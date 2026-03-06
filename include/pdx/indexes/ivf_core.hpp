@@ -1,7 +1,7 @@
 #pragma once
 
-#include "pdx/cluster.hpp"
 #include "pdx/common.hpp"
+#include "pdx/indexes/cluster.hpp"
 #include "pdx/utils.hpp"
 #include <cassert>
 #include <cstdint>
