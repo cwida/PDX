@@ -90,7 +90,7 @@ class ADSamplingPruner {
 
     float GetPruningThreshold(
         uint32_t,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
+        Heap& heap,
         const uint32_t current_dimension_idx
     ) const {
         float ratio = current_dimension_idx == num_dimensions ? 1 : ratios[current_dimension_idx];

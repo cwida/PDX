@@ -9,6 +9,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "pdx/common.hpp"
@@ -29,7 +30,7 @@ class IPDXIndex {
         const std::vector<size_t>& passing_row_ids
     ) const = 0;
     virtual void BuildIndex(const float* embeddings, size_t num_embeddings) = 0;
-    virtual void SetNProbe(uint32_t n_probe) const = 0;
+    virtual void SetNProbe(uint32_t n_probe) = 0;
     virtual void Save(const std::string& path) = 0;
     virtual void Restore(const std::string& path) = 0;
     virtual uint32_t GetNumDimensions() const = 0;
@@ -52,11 +53,13 @@ class PDXIndex : public IPDXIndex {
     using cluster_t = PDX::Cluster<Q>;
 
   private:
+    static constexpr uint32_t DELETED_MARKER = std::numeric_limits<uint32_t>::max();
+
     PDXIndexConfig config{};
     PDX::IVF<Q> index;
     std::unique_ptr<PDX::ADSamplingPruner> pruner;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
-    std::vector<std::pair<uint32_t, uint32_t>> row_id_cluster_mapping;
+    std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> row_id_cluster_mapping;
 
   public:
     PDXIndex() = default;
@@ -72,7 +75,7 @@ class PDXIndex : public IPDXIndex {
         for (uint32_t c = 0; c < index.num_clusters; c++) {
             auto moves = index.clusters[c].CompactCluster();
             for (const auto& [row_id, new_idx] : moves) {
-                row_id_cluster_mapping[row_id] = {c, new_idx};
+                SetRowIdMapping(row_id, c, new_idx);
             }
         }
 
@@ -136,7 +139,7 @@ class PDXIndex : public IPDXIndex {
         return searcher->FilteredSearch(query_embedding, knn, evaluator);
     }
 
-    void SetNProbe(uint32_t n_probe) const override { searcher->SetNProbe(n_probe); }
+    void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }
 
     const PDX::PDXearch<Q>& GetSearcher() const { return *searcher; }
 
@@ -179,7 +182,7 @@ class PDXIndex : public IPDXIndex {
             size += sizeof(*searcher);
         }
         // Row ID to cluster mapping
-        size += row_id_cluster_mapping.capacity() * sizeof(std::pair<uint32_t, uint32_t>);
+        size += row_id_cluster_mapping.size() * (sizeof(uint32_t) + sizeof(std::pair<uint32_t, uint32_t>));
         return size;
     }
 
@@ -277,15 +280,32 @@ class PDXIndex : public IPDXIndex {
             return PDXIndexType::PDX_U8;
     }
 
+    void SetRowIdMapping(uint32_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {
+        row_id_cluster_mapping[row_id] = {cluster_id, idx_in_cluster};
+    }
+
+    void DeleteRowIdMapping(uint32_t row_id) {
+        row_id_cluster_mapping[row_id] = {DELETED_MARKER, DELETED_MARKER};
+    }
+
+    std::pair<uint32_t, uint32_t> GetRowIdMapping(uint32_t row_id) const {
+        auto it = row_id_cluster_mapping.find(row_id);
+        if (it == row_id_cluster_mapping.end()) {
+            return {DELETED_MARKER, DELETED_MARKER};
+        }
+        return it->second;
+    }
+
     void BuildRowIdClusterMapping() {
         size_t total = 0;
         for (size_t c = 0; c < index.num_clusters; c++) {
             total += index.clusters[c].num_embeddings;
         }
-        row_id_cluster_mapping.resize(total);
+        row_id_cluster_mapping.clear();
+        row_id_cluster_mapping.reserve(total);
         for (uint32_t c = 0; c < index.num_clusters; c++) {
             for (uint32_t p = 0; p < index.clusters[c].num_embeddings; p++) {
-                row_id_cluster_mapping[index.clusters[c].indices[p]] = {c, p};
+                SetRowIdMapping(index.clusters[c].indices[p], c, p);
             }
         }
     }
@@ -295,7 +315,9 @@ class PDXIndex : public IPDXIndex {
         PDX_PROFILE_SCOPE("PredicateEvaluator");
         PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
         for (const auto row_id : passing_row_ids) {
-            const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
+            const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
+            if (cluster_id == DELETED_MARKER)
+                continue;
             evaluator.n_passing_tuples[cluster_id]++;
             evaluator.selection_vector[index.cluster_offsets[cluster_id] + index_in_cluster] = 1;
         }

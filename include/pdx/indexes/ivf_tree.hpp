@@ -9,6 +9,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "pdx/clustering.hpp"
@@ -26,7 +27,12 @@
 namespace PDX {
 
 template <PDX::Quantization Q>
+class PDXForestIndex;
+
+template <PDX::Quantization Q>
 class PDXTreeIndex : public IPDXIndex {
+    friend class PDXForestIndex<Q>;
+
   public:
     using embedding_storage_t = PDX::pdx_data_t<Q>;
     using cluster_t = PDX::Cluster<Q>;
@@ -43,11 +49,12 @@ class PDXTreeIndex : public IPDXIndex {
     PDXIndexConfig config{};
     uint32_t d = 0;
     PDX::IVFTree<Q> index;
-    std::unique_ptr<PDX::ADSamplingPruner> pruner;
+    std::unique_ptr<PDX::ADSamplingPruner> owned_pruner;
+    PDX::ADSamplingPruner* pruner = nullptr;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
     std::unique_ptr<PDX::PDXearch<F32>> top_level_searcher;
     ScalarQuantizer<Q> quantizer{0};
-    std::vector<std::pair<uint32_t, uint32_t>> row_id_cluster_mapping;
+    std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> row_id_cluster_mapping;
 
   public:
     PDXTreeIndex() = default;
@@ -56,7 +63,15 @@ class PDXTreeIndex : public IPDXIndex {
         : config(config), d(config.num_dimensions), quantizer(config.num_dimensions) {
         config.Validate();
         PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
-        pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
+        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
+        pruner = owned_pruner.get();
+    }
+
+    PDXTreeIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
+        : config(config), d(config.num_dimensions),
+          pruner(&external_pruner), quantizer(config.num_dimensions) {
+        config.Validate();
+        PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
     }
 
     void Save(const std::string& path) override {
@@ -64,7 +79,7 @@ class PDXTreeIndex : public IPDXIndex {
         for (uint32_t c = 0; c < index.num_clusters; c++) {
             auto moves = index.clusters[c].CompactCluster();
             for (const auto& [row_id, new_idx] : moves) {
-                row_id_cluster_mapping[row_id] = {c, new_idx};
+                SetRowIdMapping(row_id, c, new_idx);
             }
         }
         // Compact L0 clusters (no mapping to update for meso-clusters)
@@ -115,7 +130,8 @@ class PDXTreeIndex : public IPDXIndex {
         d = index.num_dimensions;
 
         // Create pruner and searchers
-        pruner = std::make_unique<PDX::ADSamplingPruner>(d, aligned_matrix.get());
+        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(d, aligned_matrix.get());
+        pruner = owned_pruner.get();
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
         BuildRowIdClusterMapping();
@@ -127,21 +143,27 @@ class PDXTreeIndex : public IPDXIndex {
         if (n_probe == 0) {
             searcher->SetNProbe(GetNumClusters());
         }
-        auto n_probe_top_level = GetTopLevelNumClusters();
-        // We confidently prune half of the search space
-        if (searcher->GetNProbe() < GetNumClusters() / 2) {
-            n_probe_top_level /= 2;
-        }
-        top_level_searcher->SetNProbe(n_probe_top_level);
-        auto top_level_results = top_level_searcher->Search(query_embedding, searcher->GetNProbe());
+        {
+            PDX_PROFILE_SCOPE("L0Search");
+            auto n_probe_top_level = GetTopLevelNumClusters();
+            // We confidently prune half of the search space
+            if (searcher->GetNProbe() < GetNumClusters() / 2) {
+                n_probe_top_level /= 2;
+            }
+            top_level_searcher->SetNProbe(n_probe_top_level);
+            auto top_level_results = top_level_searcher->Search(query_embedding, searcher->GetNProbe());
 
-        std::vector<uint32_t> top_level_indexes(top_level_results.size());
-        for (size_t i = 0; i < top_level_results.size(); i++) {
-            top_level_indexes[i] = top_level_results[i].index;
+            std::vector<uint32_t> top_level_indexes(top_level_results.size());
+            for (size_t i = 0; i < top_level_results.size(); i++) {
+                top_level_indexes[i] = top_level_results[i].index;
+            }
+            searcher->SetClusterAccessOrder(top_level_indexes);
         }
-        searcher->SetClusterAccessOrder(top_level_indexes);
 
-        return searcher->Search(query_embedding, knn);
+        {
+            PDX_PROFILE_SCOPE("L1Search");
+            return searcher->Search(query_embedding, knn);
+        }
     }
 
     std::vector<PDX::KNNCandidate> FilteredSearch(
@@ -159,10 +181,10 @@ class PDXTreeIndex : public IPDXIndex {
     // Concurrent writes must always go through a single writer thread
     void Append(size_t row_id, const float* PDX_RESTRICT embedding) override {
         PDX_PROFILE_SCOPE("Append");
-        if (row_id != row_id_cluster_mapping.size()) {
+        const auto [existing_cluster, _] = GetRowIdMapping(row_id);
+        if (existing_cluster != DELETED_MARKER) {
             throw std::invalid_argument(
-                "Append: row_id " + std::to_string(row_id) + " is not sequential (expected " +
-                std::to_string(row_id_cluster_mapping.size()) + ")"
+                "Append: row_id " + std::to_string(row_id) + " already exists in the index"
             );
         }
         ReserveClusterSlotIfNeeded();
@@ -189,7 +211,7 @@ class PDXTreeIndex : public IPDXIndex {
 
         uint32_t new_index_in_cluster =
             QuantizeAndAppend(cluster, static_cast<uint32_t>(row_id), preprocessed.get());
-        row_id_cluster_mapping.emplace_back(closest_centroid_idx, new_index_in_cluster);
+        SetRowIdMapping(row_id, closest_centroid_idx, new_index_in_cluster);
         index.total_num_embeddings++;
         CheckClusterHealth(cluster);
     }
@@ -197,21 +219,16 @@ class PDXTreeIndex : public IPDXIndex {
     // Concurrent deletes must always go through a single writer thread
     void Delete(size_t row_id) override {
         PDX_PROFILE_SCOPE("Delete");
-        if (row_id >= row_id_cluster_mapping.size()) {
-            throw std::invalid_argument(
-                "Delete: row_id " + std::to_string(row_id) + " is not in the index"
-            );
-        }
-        const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
+        const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
         if (cluster_id == DELETED_MARKER) {
             throw std::invalid_argument(
-                "Delete: row_id " + std::to_string(row_id) + " was already deleted"
+                "Delete: row_id " + std::to_string(row_id) + " is not in the index"
             );
         }
         ReserveClusterSlotIfNeeded();
         auto& cluster = index.clusters[cluster_id];
         cluster.DeleteEmbedding(index_in_cluster);
-        row_id_cluster_mapping[row_id] = {DELETED_MARKER, DELETED_MARKER};
+        DeleteRowIdMapping(row_id);
         index.total_num_embeddings--;
         CheckClusterHealth(cluster);
     }
@@ -336,7 +353,7 @@ class PDXTreeIndex : public IPDXIndex {
         BuildRowIdClusterMapping();
     }
 
-    void SetNProbe(uint32_t n_probe) const override { searcher->SetNProbe(n_probe); }
+    void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }
 
     const PDX::PDXearch<Q>& GetSearcher() const { return *searcher; }
 
@@ -366,8 +383,8 @@ class PDXTreeIndex : public IPDXIndex {
         size_t size = sizeof(*this);
         // IVFTree heap allocations (L1 + L0 clusters and centroids)
         size += index.GetInMemorySizeInBytes() - sizeof(index);
-        // Pruner: rotation matrix or flip_masks (DCT mode) + ratios vector
-        if (pruner) {
+        // Pruner: rotation matrix or flip_masks (DCT mode) + ratios vector (only if owned)
+        if (owned_pruner) {
             size += sizeof(*pruner);
             const auto& m = pruner->GetMatrix();
             // matrix heap data (1 x D for DCT sign vector, D x D for full rotation)
@@ -384,7 +401,7 @@ class PDXTreeIndex : public IPDXIndex {
             size += sizeof(*top_level_searcher);
         }
         // Row ID to cluster mapping
-        size += row_id_cluster_mapping.capacity() * sizeof(std::pair<uint32_t, uint32_t>);
+        size += row_id_cluster_mapping.size() * (sizeof(uint32_t) + sizeof(std::pair<uint32_t, uint32_t>));
         return size;
     }
 
@@ -396,15 +413,32 @@ class PDXTreeIndex : public IPDXIndex {
             return PDXIndexType::PDX_TREE_U8;
     }
 
+    void SetRowIdMapping(uint32_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {
+        row_id_cluster_mapping[row_id] = {cluster_id, idx_in_cluster};
+    }
+
+    void DeleteRowIdMapping(uint32_t row_id) {
+        row_id_cluster_mapping[row_id] = {DELETED_MARKER, DELETED_MARKER};
+    }
+
+    std::pair<uint32_t, uint32_t> GetRowIdMapping(uint32_t row_id) const {
+        auto it = row_id_cluster_mapping.find(row_id);
+        if (it == row_id_cluster_mapping.end()) {
+            return {DELETED_MARKER, DELETED_MARKER};
+        }
+        return it->second;
+    }
+
     void BuildRowIdClusterMapping() {
         size_t total = 0;
         for (size_t c = 0; c < index.num_clusters; c++) {
             total += index.clusters[c].num_embeddings;
         }
-        row_id_cluster_mapping.resize(total);
+        row_id_cluster_mapping.clear();
+        row_id_cluster_mapping.reserve(total);
         for (uint32_t c = 0; c < index.num_clusters; c++) {
             for (uint32_t p = 0; p < index.clusters[c].num_embeddings; p++) {
-                row_id_cluster_mapping[index.clusters[c].indices[p]] = {c, p};
+                SetRowIdMapping(index.clusters[c].indices[p], c, p);
             }
         }
     }
@@ -414,7 +448,7 @@ class PDXTreeIndex : public IPDXIndex {
         PDX_PROFILE_SCOPE("PredicateEvaluator");
         PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
         for (const auto row_id : passing_row_ids) {
-            const auto& [cluster_id, index_in_cluster] = row_id_cluster_mapping[row_id];
+            const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
             if (cluster_id == DELETED_MARKER)
                 continue;
             evaluator.n_passing_tuples[cluster_id]++;
@@ -823,7 +857,7 @@ class PDXTreeIndex : public IPDXIndex {
             if (cluster.num_embeddings < cluster.used_capacity) {
                 auto moves = cluster.CompactCluster();
                 for (const auto& [row_id, new_idx] : moves) {
-                    row_id_cluster_mapping[row_id] = {cluster.id, new_idx};
+                    SetRowIdMapping(row_id, cluster.id, new_idx);
                 }
             } else {
                 SplitCluster(cluster);
@@ -863,7 +897,7 @@ class PDXTreeIndex : public IPDXIndex {
             );
             for (uint32_t i = 0; i < moved_cluster.used_capacity; i++) {
                 if (!moved_cluster.HasTombstone(i)) {
-                    row_id_cluster_mapping[moved_cluster.indices[i]] = {cluster_id, i};
+                    SetRowIdMapping(moved_cluster.indices[i], cluster_id, i);
                 }
             }
 
@@ -1155,10 +1189,10 @@ class PDXTreeIndex : public IPDXIndex {
             );
             // Update row_id_cluster_mapping (includes both original and stolen-neighbor points)
             for (size_t i = 0; i < count_a; i++) {
-                row_id_cluster_mapping[ids_a[i]] = {cluster_id, static_cast<uint32_t>(i)};
+                SetRowIdMapping(ids_a[i], cluster_id, static_cast<uint32_t>(i));
             }
             for (size_t i = 0; i < count_b; i++) {
-                row_id_cluster_mapping[ids_b[i]] = {new_cluster_b_id, static_cast<uint32_t>(i)};
+                SetRowIdMapping(ids_b[i], new_cluster_b_id, static_cast<uint32_t>(i));
             }
             // Update L0: remove old centroid, add both new centroids
             uint32_t pos = FindPositionInMesoCluster(cluster_id, mesocluster_id);
@@ -1257,7 +1291,7 @@ class PDXTreeIndex : public IPDXIndex {
             uint32_t row_id = row_ids[i];
             uint32_t new_pos =
                 QuantizeAndAppend(index.clusters[best_cluster], row_id, embeddings + i * d);
-            row_id_cluster_mapping[row_id] = {best_cluster, new_pos};
+            SetRowIdMapping(row_id, best_cluster, new_pos);
             ReserveClusterSlotIfNeeded();
             CheckClusterHealth(index.clusters[best_cluster], allow_merges);
         }

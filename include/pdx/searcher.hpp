@@ -74,7 +74,7 @@ class PDXearch {
     // The pruning threshold by default is the top of the heap
     void GetPruningThreshold(
         uint32_t k,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
+        Heap& heap,
         distance_t& pruning_threshold,
         uint32_t current_dimension_idx
     ) {
@@ -224,7 +224,7 @@ class PDXearch {
         const uint32_t* vector_indices,
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
+        Heap& heap,
         const tombstones_t& tombstones
     ) {
         ResetPruningDistances(n_vectors, pruning_distances);
@@ -290,7 +290,7 @@ class PDXearch {
         const uint32_t* vector_indices,
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
+        Heap& heap,
         uint8_t* selection_vector,
         uint32_t passing_tuples,
         const tombstones_t& tombstones
@@ -384,7 +384,7 @@ class PDXearch {
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
         distance_t& pruning_threshold,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
+        Heap& heap,
         uint32_t& current_dimension_idx,
         size_t& n_vectors_not_pruned,
         const tombstones_t& tombstones,
@@ -445,7 +445,7 @@ class PDXearch {
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
         distance_t& pruning_threshold,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
+        Heap& heap,
         uint32_t& current_dimension_idx,
         size_t& n_vectors_not_pruned,
         const tombstones_t& tombstones,
@@ -545,7 +545,7 @@ class PDXearch {
         const uint32_t k,
         const uint32_t* pruning_positions,
         const distance_t* pruning_distances,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap
+        Heap& heap
     ) {
         for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
             const size_t index = pruning_positions[position_idx];
@@ -565,9 +565,18 @@ class PDXearch {
         }
     }
 
+    void GetClustersAccessOrderRandom() {
+        std::iota(
+            cluster_indices_in_access_order.get(),
+            cluster_indices_in_access_order.get() + pdx_data.num_clusters,
+            0
+        );
+    }
+
+  public:
     [[nodiscard]] static std::vector<KNNCandidate> BuildResultSetFromHeap(
         uint32_t k,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap
+        Heap& heap
     ) {
         // Pop the initialization element from the heap, as it can't be part of the result.
         if (!heap.empty() && heap.top().distance == std::numeric_limits<float>::max()) {
@@ -584,21 +593,14 @@ class PDXearch {
         return result;
     }
 
-    void GetClustersAccessOrderRandom() {
-        std::iota(
-            cluster_indices_in_access_order.get(),
-            cluster_indices_in_access_order.get() + pdx_data.num_clusters,
-            0
-        );
-    }
-
-  public:
     std::vector<KNNCandidate> Search(
         const float* PDX_RESTRICT const raw_query,
         const uint32_t k,
-        const bool is_query_trasnformed = false
+        const bool is_query_trasnformed = false,
+        Heap* forest_heap = nullptr
     ) {
         Heap local_heap{};
+        Heap& heap = forest_heap ? *forest_heap : local_heap;
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
         if (is_query_trasnformed) {
             std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
@@ -663,7 +665,7 @@ class PDXearch {
                 continue;
             }
             cluster.n_accessed++;
-            if (local_heap.size() < k) {
+            if (heap.size() < k) {
                 // We cannot prune until we fill the heap
                 Start(
                     local_prepared_query,
@@ -674,7 +676,7 @@ class PDXearch {
                     cluster.indices,
                     pruning_positions.get(),
                     pruning_distances.get(),
-                    local_heap,
+                    heap,
                     cluster.tombstones
                 );
                 continue;
@@ -689,7 +691,7 @@ class PDXearch {
                 pruning_positions.get(),
                 pruning_distances.get(),
                 pruning_threshold,
-                local_heap,
+                heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
                 cluster.tombstones
@@ -703,7 +705,7 @@ class PDXearch {
                 pruning_positions.get(),
                 pruning_distances.get(),
                 pruning_threshold,
-                local_heap,
+                heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
                 cluster.tombstones
@@ -715,11 +717,14 @@ class PDXearch {
                     k,
                     pruning_positions.get(),
                     pruning_distances.get(),
-                    local_heap
+                    heap
                 );
             }
         }
-        std::vector<KNNCandidate> result = BuildResultSetFromHeap(k, local_heap);
+        if (forest_heap) {
+            return {};
+        }
+        std::vector<KNNCandidate> result = BuildResultSetFromHeap(k, heap);
         return result;
     }
 
@@ -727,9 +732,11 @@ class PDXearch {
         const float* PDX_RESTRICT const raw_query,
         const uint32_t k,
         const PredicateEvaluator& predicate_evaluator,
-        const bool is_query_transformed = false
+        const bool is_query_transformed = false,
+        Heap* forest_heap = nullptr
     ) {
         Heap local_heap{};
+        Heap& heap = forest_heap ? *forest_heap : local_heap;
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
         if (is_query_transformed) {
             std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
@@ -790,7 +797,7 @@ class PDXearch {
                 continue;
             }
             cluster.n_accessed++;
-            if (local_heap.size() < k) {
+            if (heap.size() < k) {
                 // We cannot prune until we fill the heap
                 FilteredStart(
                     local_prepared_query,
@@ -801,7 +808,7 @@ class PDXearch {
                     cluster.indices,
                     pruning_positions.get(),
                     pruning_distances.get(),
-                    local_heap,
+                    heap,
                     selection_vector,
                     passing_tuples,
                     cluster.tombstones
@@ -818,7 +825,7 @@ class PDXearch {
                 pruning_positions.get(),
                 pruning_distances.get(),
                 pruning_threshold,
-                local_heap,
+                heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
                 cluster.tombstones,
@@ -834,7 +841,7 @@ class PDXearch {
                 pruning_positions.get(),
                 pruning_distances.get(),
                 pruning_threshold,
-                local_heap,
+                heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
                 cluster.tombstones,
@@ -847,11 +854,14 @@ class PDXearch {
                     k,
                     pruning_positions.get(),
                     pruning_distances.get(),
-                    local_heap
+                    heap
                 );
             }
         }
-        std::vector<KNNCandidate> result = BuildResultSetFromHeap(k, local_heap);
+        if (forest_heap) {
+            return {};
+        }
+        std::vector<KNNCandidate> result = BuildResultSetFromHeap(k, heap);
         return result;
     }
 };

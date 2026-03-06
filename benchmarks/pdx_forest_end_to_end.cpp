@@ -10,8 +10,7 @@
 #include <vector>
 
 #include "benchmark_utils.hpp"
-#include "pdx/indexes/ivf_tree.hpp"
-#include "pdx/indexes/ivf_vanilla.hpp"
+#include "pdx/indexes/ivf_forest.hpp"
 #include "pdx/profiler.hpp"
 #include "pdx/utils.hpp"
 
@@ -29,7 +28,7 @@ void RunBenchmark(
     const size_t n_queries = info.num_queries;
     uint8_t KNN = BenchmarkUtils::KNN;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
-    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "END_TO_END_PDX_ADSAMPLING.csv";
+    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "END_TO_END_PDX_FOREST.csv";
 
     PDX::PDXIndexConfig index_config{
         .num_dimensions = static_cast<uint32_t>(d),
@@ -39,17 +38,16 @@ void RunBenchmark(
         .sampling_fraction = 1.0f
     };
 
-    std::cout << "Building index (num_clusters=auto)...\n";
+    std::cout << "Building forest index...\n";
     auto build_start = std::chrono::high_resolution_clock::now();
     IndexT pdx_index(index_config);
     pdx_index.BuildIndex(data, n);
     auto build_end = std::chrono::high_resolution_clock::now();
     double build_ms = std::chrono::duration<double, std::milli>(build_end - build_start).count();
     std::cout << "Build time: " << build_ms << " ms\n";
-    std::cout << "Clusters: " << pdx_index.GetNumClusters() << "\n";
-    std::cout << "Index in-memory size: " << std::fixed << std::setprecision(2)
-              << static_cast<double>(pdx_index.GetInMemorySizeInBytes()) / (1024.0 * 1024.0)
-              << " MB\n";
+    std::cout << "Trees: " << pdx_index.GetNumTrees() << "\n";
+    std::cout << "Total clusters: " << pdx_index.GetForestNClusters() << "\n";
+    std::cout << "Total L0 clusters: " << pdx_index.GetForestNL0Clusters() << "\n";
 
     // Load ground truth
     bool use_skmeans_gt = false;
@@ -74,9 +72,6 @@ void RunBenchmark(
     }
 
     for (size_t ivf_nprobe : nprobes_to_use) {
-        if (pdx_index.GetNumClusters() < ivf_nprobe)
-            continue;
-
         pdx_index.SetNProbe(ivf_nprobe);
 
         // Recall pass
@@ -94,7 +89,6 @@ void RunBenchmark(
                 BenchmarkUtils::VerifyResult<true>(recalls, result, KNN, int_ground_truth, l);
             }
         }
-
         PDX::Profiler::Get().Reset();
 
         std::vector<PhasesRuntime> runtimes;
@@ -127,7 +121,7 @@ void RunBenchmark(
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe]\n";
-        std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr << "Index types: pdx_forest_f32 (default), pdx_forest_u8\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
@@ -136,7 +130,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::string dataset = argv[1];
-    std::string index_type = (argc > 2) ? argv[2] : "pdx_f32";
+    std::string index_type = (argc > 2) ? argv[2] : "pdx_forest_f32";
     size_t arg_ivf_nprobe = (argc > 3) ? std::atoi(argv[3]) : 0;
 
     auto it = RAW_DATASET_PARAMS.find(dataset);
@@ -149,7 +143,7 @@ int main(int argc, char* argv[]) {
     const size_t d = info.num_dimensions;
     const size_t n_queries = info.num_queries;
 
-    std::cout << "==> PDX End-to-End (Build + Search)\n";
+    std::cout << "==> PDX Forest End-to-End (Build + Search)\n";
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "Index type: " << index_type << "\n";
 
@@ -188,25 +182,17 @@ int main(int argc, char* argv[]) {
 
     std::string algorithm = "end_to_end_" + index_type;
 
-    if (index_type == "pdx_f32") {
-        RunBenchmark<PDX::PDXIndexF32>(
+    if (index_type == "pdx_forest_f32") {
+        RunBenchmark<PDX::PDXForestIndexF32>(
             info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
         );
-    } else if (index_type == "pdx_u8") {
-        RunBenchmark<PDX::PDXIndexU8>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
-        );
-    } else if (index_type == "pdx_tree_f32") {
-        RunBenchmark<PDX::PDXTreeIndexF32>(
-            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
-        );
-    } else if (index_type == "pdx_tree_u8") {
-        RunBenchmark<PDX::PDXTreeIndexU8>(
+    } else if (index_type == "pdx_forest_u8") {
+        RunBenchmark<PDX::PDXForestIndexU8>(
             info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
         );
     } else {
         std::cerr << "Unknown index type: " << index_type << "\n";
-        std::cerr << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr << "Valid types: pdx_forest_f32, pdx_forest_u8\n";
         return 1;
     }
 
