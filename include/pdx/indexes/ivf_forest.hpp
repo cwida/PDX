@@ -28,8 +28,9 @@ namespace PDX {
 template <PDX::Quantization Q>
 class PDXForestIndex : public IPDXIndex {
 
-    constexpr static uint32_t NUM_EMBEDDINGS_PER_TREE = 122880;
-    constexpr static uint32_t NUM_CLUSTERS_PER_TREE = 480;
+    constexpr static uint32_t NUM_EMBEDDINGS_PER_TREE = 128000;
+    constexpr static uint32_t NUM_CLUSTERS_PER_TREE = 1280;
+
     constexpr static uint32_t MIN_EMBEDDINGS_TO_CREATE_A_TREE = 2048;
     constexpr static uint32_t NUM_CLUSTERS_FOR_NEW_TREE = 8;
 
@@ -101,6 +102,14 @@ class PDXForestIndex : public IPDXIndex {
         return total;
     }
 
+    size_t GetNumVectorsAccessed() const {
+        size_t total = 0;
+        for (const auto& tree : forest) {
+            total += tree->GetNumVectorsAccessed();
+        }
+        return total;
+    }
+
     uint32_t GetClusterSize(uint32_t /*cluster_id*/) const override {
         throw std::runtime_error("GetClusterSize is not supported by PDXForestIndex.");
     }
@@ -168,6 +177,8 @@ class PDXForestIndex : public IPDXIndex {
 
             PDXIndexConfig tree_config = config;
             tree_config.num_clusters = tree_num_clusters;
+            tree_config.hierarchical_indexing = false;
+            tree_config.sampling_fraction = 1.0f;
 
             auto tree = std::make_unique<PDXTreeIndex<Q>>(tree_config, *pruner);
             tree->BuildIndex(row_ids + start, embeddings + start * d, count);

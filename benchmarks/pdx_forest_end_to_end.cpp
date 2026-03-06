@@ -104,6 +104,7 @@ void RunBenchmark(
             }
         }
         PDX::Profiler::Get().PrintHierarchical();
+        std::cout << "Vectors accessed: " << pdx_index.GetNumVectorsAccessed() << "\n";
 
         BenchmarkMetadata results_metadata = {
             dataset,

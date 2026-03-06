@@ -147,6 +147,14 @@ class PDXIndex : public IPDXIndex {
 
     uint32_t GetNumClusters() const override { return index.num_clusters; }
 
+    size_t GetNumVectorsAccessed() const {
+        size_t total = 0;
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            total += index.clusters[c].n_accessed * index.clusters[c].num_embeddings;
+        }
+        return total;
+    }
+
     uint32_t GetClusterSize(uint32_t cluster_id) const override {
         return index.clusters[cluster_id].num_embeddings;
     }

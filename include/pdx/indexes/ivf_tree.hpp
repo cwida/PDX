@@ -379,6 +379,14 @@ class PDXTreeIndex : public IPDXIndex {
 
     uint32_t GetTopLevelNumClusters() const { return index.l0.num_clusters; }
 
+    size_t GetNumVectorsAccessed() const {
+        size_t total = 0;
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            total += index.clusters[c].n_accessed * index.clusters[c].num_embeddings;
+        }
+        return total;
+    }
+
     size_t GetInMemorySizeInBytes() const override {
         size_t size = sizeof(*this);
         // IVFTree heap allocations (L1 + L0 clusters and centroids)
