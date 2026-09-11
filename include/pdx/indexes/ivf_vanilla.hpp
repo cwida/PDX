@@ -193,7 +193,8 @@ class PDXIndex : public IPDXIndex {
             size += sizeof(*searcher);
         }
         // Row ID to cluster mapping
-        size += row_id_cluster_mapping.size() * (sizeof(uint32_t) + sizeof(std::pair<uint32_t, uint32_t>));
+        size += row_id_cluster_mapping.size() *
+                (sizeof(uint32_t) + sizeof(std::pair<uint32_t, uint32_t>));
         return size;
     }
 

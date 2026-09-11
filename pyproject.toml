@@ -37,3 +37,13 @@ Repository = "https://github.com/cwida/PDX"
 cmake.source-dir = "."
 wheel.packages = ["python/pdxearch"]
 cmake.build-type = "Release"
+install.components = ["python"]
+
+cmake.args = [
+    "-DPDX_COMPILE_TESTS=OFF",
+    "-DPDX_COMPILE_BENCHMARKS=OFF",
+]
+
+[tool.scikit-build.cmake.define]
+PDX_PORTABLE = {env = "PDX_PORTABLE", default = "OFF"}
+PDX_SKIP_FFTW = {env = "PDX_SKIP_FFTW", default = "OFF"}

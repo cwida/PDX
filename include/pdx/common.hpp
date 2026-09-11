@@ -8,6 +8,11 @@
 #include <queue>
 #include <random>
 
+#define PDX_ENSURE_POSITIVE(x)                                                                     \
+    if ((x) <= 0) {                                                                                \
+        throw std::invalid_argument("Value must be positive: " #x);                                \
+    }
+
 #ifndef PDX_RESTRICT
 #if defined(__GNUC__) || defined(__clang__)
 #define PDX_RESTRICT __restrict__
@@ -20,12 +25,49 @@
 #endif
 #endif
 
+#ifndef PDX_ALWAYS_INLINE
+#if __has_cpp_attribute(gnu::always_inline)
+#define PDX_ALWAYS_INLINE [[gnu::always_inline]]
+#elif defined(__GNUC__) || defined(__clang__)
+#define PDX_ALWAYS_INLINE __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define PDX_ALWAYS_INLINE __forceinline
+#else
+#define PDX_ALWAYS_INLINE
+#endif
+#endif
+
+#ifndef PDX_NO_INLINE
+#define PDX_NO_INLINE __attribute__((noinline))
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #define PDX_LIKELY(x) __builtin_expect(!!(x), 1)
 #define PDX_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #else
 #define PDX_LIKELY(x) (x)
 #define PDX_UNLIKELY(x) (x)
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define PDX_PREFETCH(addr, rw, locality) __builtin_prefetch((addr), (rw), (locality))
+#elif defined(_MSC_VER)
+#include <xmmintrin.h>
+#define PDX_PREFETCH(addr, rw, locality)                                                           \
+    _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_T0)
+#else
+#define PDX_PREFETCH(addr, rw, locality) ((void) 0)
+#endif
+
+// Cross-compiler vectorization hint for loops.
+// Clang: #pragma clang loop vectorize(enable)
+// GCC:   #pragma GCC ivdep (asserts no loop-carried dependencies, enabling vectorization)
+#if defined(__clang__)
+#define PDX_VECTORIZE_LOOP _Pragma("clang loop vectorize(enable)")
+#elif defined(__GNUC__)
+#define PDX_VECTORIZE_LOOP _Pragma("GCC ivdep")
+#else
+#define PDX_VECTORIZE_LOOP
 #endif
 
 namespace PDX {

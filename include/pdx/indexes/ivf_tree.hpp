@@ -68,8 +68,8 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     PDXTreeIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
-        : config(config), d(config.num_dimensions),
-          pruner(&external_pruner), quantizer(config.num_dimensions) {
+        : config(config), d(config.num_dimensions), pruner(&external_pruner),
+          quantizer(config.num_dimensions) {
         config.Validate();
         PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
     }
@@ -151,7 +151,8 @@ class PDXTreeIndex : public IPDXIndex {
                 n_probe_top_level /= 2;
             }
             top_level_searcher->SetNProbe(n_probe_top_level);
-            auto top_level_results = top_level_searcher->Search(query_embedding, searcher->GetNProbe());
+            auto top_level_results =
+                top_level_searcher->Search(query_embedding, searcher->GetNProbe());
 
             std::vector<uint32_t> top_level_indexes(top_level_results.size());
             for (size_t i = 0; i < top_level_results.size(); i++) {
@@ -409,7 +410,8 @@ class PDXTreeIndex : public IPDXIndex {
             size += sizeof(*top_level_searcher);
         }
         // Row ID to cluster mapping
-        size += row_id_cluster_mapping.size() * (sizeof(uint32_t) + sizeof(std::pair<uint32_t, uint32_t>));
+        size += row_id_cluster_mapping.size() *
+                (sizeof(uint32_t) + sizeof(std::pair<uint32_t, uint32_t>));
         return size;
     }
 
@@ -551,7 +553,7 @@ class PDXTreeIndex : public IPDXIndex {
             std::memcpy(output, fallback, d * sizeof(float));
         } else {
             float inv = 1.0f / static_cast<float>(count);
-#pragma clang loop vectorize(enable)
+            PDX_VECTORIZE_LOOP
             for (size_t j = 0; j < d; j++) {
                 output[j] = centroid_sum[j] * inv;
             }

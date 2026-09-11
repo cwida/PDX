@@ -49,7 +49,7 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         size_t num_dimensions
     ) {
         distance_t distance = 0.0;
-#pragma clang loop vectorize(enable)
+        PDX_VECTORIZE_LOOP
         for (size_t dimension_idx = 0; dimension_idx < num_dimensions; ++dimension_idx) {
             distance_t to_multiply = vector1[dimension_idx] - vector2[dimension_idx];
             distance += to_multiply * to_multiply;
@@ -60,7 +60,7 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
     static void FlipSign(const data_t* data, data_t* out, const uint32_t* masks, size_t d) {
         auto data_bits = reinterpret_cast<const uint32_t*>(data);
         auto out_bits = reinterpret_cast<uint32_t*>(out);
-#pragma clang loop vectorize(enable)
+        PDX_VECTORIZE_LOOP
         for (size_t j = 0; j < d; ++j) {
             out_bits[j] = data_bits[j] ^ masks[j];
         }
@@ -147,7 +147,7 @@ class ScalarComputer<DistanceMetric::COSINE, Quantization::F32> {
         size_t num_dimensions
     ) {
         float dot = 0.0f, norm1 = 0.0f, norm2 = 0.0f;
-#pragma clang loop vectorize(enable)
+        PDX_VECTORIZE_LOOP
         for (size_t i = 0; i < num_dimensions; ++i) {
             dot += vector1[i] * vector2[i];
             norm1 += vector1[i] * vector1[i];

@@ -32,8 +32,7 @@ std::vector<size_t> LoadPassingRowIds(const std::string& path) {
 // Parse "same_tree_X" selectivity: returns X, or 0 if not that pattern.
 static size_t ParseSameTreeCount(const std::string& selectivity) {
     const std::string prefix = "same_tree_";
-    if (selectivity.size() > prefix.size() &&
-        selectivity.substr(0, prefix.size()) == prefix) {
+    if (selectivity.size() > prefix.size() && selectivity.substr(0, prefix.size()) == prefix) {
         return static_cast<size_t>(std::stoul(selectivity.substr(prefix.size())));
     }
     return 0;
@@ -41,7 +40,11 @@ static size_t ParseSameTreeCount(const std::string& selectivity) {
 
 // Build per-query sequential row IDs: query l gets [l*count, l*count+count-1],
 // clamped to num_embeddings.
-static std::vector<size_t> BuildSameTreeRowIds(size_t query_idx, size_t count, size_t num_embeddings) {
+static std::vector<size_t> BuildSameTreeRowIds(
+    size_t query_idx,
+    size_t count,
+    size_t num_embeddings
+) {
     size_t start = query_idx * count;
     if (start >= num_embeddings) {
         start = start % num_embeddings;
@@ -69,8 +72,7 @@ void RunBenchmark(
     const size_t n_queries = info.num_queries;
     uint8_t KNN = BenchmarkUtils::KNN;
     size_t NUM_MEASURE_RUNS = BenchmarkUtils::NUM_MEASURE_RUNS;
-    std::string RESULTS_PATH =
-        BENCHMARK_UTILS.RESULTS_DIR_PATH + "PDX_FOREST_FILTERED.csv";
+    std::string RESULTS_PATH = BENCHMARK_UTILS.RESULTS_DIR_PATH + "PDX_FOREST_FILTERED.csv";
 
     PDX::PDXIndexConfig index_config{
         .num_dimensions = static_cast<uint32_t>(d),
@@ -111,19 +113,18 @@ void RunBenchmark(
         }
 
         shared_passing_row_ids = LoadPassingRowIds(
-            BenchmarkUtils::SELECTION_VECTOR_DATA + info.pdx_dataset_name + "_" +
-            arg_selectivity + ".bin"
+            BenchmarkUtils::SELECTION_VECTOR_DATA + info.pdx_dataset_name + "_" + arg_selectivity +
+            ".bin"
         );
         std::cout << "Passing row IDs: " << shared_passing_row_ids.size() << "\n";
 
         // Load filtered ground truth
-        std::string gt_path = BenchmarkUtils::FILTERED_GROUND_TRUTH_DATA +
-                              info.pdx_dataset_name + "_100_norm_" + arg_selectivity;
+        std::string gt_path = BenchmarkUtils::FILTERED_GROUND_TRUTH_DATA + info.pdx_dataset_name +
+                              "_100_norm_" + arg_selectivity;
         gt_buffer = MmapFile(gt_path);
         int_ground_truth = reinterpret_cast<uint32_t*>(gt_buffer.get());
     } else {
-        std::cout << "same_tree mode: " << same_tree_count
-                  << " consecutive row IDs per query\n";
+        std::cout << "same_tree mode: " << same_tree_count << " consecutive row IDs per query\n";
         selectivity_value = static_cast<float>(same_tree_count) / static_cast<float>(n);
     }
     PDX::Profiler::Get().Reset();
@@ -136,9 +137,7 @@ void RunBenchmark(
         if (!is_same_tree && int_ground_truth) {
             for (size_t l = 0; l < n_queries; ++l) {
                 const auto& row_ids = shared_passing_row_ids;
-                auto result = pdx_index.FilteredSearch(
-                    queries + l * d, KNN, row_ids
-                );
+                auto result = pdx_index.FilteredSearch(queries + l * d, KNN, row_ids);
                 BenchmarkUtils::VerifyResult<true>(recalls, result, KNN, int_ground_truth, l);
             }
         }
@@ -181,8 +180,7 @@ void RunBenchmark(
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0]
-                  << " <dataset> [index_type] [nprobe] [selectivity]\n";
+        std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe] [selectivity]\n";
         std::cerr << "Index types: pdx_forest_f32 (default), pdx_forest_u8\n";
         std::cerr << "Selectivity: 0_99, 0_5, same_tree_1000, same_tree_500, ...\n";
         std::cerr << "Available datasets:";
@@ -250,13 +248,11 @@ int main(int argc, char* argv[]) {
 
     if (index_type == "pdx_forest_f32") {
         RunBenchmark<PDX::PDXForestIndexF32>(
-            info, dataset, algorithm, data.data(), queries.data(),
-            nprobes_to_use, arg_selectivity
+            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, arg_selectivity
         );
     } else if (index_type == "pdx_forest_u8") {
         RunBenchmark<PDX::PDXForestIndexU8>(
-            info, dataset, algorithm, data.data(), queries.data(),
-            nprobes_to_use, arg_selectivity
+            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, arg_selectivity
         );
     } else {
         std::cerr << "Unknown index type: " << index_type << "\n";

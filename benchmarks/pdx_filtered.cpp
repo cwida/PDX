@@ -4,8 +4,8 @@
 
 #include "benchmark_utils.hpp"
 #include "pdx/indexes/ivf_tree.hpp"
-#include "pdx/profiler.hpp"
 #include "pdx/indexes/ivf_vanilla.hpp"
+#include "pdx/profiler.hpp"
 #include "pdx/utils.hpp"
 #include <algorithm>
 #include <iomanip>
@@ -29,8 +29,7 @@ std::vector<size_t> LoadPassingRowIds(const std::string& path) {
 // Parse "same_tree_X" selectivity: returns X, or 0 if not that pattern.
 static size_t ParseSameTreeCount(const std::string& selectivity) {
     const std::string prefix = "same_tree_";
-    if (selectivity.size() > prefix.size() &&
-        selectivity.substr(0, prefix.size()) == prefix) {
+    if (selectivity.size() > prefix.size() && selectivity.substr(0, prefix.size()) == prefix) {
         return static_cast<size_t>(std::stoul(selectivity.substr(prefix.size())));
     }
     return 0;
@@ -38,7 +37,11 @@ static size_t ParseSameTreeCount(const std::string& selectivity) {
 
 // Build per-query sequential row IDs: query l gets [l*count, l*count+count-1],
 // clamped to num_embeddings.
-static std::vector<size_t> BuildSameTreeRowIds(size_t query_idx, size_t count, size_t num_embeddings) {
+static std::vector<size_t> BuildSameTreeRowIds(
+    size_t query_idx,
+    size_t count,
+    size_t num_embeddings
+) {
     size_t start = query_idx * count;
     if (start >= num_embeddings) {
         start = start % num_embeddings;

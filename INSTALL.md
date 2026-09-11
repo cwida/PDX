@@ -27,6 +27,33 @@ pip install .
 ```
 </details>
 
+<details>
+<summary> <b> Compiling C++ tests and benchmarks from source </b></summary>
+
+```sh
+git clone https://github.com/cwida/PDX
+cd PDX
+git submodule update --init
+
+# Set proper clang compiler if needed
+export CXX="/usr/bin/clang++-18"
+
+cmake . -DPDX_COMPILE_TESTS=ON -DPDX_COMPILE_BENCHMARKS=ON
+make -j$(nproc) tests benchmarks
+```
+</details>
+
+### Compilation knobs
+All of these are CMake cache variables (`cmake . -D<KNOB>=<value>`). For `pip install .`, pass them with `-C cmake.args="-D<KNOB>=<value>"`.
+- `-DPDX_MARCH`: `-march` value to use during PDX compilation (default=`native`). An empty string disables `-march`.
+- `-DPDX_PORTABLE`: `ON` replaces `-march` with portable SIMD flags (`-mavx2 -mfma` on x86_64, plain `-O3` elsewhere). Meant for wheel builds; also settable through the `PDX_PORTABLE` environment variable during `pip install .`.
+- `-DPDX_SKIP_FFTW`: `ON` skips the optional FFTW dependency entirely (also settable through the `PDX_SKIP_FFTW` environment variable during `pip install .`).
+- `-DBLAS_LIBRARIES`: Full path name of the BLAS library to use. Useful if you want to link PDX against a different BLAS implementation. For example, if you have installed AMD BLIS: `-DBLAS_LIBRARIES=/opt/amd-blis/lib/libblis-mt.so`
+- `-DPDX_COMPILE_TESTS` / `-DPDX_COMPILE_BENCHMARKS`: compile the C++ tests (`make tests`, run with `ctest`) and benchmarks (`make benchmarks`). Both default to `OFF`.
+
+> [!TIP]
+> BLAS is critical to achieve high performance. On Linux, we recommend [installing OpenBLAS from source](#installing-blas).
+
 
 ## Step by Step
 * [Installing Clang](#installing-clang)

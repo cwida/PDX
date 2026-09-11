@@ -14,9 +14,9 @@
 #include "pdx/clustering.hpp"
 #include "pdx/common.hpp"
 #include "pdx/indexes/ivf_core.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
 #include "pdx/indexes/ivf_utils.hpp"
 #include "pdx/indexes/ivf_vanilla.hpp"
-#include "pdx/indexes/ivf_tree.hpp"
 #include "pdx/profiler.hpp"
 #include "pdx/pruners/adsampling.hpp"
 #include "pdx/quantizers/scalar.hpp"
@@ -166,9 +166,8 @@ class PDXForestIndex : public IPDXIndex {
 
         for (size_t t = 0; t < num_trees; t++) {
             size_t start = t * NUM_EMBEDDINGS_PER_TREE;
-            size_t count = std::min(
-                static_cast<size_t>(NUM_EMBEDDINGS_PER_TREE), num_embeddings - start
-            );
+            size_t count =
+                std::min(static_cast<size_t>(NUM_EMBEDDINGS_PER_TREE), num_embeddings - start);
 
             uint32_t tree_num_clusters = NUM_CLUSTERS_PER_TREE;
             if (t == num_trees - 1 && count < NUM_EMBEDDINGS_PER_TREE) {
@@ -187,8 +186,7 @@ class PDXForestIndex : public IPDXIndex {
             // Map global row_id -> (tree_index, local_row_id)
             for (size_t i = 0; i < count; i++) {
                 row_id_tree_offset[row_ids[start + i]] = {
-                    static_cast<uint32_t>(t),
-                    static_cast<uint32_t>(i)
+                    static_cast<uint32_t>(t), static_cast<uint32_t>(i)
                 };
             }
         }
@@ -196,12 +194,14 @@ class PDXForestIndex : public IPDXIndex {
 
     void Append(size_t row_id, const float* PDX_RESTRICT embedding) override {
         // Always append to the last tree in the forest.
-        // If the last tree is full (tree.num_embeddings == NUM_EMBEDDINGS_PER_TREE), 
+        // If the last tree is full (tree.num_embeddings == NUM_EMBEDDINGS_PER_TREE),
         //  -> start appending embeddings to the new_tree_buffer
-        // When embeddings_in_new_tree_buffer reaches MIN_EMBEDDINGS_TO_CREATE_A_TREE, 
-        //  -> create a new tree with the embeddings in new_tree_buffer with NUM_CLUSTERS_FOR_NEW_TREE
+        // When embeddings_in_new_tree_buffer reaches MIN_EMBEDDINGS_TO_CREATE_A_TREE,
+        //  -> create a new tree with the embeddings in new_tree_buffer with
+        //  NUM_CLUSTERS_FOR_NEW_TREE
         //  -> push_back it to the forest
-        // The following appends would go to this new tree until it reaches NUM_EMBEDDINGS_PER_TREE, and everything repeats
+        // The following appends would go to this new tree until it reaches NUM_EMBEDDINGS_PER_TREE,
+        // and everything repeats
     }
 
     void Delete(size_t row_id) override {
@@ -232,7 +232,9 @@ class PDXForestIndex : public IPDXIndex {
             {
                 PDX_PROFILE_SCOPE("ForestL0Search");
                 tree->top_level_searcher->SetNProbe(n_probe_top_level);
-                auto top_level_results = tree->top_level_searcher->Search(preprocessed.get(), tree->searcher->GetNProbe(), true);
+                auto top_level_results = tree->top_level_searcher->Search(
+                    preprocessed.get(), tree->searcher->GetNProbe(), true
+                );
 
                 std::vector<uint32_t> top_level_indexes(top_level_results.size());
                 for (size_t i = 0; i < top_level_results.size(); i++) {
@@ -276,9 +278,7 @@ class PDXForestIndex : public IPDXIndex {
         }
         return PDXearch<Q>::BuildResultSetFromHeap(knn, forest_heap);
     }
-
 };
-
 
 using PDXForestIndexF32 = PDXForestIndex<PDX::F32>;
 using PDXForestIndexU8 = PDXForestIndex<PDX::U8>;

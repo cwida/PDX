@@ -88,11 +88,7 @@ class ADSamplingPruner {
 
     const matrix_t& GetMatrix() const { return matrix; }
 
-    float GetPruningThreshold(
-        uint32_t,
-        Heap& heap,
-        const uint32_t current_dimension_idx
-    ) const {
+    float GetPruningThreshold(uint32_t, Heap& heap, const uint32_t current_dimension_idx) const {
         float ratio = current_dimension_idx == num_dimensions ? 1 : ratios[current_dimension_idx];
         return heap.top().distance * ratio;
     }

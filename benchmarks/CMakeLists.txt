@@ -1,31 +1,22 @@
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+# Benchmark suite for PDX
 
-set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES})
+# Helper: add a benchmark executable linked against PDX, with access to benchmark_utils.hpp
+function(pdx_add_benchmark name source)
+    add_executable(${name} ${source})
+    target_link_libraries(${name} PRIVATE PDX)
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(${name} PRIVATE CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+endfunction()
 
-if (FFTW_FOUND)
-    message(STATUS "Linking FFTW: ${FFTW_FLOAT_LIB} ${FFTW_FLOAT_OPENMP_LIB}")
-    list(APPEND BENCH_COMMON_LIBS ${FFTW_FLOAT_LIB} ${FFTW_FLOAT_OPENMP_LIB})
-endif()
-
-add_executable(BenchmarkPDXIVF pdx_ivf.cpp)
-add_executable(BenchmarkEndToEnd pdx_end_to_end.cpp)
-add_executable(BenchmarkSerialization pdx_serialization.cpp)
-add_executable(BenchmarkFiltered pdx_filtered.cpp)
-add_executable(BenchmarkSpecialFilters pdx_special_filtered.cpp)
-add_executable(BenchmarkInsertion pdx_insertion.cpp)
-add_executable(BenchmarkWorkload pdx_workload.cpp)
-add_executable(BenchmarkForestEndToEnd pdx_forest_end_to_end.cpp)
-add_executable(BenchmarkForestFiltered pdx_forest_filtered.cpp)
-
-target_link_libraries(BenchmarkPDXIVF ${BENCH_COMMON_LIBS})
-target_link_libraries(BenchmarkEndToEnd ${BENCH_COMMON_LIBS})
-target_link_libraries(BenchmarkSerialization ${BENCH_COMMON_LIBS})
-target_link_libraries(BenchmarkFiltered ${BENCH_COMMON_LIBS})
-target_link_libraries(BenchmarkSpecialFilters ${BENCH_COMMON_LIBS})
-target_link_libraries(BenchmarkInsertion ${BENCH_COMMON_LIBS})
-target_link_libraries(BenchmarkWorkload ${BENCH_COMMON_LIBS})
-target_link_libraries(BenchmarkForestEndToEnd ${BENCH_COMMON_LIBS})
-target_link_libraries(BenchmarkForestFiltered ${BENCH_COMMON_LIBS})
+pdx_add_benchmark(BenchmarkPDXIVF pdx_ivf.cpp)
+pdx_add_benchmark(BenchmarkEndToEnd pdx_end_to_end.cpp)
+pdx_add_benchmark(BenchmarkSerialization pdx_serialization.cpp)
+pdx_add_benchmark(BenchmarkFiltered pdx_filtered.cpp)
+pdx_add_benchmark(BenchmarkSpecialFilters pdx_special_filtered.cpp)
+pdx_add_benchmark(BenchmarkInsertion pdx_insertion.cpp)
+pdx_add_benchmark(BenchmarkWorkload pdx_workload.cpp)
+pdx_add_benchmark(BenchmarkForestEndToEnd pdx_forest_end_to_end.cpp)
+pdx_add_benchmark(BenchmarkForestFiltered pdx_forest_filtered.cpp)
 
 add_custom_target(benchmarks
     DEPENDS
