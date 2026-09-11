@@ -48,6 +48,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const data_t* PDX_RESTRICT vector2,
         size_t num_dimensions
     ) {
+        //PDX_PROFILE_SCOPE("Search/SIMD");
 #if defined(__APPLE__)
         distance_t distance = 0.0;
 #pragma clang loop vectorize(enable)

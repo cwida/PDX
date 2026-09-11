@@ -108,6 +108,7 @@ class PDXearch {
         distance_t pruning_threshold,
         distance_t* pruning_distances
     ) {
+        //PDX_PROFILE_SCOPE("Search/EvaluatePruningPredicate");
         n_vectors_not_pruned = 0;
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
             pruning_positions[n_vectors_not_pruned] = pruning_positions[vector_idx];
@@ -125,6 +126,7 @@ class PDXearch {
         distance_t* pruning_distances,
         const uint8_t* selection_vector = nullptr
     ) {
+        //PDX_PROFILE_SCOPE("Search/InitPositionsArray");
         n_vectors_not_pruned = 0;
         if constexpr (IS_FILTERED) {
             for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
@@ -184,6 +186,7 @@ class PDXearch {
         size_t nprobe,
         uint32_t* clusters_indices
     ) {
+        PDX_PROFILE_SCOPE("Search/GetClustersAccessOrderIVF");
         std::unique_ptr<float[]> distances_to_centroids(new float[data.num_clusters]);
         for (size_t cluster_idx = 0; cluster_idx < data.num_clusters; cluster_idx++) {
             distances_to_centroids[cluster_idx] =
@@ -295,6 +298,7 @@ class PDXearch {
         uint32_t passing_tuples,
         const tombstones_t& tombstones
     ) {
+        //PDX_PROFILE_SCOPE("Search/FilteredStart");
         ResetPruningDistances(n_vectors, pruning_distances);
         size_t n_vectors_not_pruned = 0;
         float selection_percentage =
@@ -391,6 +395,7 @@ class PDXearch {
         uint32_t passing_tuples = 0,
         uint8_t* selection_vector = nullptr
     ) {
+        //PDX_PROFILE_SCOPE("Search/Warmup");
         current_dimension_idx = 0;
         size_t cur_subgrouping_size_idx = 0;
         size_t tuples_needed_to_exit =
@@ -451,6 +456,7 @@ class PDXearch {
         const tombstones_t& tombstones,
         const uint8_t* selection_vector = nullptr
     ) {
+        //PDX_PROFILE_SCOPE("Search/Prune");
         GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx);
         MaskDistancesWithTombstones(tombstones, pruning_distances);
         InitPositionsArray<FILTERED>(
@@ -466,6 +472,7 @@ class PDXearch {
         size_t current_horizontal_dimension = 0;
         while (pdx_data.num_horizontal_dimensions && n_vectors_not_pruned &&
                current_horizontal_dimension < pdx_data.num_horizontal_dimensions) {
+            //PDX_PROFILE_SCOPE("Search/PruneHorizontal");
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
             size_t offset_data = (pdx_data.num_vertical_dimensions * buffer_stride) +
                                  (current_horizontal_dimension * buffer_stride);
@@ -500,6 +507,7 @@ class PDXearch {
         // GO THROUGH THE REST IN THE VERTICAL
         while (n_vectors_not_pruned && current_vertical_dimension < pdx_data.num_vertical_dimensions
         ) {
+            //PDX_PROFILE_SCOPE("Search/PruneVertical");
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
             size_t last_dimension_to_test_idx = std::min(
                 current_vertical_dimension + H_DIM_SIZE,
@@ -728,6 +736,9 @@ class PDXearch {
         return result;
     }
 
+    // TODO(@lkuffo, high): FastPath
+    // If the number of passing tuples is lower than the cost of accesing the index
+    // Then access the tuples directly and compute distances on the fly, without accessing the index.
     std::vector<KNNCandidate> FilteredSearch(
         const float* PDX_RESTRICT const raw_query,
         const uint32_t k,
@@ -780,6 +791,8 @@ class PDXearch {
         );
         std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[pdx_data.max_cluster_capacity]);
 
+        {
+        //PDX_PROFILE_SCOPE("Search/Loop");
         for (size_t cluster_idx = 0; cluster_idx < clusters_to_visit; ++cluster_idx) {
             distance_t pruning_threshold = std::numeric_limits<distance_t>::max();
             uint32_t current_dimension_idx = 0;
@@ -858,6 +871,7 @@ class PDXearch {
                 );
             }
         }
+        } // Profiling scope
         if (forest_heap) {
             return {};
         }

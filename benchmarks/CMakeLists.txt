@@ -15,6 +15,7 @@ add_executable(BenchmarkSpecialFilters pdx_special_filtered.cpp)
 add_executable(BenchmarkInsertion pdx_insertion.cpp)
 add_executable(BenchmarkWorkload pdx_workload.cpp)
 add_executable(BenchmarkForestEndToEnd pdx_forest_end_to_end.cpp)
+add_executable(BenchmarkForestFiltered pdx_forest_filtered.cpp)
 
 target_link_libraries(BenchmarkPDXIVF ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkEndToEnd ${BENCH_COMMON_LIBS})
@@ -24,6 +25,7 @@ target_link_libraries(BenchmarkSpecialFilters ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkInsertion ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkWorkload ${BENCH_COMMON_LIBS})
 target_link_libraries(BenchmarkForestEndToEnd ${BENCH_COMMON_LIBS})
+target_link_libraries(BenchmarkForestFiltered ${BENCH_COMMON_LIBS})
 
 add_custom_target(benchmarks
     DEPENDS
@@ -35,4 +37,5 @@ add_custom_target(benchmarks
         BenchmarkInsertion
         BenchmarkWorkload
         BenchmarkForestEndToEnd
+        BenchmarkForestFiltered
 )

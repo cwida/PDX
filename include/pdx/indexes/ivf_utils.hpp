@@ -76,6 +76,7 @@ inline std::unique_ptr<float[]> NormalizeAndRotate(
     bool normalize,
     const ADSamplingPruner& pruner
 ) {
+    PDX_PROFILE_SCOPE("Search/NormalizeAndRotate");
     const size_t total_floats = num_embeddings * num_dimensions;
     std::unique_ptr<float[]> normalized;
     const float* rotation_input = embeddings;

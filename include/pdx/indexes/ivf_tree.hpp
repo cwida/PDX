@@ -453,13 +453,14 @@ class PDXTreeIndex : public IPDXIndex {
 
     PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids
     ) const {
-        PDX_PROFILE_SCOPE("PredicateEvaluator");
+        PDX_PROFILE_SCOPE("Search/PredicateEvaluator");
         PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
         for (const auto row_id : passing_row_ids) {
             const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
             if (cluster_id == DELETED_MARKER)
                 continue;
             evaluator.n_passing_tuples[cluster_id]++;
+            evaluator.total_passing_tuples++;
             evaluator.selection_vector[index.cluster_offsets[cluster_id] + index_in_cluster] = 1;
         }
         return evaluator;

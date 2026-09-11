@@ -29,7 +29,7 @@ template <PDX::Quantization Q>
 class PDXForestIndex : public IPDXIndex {
 
     constexpr static uint32_t NUM_EMBEDDINGS_PER_TREE = 128000;
-    constexpr static uint32_t NUM_CLUSTERS_PER_TREE = 1280;
+    constexpr static uint32_t NUM_CLUSTERS_PER_TREE = 480;
 
     constexpr static uint32_t MIN_EMBEDDINGS_TO_CREATE_A_TREE = 2048;
     constexpr static uint32_t NUM_CLUSTERS_FOR_NEW_TREE = 8;
@@ -257,7 +257,7 @@ class PDXForestIndex : public IPDXIndex {
         size_t knn,
         const std::vector<size_t>& passing_row_ids
     ) const override {
-        PDX_PROFILE_SCOPE("ForestFilteredSearch");
+        PDX_PROFILE_SCOPE("Search");
         const bool normalize =
             config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
         auto preprocessed = NormalizeAndRotate(query_embedding, 1, d, normalize, *pruner);
@@ -269,6 +269,9 @@ class PDXForestIndex : public IPDXIndex {
                 tree->searcher->SetNProbe(forest_n_probe);
             }
             auto evaluator = tree->CreatePredicateEvaluator(passing_row_ids);
+            if (evaluator.total_passing_tuples == 0) {
+                continue;
+            }
             tree->searcher->FilteredSearch(preprocessed.get(), knn, evaluator, true, &forest_heap);
         }
         return PDXearch<Q>::BuildResultSetFromHeap(knn, forest_heap);

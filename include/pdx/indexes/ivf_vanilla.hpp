@@ -136,7 +136,10 @@ class PDXIndex : public IPDXIndex {
         const std::vector<size_t>& passing_row_ids
     ) const override {
         auto evaluator = CreatePredicateEvaluator(passing_row_ids);
-        return searcher->FilteredSearch(query_embedding, knn, evaluator);
+        {
+            PDX_PROFILE_SCOPE("Search");
+            return searcher->FilteredSearch(query_embedding, knn, evaluator);
+        }
     }
 
     void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }
@@ -327,6 +330,7 @@ class PDXIndex : public IPDXIndex {
             if (cluster_id == DELETED_MARKER)
                 continue;
             evaluator.n_passing_tuples[cluster_id]++;
+            evaluator.total_passing_tuples++;
             evaluator.selection_vector[index.cluster_offsets[cluster_id] + index_in_cluster] = 1;
         }
         return evaluator;

@@ -15,6 +15,7 @@ class PredicateEvaluator {
     // [(cluster 1): 0, 1, 1, (cluster 2): 1, 1, 1, 1].
     std::unique_ptr<uint8_t[]> selection_vector;
     size_t n_clusters;
+    size_t total_passing_tuples = 0;
 
     explicit PredicateEvaluator(size_t n_clusters, size_t total_num_embeddings)
         : n_clusters(n_clusters) {
