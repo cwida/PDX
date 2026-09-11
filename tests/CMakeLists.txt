@@ -41,6 +41,7 @@ pdx_add_test(test_serialization.out test_serialization.cpp)
 pdx_add_test(test_filtered_search.out test_filtered_search.cpp)
 pdx_add_test(test_index_properties.out test_index_properties.cpp)
 pdx_add_test(test_maintenance.out test_maintenance.cpp)
+pdx_add_test(test_iterative_search.out test_iterative_search.cpp)
 
 add_custom_target(tests
     DEPENDS
@@ -50,4 +51,5 @@ add_custom_target(tests
         test_filtered_search.out
         test_index_properties.out
         test_maintenance.out
+        test_iterative_search.out
 )

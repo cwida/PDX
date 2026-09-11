@@ -278,6 +278,15 @@ class PDXForestIndex : public IPDXIndex {
         }
         return PDXearch<Q>::BuildResultSetFromHeap(knn, forest_heap);
     }
+
+    std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
+        const float* /*query_embedding*/,
+        uint32_t /*knn*/,
+        TopKHeap& /*top_k_heap*/,
+        const std::vector<size_t>* /*passing_row_ids*/
+    ) const override {
+        throw std::runtime_error("BeginIterativeSearch is not supported by PDXForestIndex.");
+    }
 };
 
 using PDXForestIndexF32 = PDXForestIndex<PDX::F32>;

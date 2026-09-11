@@ -13,10 +13,52 @@
 #include <cassert>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <queue>
+#include <vector>
 
 namespace PDX {
+
+[[nodiscard]] inline std::vector<KNNCandidate> BuildResultSetFromHeap(uint32_t k, Heap& heap) {
+    // Pop the initialization element from the heap, as it can't be part of the result.
+    if (!heap.empty() && heap.top().distance == std::numeric_limits<float>::max()) {
+        heap.pop();
+    }
+    size_t result_set_size = std::min(heap.size(), static_cast<size_t>(k));
+    std::vector<KNNCandidate> result;
+    result.resize(result_set_size);
+    for (size_t i = result_set_size; i > 0; --i) {
+        result[i - 1] = heap.top();
+        heap.pop();
+    }
+    return result;
+}
+
+// Resumable search over one query. Next() probes the next clusters (nearest first) into the
+// caller's heap; Done() is true once no cluster that can still contribute remains.
+class IIterativeSearch {
+  public:
+    virtual ~IIterativeSearch() = default;
+    virtual size_t Next(size_t n_clusters) = 0;
+    [[nodiscard]] virtual bool Done() const = 0;
+    [[nodiscard]] virtual size_t ClustersRemaining() const = 0;
+};
+
+// Top-k heap of one search. Cursors lock `mutex` on every threshold read and merge only when
+// `thread_safe`, which is what lets several cursors (e.g. one per DuckDB row group) share it.
+struct TopKHeap {
+    explicit TopKHeap(bool thread_safe = false) : thread_safe(thread_safe) {}
+
+    // Engaged only when thread_safe; hold it while touching `heap` from a cursor
+    [[nodiscard]] std::unique_lock<std::mutex> GetLock() {
+        return thread_safe ? std::unique_lock<std::mutex>(mutex) : std::unique_lock<std::mutex>();
+    }
+
+    Heap heap;
+    std::mutex mutex;
+    bool thread_safe;
+};
 
 template <
     Quantization Q = F32,
@@ -76,9 +118,22 @@ class PDXearch {
         uint32_t k,
         Heap& heap,
         distance_t& pruning_threshold,
-        uint32_t current_dimension_idx
+        uint32_t current_dimension_idx,
+        TopKHeap* top_k_heap = nullptr
     ) {
-        const float float_threshold = pruner.GetPruningThreshold(k, heap, current_dimension_idx);
+        float float_threshold;
+        {
+            std::unique_lock<std::mutex> lock;
+            if (top_k_heap) {
+                lock = top_k_heap->GetLock();
+            }
+            // Fewer than k candidates: nothing real can be pruned, only masked slots
+            if (heap.size() < k) {
+                pruning_threshold = std::numeric_limits<distance_t>::max() / 2;
+                return;
+            }
+            float_threshold = pruner.GetPruningThreshold(k, heap, current_dimension_idx);
+        }
         if constexpr (Q == U8) {
             // We need to avoid undefined behaviour when overflow happens
             const float scaled = float_threshold * pdx_data.quantization_scale_squared;
@@ -393,7 +448,8 @@ class PDXearch {
         size_t& n_vectors_not_pruned,
         const tombstones_t& tombstones,
         uint32_t passing_tuples = 0,
-        uint8_t* selection_vector = nullptr
+        uint8_t* selection_vector = nullptr,
+        TopKHeap* top_k_heap = nullptr
     ) {
         // PDX_PROFILE_SCOPE("Search/Warmup");
         current_dimension_idx = 0;
@@ -412,7 +468,7 @@ class PDXearch {
                 return;
             }
         }
-        GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx);
+        GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
         while (n_tuples_to_prune < tuples_needed_to_exit &&
                current_dimension_idx < pdx_data.num_vertical_dimensions) {
             size_t last_dimension_to_fetch = std::min(
@@ -431,7 +487,7 @@ class PDXearch {
             );
             current_dimension_idx = last_dimension_to_fetch;
             cur_subgrouping_size_idx += 1;
-            GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx);
+            GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
             n_tuples_to_prune = 0;
             EvaluatePruningPredicateScalar(
                 n_tuples_to_prune, n_vectors, pruning_distances, pruning_threshold
@@ -454,10 +510,11 @@ class PDXearch {
         uint32_t& current_dimension_idx,
         size_t& n_vectors_not_pruned,
         const tombstones_t& tombstones,
-        const uint8_t* selection_vector = nullptr
+        const uint8_t* selection_vector = nullptr,
+        TopKHeap* top_k_heap = nullptr
     ) {
         // PDX_PROFILE_SCOPE("Search/Prune");
-        GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx);
+        GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
         MaskDistancesWithTombstones(tombstones, pruning_distances);
         InitPositionsArray<FILTERED>(
             n_vectors,
@@ -492,7 +549,7 @@ class PDXearch {
             // end of clipping
             current_horizontal_dimension += H_DIM_SIZE;
             current_dimension_idx += H_DIM_SIZE;
-            GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx);
+            GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
             assert(
                 current_dimension_idx == current_vertical_dimension + current_horizontal_dimension
             );
@@ -533,7 +590,7 @@ class PDXearch {
             assert(
                 current_dimension_idx == current_vertical_dimension + current_horizontal_dimension
             );
-            GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx);
+            GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
             EvaluatePruningPredicateOnPositionsArray(
                 cur_n_vectors_not_pruned,
                 n_vectors_not_pruned,
@@ -583,21 +640,246 @@ class PDXearch {
 
   public:
     [[nodiscard]] static std::vector<KNNCandidate> BuildResultSetFromHeap(uint32_t k, Heap& heap) {
-        // Pop the initialization element from the heap, as it can't be part of the result.
-        if (!heap.empty() && heap.top().distance == std::numeric_limits<float>::max()) {
-            heap.pop();
-        }
-
-        size_t result_set_size = std::min(heap.size(), static_cast<size_t>(k));
-        std::vector<KNNCandidate> result;
-        result.resize(result_set_size);
-        for (size_t i = result_set_size; i > 0; --i) {
-            result[i - 1] = heap.top();
-            heap.pop();
-        }
-        return result;
+        return ::PDX::BuildResultSetFromHeap(k, heap);
     }
 
+    // Cursor of a resumable search. Owns all per-query state, so any number of cursors can run
+    // concurrently on the same searcher, and several may share one thread_safe TopKHeap.
+    template <bool FILTERED>
+    class IterativeSearch final : public IIterativeSearch {
+      public:
+        IterativeSearch(IterativeSearch&&) noexcept = default;
+
+        size_t Next(size_t n_clusters) override {
+            size_t n_probed_this_call = 0;
+            for (; n_probed_this_call < n_clusters && n_probed_clusters < queued_clusters_size;
+                 ++n_probed_this_call, ++n_probed_clusters) {
+                ProbeCluster(queued_clusters[n_probed_clusters]);
+            }
+            return n_probed_this_call;
+        }
+
+        [[nodiscard]] bool Done() const override {
+            return n_probed_clusters >= queued_clusters_size;
+        }
+
+        [[nodiscard]] size_t ClustersRemaining() const override {
+            return queued_clusters_size - n_probed_clusters;
+        }
+
+        // Only valid when this cursor is the sole writer of the heap
+        [[nodiscard]] std::vector<KNNCandidate> Results() {
+            return ::PDX::BuildResultSetFromHeap(k, top_k_heap->heap);
+        }
+
+      private:
+        friend class PDXearch;
+
+        IterativeSearch(
+            PDXearch& searcher,
+            uint32_t k,
+            TopKHeap& top_k_heap,
+            std::unique_ptr<PredicateEvaluator> evaluator
+        )
+            : searcher(&searcher), top_k_heap(&top_k_heap), k(k), evaluator(std::move(evaluator)) {}
+
+        void ProbeCluster(uint32_t cluster_id) {
+            PDXearch& s = *searcher;
+            cluster_t& cluster = s.pdx_data.clusters[cluster_id];
+            Heap& heap = top_k_heap->heap;
+            uint8_t* selection_vector = nullptr;
+            uint32_t passing_tuples = 0;
+            if constexpr (FILTERED) {
+                auto selection = evaluator->GetSelectionVector(
+                    cluster_id, s.pdx_data.cluster_offsets[cluster_id]
+                );
+                selection_vector = selection.first;
+                passing_tuples = selection.second;
+            }
+            {
+                auto lock = top_k_heap->GetLock();
+                if (heap.size() < k) {
+                    // We cannot prune until we fill the heap. clang-tidy 18 misreads this
+                    // if-constexpr over two different calls as identical branches.
+                    // NOLINTNEXTLINE(bugprone-branch-clone)
+                    if constexpr (FILTERED) {
+                        s.FilteredStart(
+                            prepared_query,
+                            cluster.data,
+                            cluster.used_capacity,
+                            cluster.max_capacity,
+                            k,
+                            cluster.indices,
+                            pruning_positions.get(),
+                            pruning_distances.get(),
+                            heap,
+                            selection_vector,
+                            passing_tuples,
+                            cluster.tombstones
+                        );
+                    } else {
+                        s.Start(
+                            prepared_query,
+                            cluster.data,
+                            cluster.used_capacity,
+                            cluster.max_capacity,
+                            k,
+                            cluster.indices,
+                            pruning_positions.get(),
+                            pruning_distances.get(),
+                            heap,
+                            cluster.tombstones
+                        );
+                    }
+                    return;
+                }
+            }
+            distance_t pruning_threshold = std::numeric_limits<distance_t>::max();
+            uint32_t current_dimension_idx = 0;
+            size_t n_vectors_not_pruned = 0;
+            s.template Warmup<FILTERED>(
+                prepared_query,
+                cluster.data,
+                cluster.used_capacity,
+                cluster.max_capacity,
+                k,
+                s.selectivity_threshold,
+                pruning_positions.get(),
+                pruning_distances.get(),
+                pruning_threshold,
+                heap,
+                current_dimension_idx,
+                n_vectors_not_pruned,
+                cluster.tombstones,
+                passing_tuples,
+                selection_vector,
+                top_k_heap
+            );
+            s.template Prune<FILTERED>(
+                prepared_query,
+                cluster.data,
+                cluster.used_capacity,
+                cluster.max_capacity,
+                k,
+                pruning_positions.get(),
+                pruning_distances.get(),
+                pruning_threshold,
+                heap,
+                current_dimension_idx,
+                n_vectors_not_pruned,
+                cluster.tombstones,
+                selection_vector,
+                top_k_heap
+            );
+            if (n_vectors_not_pruned) {
+                auto lock = top_k_heap->GetLock();
+                s.MergeIntoHeap(
+                    cluster.indices,
+                    n_vectors_not_pruned,
+                    k,
+                    pruning_positions.get(),
+                    pruning_distances.get(),
+                    heap
+                );
+            }
+        }
+
+        PDXearch* searcher;
+        TopKHeap* top_k_heap;
+        uint32_t k;
+        std::unique_ptr<PredicateEvaluator> evaluator;
+        std::unique_ptr<float[]> query;
+        std::unique_ptr<quantized_embedding_t[]> quantized_query;
+        const quantized_embedding_t* prepared_query = nullptr;
+        std::unique_ptr<uint32_t[]> queued_clusters;
+        size_t queued_clusters_size = 0;
+        size_t n_probed_clusters = 0;
+        std::unique_ptr<distance_t[]> pruning_distances;
+        std::unique_ptr<uint32_t[]> pruning_positions;
+    };
+
+    [[nodiscard]] IterativeSearch<false> BeginIterativeSearch(
+        const float* PDX_RESTRICT raw_query,
+        uint32_t k,
+        TopKHeap& top_k_heap,
+        bool is_query_transformed = false
+    ) {
+        IterativeSearch<false> search_cursor(*this, k, top_k_heap, nullptr);
+        InitializeSearchCursor(search_cursor, raw_query, is_query_transformed);
+        return search_cursor;
+    }
+
+    [[nodiscard]] IterativeSearch<true> BeginFilteredIterativeSearch(
+        const float* PDX_RESTRICT raw_query,
+        uint32_t k,
+        std::unique_ptr<PredicateEvaluator> evaluator,
+        TopKHeap& top_k_heap,
+        bool is_query_transformed = false
+    ) {
+        assert(evaluator);
+        IterativeSearch<true> search_cursor(*this, k, top_k_heap, std::move(evaluator));
+        InitializeSearchCursor(search_cursor, raw_query, is_query_transformed);
+        return search_cursor;
+    }
+
+  protected:
+    template <bool FILTERED>
+    void InitializeSearchCursor(
+        IterativeSearch<FILTERED>& search_cursor,
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed
+    ) {
+        const size_t d = pdx_data.num_dimensions;
+        search_cursor.query.reset(new float[d]);
+        if (is_query_transformed) {
+            std::copy(raw_query, raw_query + d, search_cursor.query.get());
+        } else if (!pdx_data.is_normalized) {
+            pruner.PreprocessQuery(raw_query, search_cursor.query.get());
+        } else {
+            std::unique_ptr<float[]> normalized_query(new float[d]);
+            quantizer.NormalizeQuery(raw_query, normalized_query.get());
+            pruner.PreprocessQuery(normalized_query.get(), search_cursor.query.get());
+        }
+        if constexpr (Q == U8) {
+            search_cursor.quantized_query.reset(new quantized_embedding_t[d]);
+            quantizer.QuantizeEmbedding(
+                search_cursor.query.get(),
+                pdx_data.quantization_base,
+                pdx_data.quantization_scale,
+                search_cursor.quantized_query.get()
+            );
+            search_cursor.prepared_query = search_cursor.quantized_query.get();
+        } else {
+            search_cursor.prepared_query = search_cursor.query.get();
+        }
+
+        // Rank every cluster, then drop in place the ones that cannot contribute
+        search_cursor.queued_clusters.reset(new uint32_t[pdx_data.num_clusters]);
+        GetClustersAccessOrderIVF(
+            search_cursor.query.get(),
+            pdx_data,
+            pdx_data.num_clusters,
+            search_cursor.queued_clusters.get()
+        );
+        search_cursor.queued_clusters_size = 0;
+        for (size_t i = 0; i < pdx_data.num_clusters; i++) {
+            const uint32_t cluster_id = search_cursor.queued_clusters[i];
+            if (pdx_data.clusters[cluster_id].num_embeddings == 0) {
+                continue;
+            }
+            if constexpr (FILTERED) {
+                if (search_cursor.evaluator->n_passing_tuples[cluster_id] == 0) {
+                    continue;
+                }
+            }
+            search_cursor.queued_clusters[search_cursor.queued_clusters_size++] = cluster_id;
+        }
+
+        search_cursor.pruning_distances.reset(new distance_t[pdx_data.max_cluster_capacity]);
+        search_cursor.pruning_positions.reset(new uint32_t[pdx_data.max_cluster_capacity]);
+    }
+
+  public:
     std::vector<KNNCandidate> Search(
         const float* PDX_RESTRICT const raw_query,
         const uint32_t k,

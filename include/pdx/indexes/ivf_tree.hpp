@@ -180,6 +180,27 @@ class PDXTreeIndex : public IPDXIndex {
         }
     }
 
+    // Ranks the leaf clusters by centroid distance (no meso-cluster pass), like FilteredSearch
+    std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
+        const float* query_embedding,
+        uint32_t knn,
+        TopKHeap& top_k_heap,
+        const std::vector<size_t>* passing_row_ids
+    ) const override {
+        if (!passing_row_ids) {
+            return std::make_unique<typename PDXearch<Q>::template IterativeSearch<false>>(
+                searcher->BeginIterativeSearch(query_embedding, knn, top_k_heap)
+            );
+        }
+        auto evaluator =
+            std::make_unique<PredicateEvaluator>(CreatePredicateEvaluator(*passing_row_ids));
+        return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
+            searcher->BeginFilteredIterativeSearch(
+                query_embedding, knn, std::move(evaluator), top_k_heap
+            )
+        );
+    }
+
     // Concurrent writes must always go through a single writer thread
     void Append(size_t row_id, const float* PDX_RESTRICT embedding) override {
         PDX_PROFILE_SCOPE("Append");

@@ -41,6 +41,24 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 `pdx_tree_u8`). Tree indexes are currently **skipped** in `test_serialization.cpp`,
 `test_filtered_search.cpp` and `generate_test_ground_truth.cpp` ("once tree index crash is fixed").
 
+## Resumable search (cursor)
+
+`PDXearch<Q>::IterativeSearch<FILTERED>` (from `BeginIterativeSearch` / `BeginFilteredIterativeSearch`,
+or type-erased as `IIterativeSearch` via `IPDXIndex::BeginIterativeSearch(query, k, heap, mutex,
+passing_row_ids*)`) owns all per-query state, so any number of cursors run concurrently on one searcher.
+- `Next(n)` probes the next n of the `queued_clusters`, ranked once at `Begin`; empty clusters and,
+  when filtered, clusters without passing tuples are not queued. `Done()` ⇔ the queue is exhausted. It
+  never looks at the heap: callers stop on "heap holds k entries **or** every cursor is done".
+- The `TopKHeap` (`heap`, `mutex`, `thread_safe`) belongs to the caller; construct it thread-safe when
+  several cursors share it and they take `GetLock()` on every threshold read and merge. While the heap
+  holds fewer than k entries a cursor runs `Start`/`FilteredStart` under the lock, exactly like the
+  single-shot loop, and `GetPruningThreshold` returns the mask value (no real pruning) as a guard
+  against an empty heap.
+- Single-shot `Search`/`FilteredSearch` are unchanged and bit-identical to a cursor drained in any chunk
+  size (`tests/test_iterative_search.cpp`). The cursor does not bump `n_accessed`.
+- `BenchmarkIterativeFiltered <dataset> [index_type] [nprobe] [selectivity]` mirrors the DuckDB
+  extension's loop: `Next(nprobe)`, then `Next(5)` until k results or `Done()`.
+
 ## Maintenance (SPFresh-like appends/deletes)
 
 Every index implements `Append(row_id, embedding)` / `Delete(row_id)` (pure virtual on `IPDXIndex`;

@@ -44,6 +44,14 @@ class IPDXIndex {
     // Maintenance (SPFresh-like). Concurrent writes must go through a single writer thread.
     virtual void Append(size_t row_id, const float* embedding) = 0;
     virtual void Delete(size_t row_id) = 0;
+    // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
+    // share it); passing_row_ids to filter (nullptr: unfiltered).
+    virtual std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
+        const float* query_embedding,
+        uint32_t knn,
+        TopKHeap& top_k_heap,
+        const std::vector<size_t>* passing_row_ids
+    ) const = 0;
 };
 
 template <PDX::Quantization Q>
@@ -149,6 +157,26 @@ class PDXIndex : public IPDXIndex {
             PDX_PROFILE_SCOPE("Search");
             return searcher->FilteredSearch(query_embedding, knn, evaluator);
         }
+    }
+
+    std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
+        const float* query_embedding,
+        uint32_t knn,
+        TopKHeap& top_k_heap,
+        const std::vector<size_t>* passing_row_ids
+    ) const override {
+        if (!passing_row_ids) {
+            return std::make_unique<typename PDXearch<Q>::template IterativeSearch<false>>(
+                searcher->BeginIterativeSearch(query_embedding, knn, top_k_heap)
+            );
+        }
+        auto evaluator =
+            std::make_unique<PredicateEvaluator>(CreatePredicateEvaluator(*passing_row_ids));
+        return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
+            searcher->BeginFilteredIterativeSearch(
+                query_embedding, knn, std::move(evaluator), top_k_heap
+            )
+        );
     }
 
     void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }
