@@ -21,10 +21,6 @@
 namespace PDX {
 
 [[nodiscard]] inline std::vector<KNNCandidate> BuildResultSetFromHeap(uint32_t k, Heap& heap) {
-    // Pop the initialization element from the heap, as it can't be part of the result.
-    if (!heap.empty() && heap.top().distance == std::numeric_limits<float>::max()) {
-        heap.pop();
-    }
     size_t result_set_size = std::min(heap.size(), static_cast<size_t>(k));
     std::vector<KNNCandidate> result;
     result.resize(result_set_size);

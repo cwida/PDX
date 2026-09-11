@@ -44,8 +44,10 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 ## Resumable search (cursor)
 
 `PDXearch<Q>::IterativeSearch<FILTERED>` (from `BeginIterativeSearch` / `BeginFilteredIterativeSearch`,
-or type-erased as `IIterativeSearch` via `IPDXIndex::BeginIterativeSearch(query, k, heap, mutex,
+or type-erased as `IIterativeSearch` via `IPDXIndex::BeginIterativeSearch(query, k, top_k_heap,
 passing_row_ids*)`) owns all per-query state, so any number of cursors run concurrently on one searcher.
+The DuckDB extension (PDXearch) is the reference consumer: one cursor per row group into one shared
+`TopKHeap`.
 - `Next(n)` probes the next n of the `queued_clusters`, ranked once at `Begin`; empty clusters and,
   when filtered, clusters without passing tuples are not queued. `Done()` ⇔ the queue is exhausted. It
   never looks at the heap: callers stop on "heap holds k entries **or** every cursor is done".
