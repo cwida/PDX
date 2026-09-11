@@ -53,14 +53,12 @@ class PDXTreeIndex : public IPDXIndex {
     PDX::ADSamplingPruner* pruner = nullptr;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
     std::unique_ptr<PDX::PDXearch<F32>> top_level_searcher;
-    ScalarQuantizer<Q> quantizer{0};
     std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> row_id_cluster_mapping;
 
   public:
     PDXTreeIndex() = default;
 
-    explicit PDXTreeIndex(PDXIndexConfig config)
-        : config(config), d(config.num_dimensions), quantizer(config.num_dimensions) {
+    explicit PDXTreeIndex(PDXIndexConfig config) : config(config), d(config.num_dimensions) {
         config.Validate();
         PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
         owned_pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
@@ -68,8 +66,7 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     PDXTreeIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
-        : config(config), d(config.num_dimensions), pruner(&external_pruner),
-          quantizer(config.num_dimensions) {
+        : config(config), d(config.num_dimensions), pruner(&external_pruner) {
         config.Validate();
         PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
     }
@@ -128,6 +125,10 @@ class PDXTreeIndex : public IPDXIndex {
         // Load IVFTree data
         index.Load(ptr);
         d = index.num_dimensions;
+        // No PDXIndexConfig is stored on disk: recover what maintenance needs so that an index
+        // loaded through LoadPDXIndex() can Append/Delete like a freshly built one.
+        config.num_dimensions = d;
+        config.normalize = index.is_normalized;
 
         // Create pruner and searchers
         owned_pruner = std::make_unique<PDX::ADSamplingPruner>(d, aligned_matrix.get());
@@ -190,10 +191,7 @@ class PDXTreeIndex : public IPDXIndex {
         }
         ReserveClusterSlotIfNeeded();
 
-        const bool normalize =
-            config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
-
-        auto preprocessed = NormalizeAndRotate(embedding, 1, d, normalize, *pruner);
+        auto preprocessed = NormalizeAndRotate(embedding, 1, d, index.is_normalized, *pruner);
 
         // Find nearest centroid for the new embedding
         uint32_t closest_centroid_idx;
@@ -210,8 +208,9 @@ class PDXTreeIndex : public IPDXIndex {
 
         auto& cluster = index.clusters[closest_centroid_idx];
 
-        uint32_t new_index_in_cluster =
-            QuantizeAndAppend(cluster, static_cast<uint32_t>(row_id), preprocessed.get());
+        uint32_t new_index_in_cluster = QuantizeAndAppend<Q>(
+            index, searcher->quantizer, cluster, static_cast<uint32_t>(row_id), preprocessed.get()
+        );
         SetRowIdMapping(row_id, closest_centroid_idx, new_index_in_cluster);
         index.total_num_embeddings++;
         CheckClusterHealth(cluster);
@@ -481,97 +480,12 @@ class PDXTreeIndex : public IPDXIndex {
         }
     }
 
-    // Dequantize raw (Q-type) embeddings to float. For F32 this is a memcpy.
-    std::unique_ptr<float[]> DequantizeClusterEmbeddings(
-        const embedding_storage_t* raw_embeddings,
-        uint32_t n_emb
-    ) const {
-        PDX_PROFILE_SCOPE("Dequantize");
-        std::unique_ptr<float[]> result(new float[static_cast<size_t>(n_emb) * d]);
-        if constexpr (Q == U8) {
-            for (size_t i = 0; i < n_emb; i++) {
-                searcher->quantizer.DequantizeEmbedding(
-                    raw_embeddings + i * d,
-                    index.quantization_base,
-                    index.quantization_scale,
-                    result.get() + i * d
-                );
-            }
-        } else {
-            std::memcpy(
-                result.get(), raw_embeddings, static_cast<size_t>(n_emb) * d * sizeof(float)
-            );
-        }
-        return result;
-    }
-
-    // Quantize (if U8) and append a float embedding to a cluster.
-    uint32_t QuantizeAndAppend(cluster_t& cluster, uint32_t row_id, const float* embedding) {
-        if constexpr (Q == U8) {
-            std::unique_ptr<embedding_storage_t[]> quantized(new embedding_storage_t[d]);
-            quantizer.QuantizeEmbedding(
-                embedding, index.quantization_base, index.quantization_scale, quantized.get()
-            );
-            return cluster.AppendEmbedding(row_id, quantized.get());
-        } else {
-            return cluster.AppendEmbedding(row_id, embedding);
-        }
-    }
-
-    // Gather raw embeddings, row IDs, and accumulate centroid sum for a group of indices.
-    void GatherGroupEmbeddings(
-        const std::vector<uint32_t>& group_idx,
-        const embedding_storage_t* raw_embeddings,
-        const float* float_embeddings,
-        const cluster_t& cluster,
-        std::vector<embedding_storage_t>& embs_out,
-        std::vector<uint32_t>& ids_out,
-        float* centroid_sum
-    ) const {
-        for (uint32_t idx : group_idx) {
-            embs_out.insert(
-                embs_out.end(),
-                raw_embeddings + static_cast<size_t>(idx) * d,
-                raw_embeddings + (static_cast<size_t>(idx) + 1) * d
-            );
-            ids_out.push_back(cluster.indices[idx]);
-            const float* emb_f = float_embeddings + static_cast<size_t>(idx) * d;
-            for (size_t j = 0; j < d; j++) {
-                centroid_sum[j] += emb_f[j];
-            }
-        }
-    }
-
-    // Compute mean centroid from accumulated sum. Falls back to fallback if count == 0.
-    void ComputeCentroidMean(
-        const float* centroid_sum,
-        size_t count,
-        const float* fallback,
-        float* output
-    ) const {
-        if (count == 0) {
-            std::memcpy(output, fallback, d * sizeof(float));
-        } else {
-            float inv = 1.0f / static_cast<float>(count);
-            PDX_VECTORIZE_LOOP
-            for (size_t j = 0; j < d; j++) {
-                output[j] = centroid_sum[j] * inv;
-            }
-        }
-        const bool normalize =
-            config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
-        if (normalize) {
-            Quantizer q(d);
-            q.NormalizeQuery(output, output);
-        }
-    }
-
     // Get neighboring cluster IDs from the same meso-cluster, limited to max_neighbors nearest.
     std::vector<uint32_t> GetNearestNeighborClusterIds(
         uint32_t cluster_id,
         uint32_t mesocluster_id,
         const float* centroid,
-        size_t max_neighbors = 32
+        size_t max_neighbors = SPLIT_MAX_NEIGHBOR_CLUSTERS
     ) const {
         PDX_PROFILE_SCOPE("GetNeighboringClusters");
         std::vector<uint32_t> neighbor_ids;
@@ -591,7 +505,7 @@ class PDXTreeIndex : public IPDXIndex {
                 float dist = distance_computer_f32_t::Horizontal(
                     centroid, index.centroids.data() + static_cast<size_t>(nid) * d, d
                 );
-                neighbor_dists.push_back({dist, nid});
+                neighbor_dists.emplace_back(dist, nid);
             }
             std::nth_element(
                 neighbor_dists.begin(),
@@ -664,7 +578,7 @@ class PDXTreeIndex : public IPDXIndex {
             config.seed,
             true,
             1.0f,
-            4,
+            SPLIT_KMEANS_ITERS,
             false,
             1
         );
@@ -690,12 +604,16 @@ class PDXTreeIndex : public IPDXIndex {
         std::unique_ptr<float[]> true_centroid_a(new float[d]);
         std::unique_ptr<float[]> true_centroid_b(new float[d]);
         ComputeCentroidMean(
+            d,
+            index.is_normalized,
             centroid_sum_a.get(),
             group_a.size(),
             split_result.centroids.data(),
             true_centroid_a.get()
         );
         ComputeCentroidMean(
+            d,
+            index.is_normalized,
             centroid_sum_b.get(),
             group_b.size(),
             split_result.centroids.data() + d,
@@ -887,7 +805,8 @@ class PDXTreeIndex : public IPDXIndex {
 
         auto raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
         std::vector<uint32_t> cluster_indices(cluster.indices, cluster.indices + n_emb);
-        auto cluster_embeddings = DequantizeClusterEmbeddings(raw_embeddings.get(), n_emb);
+        auto cluster_embeddings =
+            DequantizeClusterEmbeddings<Q>(index, searcher->quantizer, raw_embeddings.get(), n_emb);
 
         // Remove from L0
         uint32_t position_in_mesocluster = FindPositionInMesoCluster(cluster_id, mesocluster_id);
@@ -941,71 +860,29 @@ class PDXTreeIndex : public IPDXIndex {
         const uint32_t mesocluster_id = cluster.mesocluster_id;
 
         auto raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
-        auto cluster_embeddings =
-            DequantizeClusterEmbeddings(raw_embeddings.get(), cluster.num_embeddings);
+        auto cluster_embeddings = DequantizeClusterEmbeddings<Q>(
+            index, searcher->quantizer, raw_embeddings.get(), cluster.num_embeddings
+        );
 
         auto centroid_to_split = index.centroids.data() + static_cast<size_t>(cluster_id) * d;
         auto neighboring_clusters_ids =
             GetNearestNeighborClusterIds(cluster_id, mesocluster_id, centroid_to_split);
 
-        // 2-means split
-        std::unique_ptr<float[]> centroid_a(new float[d]);
-        std::unique_ptr<float[]> centroid_b(new float[d]);
-        std::vector<uint32_t> group_a_idx, group_b_idx, group_rest_idx;
-        {
-            PDX_PROFILE_SCOPE("Split/KMeans");
-            KMeansResult split_result = ComputeKMeans(
-                cluster_embeddings.get(),
-                cluster.num_embeddings,
-                d,
-                2,
-                config.distance_metric,
-                config.seed,
-                true,
-                1.0f,
-                4,
-                false,
-                1
-            );
-            std::memcpy(centroid_a.get(), split_result.centroids.data(), d * sizeof(float));
-            std::memcpy(centroid_b.get(), split_result.centroids.data() + d, d * sizeof(float));
-            group_a_idx.reserve(split_result.assignments[0].size());
-            group_b_idx.reserve(split_result.assignments[1].size());
-        }
-
-        // Assign each embedding to A, B, or rest (closer elsewhere)
-        {
-            PDX_PROFILE_SCOPE("Split/Partition");
-            for (size_t i = 0; i < cluster.num_embeddings; i++) {
-                const float* emb = cluster_embeddings.get() + i * d;
-                float dist_old = distance_computer_f32_t::Horizontal(emb, centroid_to_split, d);
-                // TODO(@lkuffo, med): We could avoid one of these
-                // since we have the distance from k-means, we just need to bring it here
-                float dist_a = distance_computer_f32_t::Horizontal(emb, centroid_a.get(), d);
-                float dist_b = distance_computer_f32_t::Horizontal(emb, centroid_b.get(), d);
-                float min_ab = std::min(dist_a, dist_b);
-
-                if (min_ab <= dist_old) {
-                    (dist_a <= dist_b ? group_a_idx : group_b_idx).push_back(i);
-                } else {
-                    bool closer_elsewhere = false;
-                    for (uint32_t c : neighboring_clusters_ids) {
-                        float dist = distance_computer_f32_t::Horizontal(
-                            emb, index.centroids.data() + static_cast<size_t>(c) * d, d
-                        );
-                        if (dist < min_ab) {
-                            closer_elsewhere = true;
-                            break;
-                        }
-                    }
-                    if (closer_elsewhere) {
-                        group_rest_idx.push_back(i);
-                    } else {
-                        (dist_a <= dist_b ? group_a_idx : group_b_idx).push_back(i);
-                    }
-                }
-            }
-        }
+        // 2-means split: each embedding goes to A, B, or rest (closer to a neighboring cluster)
+        auto partition = PartitionClusterForSplit<Q>(
+            index,
+            cluster_embeddings.get(),
+            cluster.num_embeddings,
+            centroid_to_split,
+            neighboring_clusters_ids,
+            config.distance_metric,
+            config.seed
+        );
+        auto& centroid_a = partition.centroid_a;
+        auto& centroid_b = partition.centroid_b;
+        auto& group_a_idx = partition.group_a_idx;
+        auto& group_b_idx = partition.group_b_idx;
+        auto& group_rest_idx = partition.group_rest_idx;
 
         // Gather embeddings and IDs, accumulate centroid sums
         std::vector<embedding_storage_t> embs_a, embs_b;
@@ -1018,20 +895,22 @@ class PDXTreeIndex : public IPDXIndex {
         auto centroid_sum_b = std::make_unique<float[]>(d);
         {
             PDX_PROFILE_SCOPE("Split/GatherEmbeddings");
-            GatherGroupEmbeddings(
+            GatherGroupEmbeddings<Q>(
+                index,
+                cluster,
                 group_a_idx,
                 raw_embeddings.get(),
                 cluster_embeddings.get(),
-                cluster,
                 embs_a,
                 ids_a,
                 centroid_sum_a.get()
             );
-            GatherGroupEmbeddings(
+            GatherGroupEmbeddings<Q>(
+                index,
+                cluster,
                 group_b_idx,
                 raw_embeddings.get(),
                 cluster_embeddings.get(),
-                cluster,
                 embs_b,
                 ids_b,
                 centroid_sum_b.get()
@@ -1051,103 +930,20 @@ class PDXTreeIndex : public IPDXIndex {
         }
 
         // Steal neighbors closer to A or B than to their own centroid
-        {
-            PDX_PROFILE_SCOPE("Split/NeighborReassign");
-            for (uint32_t neighbor_id : neighboring_clusters_ids) {
-                auto& neighbor = index.clusters[neighbor_id];
-                const float* neighbor_centroid =
-                    index.centroids.data() + static_cast<size_t>(neighbor_id) * d;
+        StealNeighborEmbeddings<Q>(
+            index,
+            searcher->quantizer,
+            neighboring_clusters_ids,
+            centroid_a.get(),
+            centroid_b.get(),
+            embs_a,
+            ids_a,
+            centroid_sum_a.get(),
+            embs_b,
+            ids_b,
+            centroid_sum_b.get()
+        );
 
-                // Quantize centroids for U8, or use directly for F32
-                std::unique_ptr<query_t[]> q_own, q_a, q_b;
-                const query_t* query_own;
-                const query_t* query_a;
-                const query_t* query_b;
-                if constexpr (Q == U8) {
-                    q_own.reset(new query_t[d]);
-                    q_a.reset(new query_t[d]);
-                    q_b.reset(new query_t[d]);
-                    searcher->quantizer.QuantizeEmbedding(
-                        neighbor_centroid,
-                        index.quantization_base,
-                        index.quantization_scale,
-                        q_own.get()
-                    );
-                    searcher->quantizer.QuantizeEmbedding(
-                        centroid_a.get(),
-                        index.quantization_base,
-                        index.quantization_scale,
-                        q_a.get()
-                    );
-                    searcher->quantizer.QuantizeEmbedding(
-                        centroid_b.get(),
-                        index.quantization_base,
-                        index.quantization_scale,
-                        q_b.get()
-                    );
-                    query_own = q_own.get();
-                    query_a = q_a.get();
-                    query_b = q_b.get();
-                } else {
-                    query_own = neighbor_centroid;
-                    query_a = centroid_a.get();
-                    query_b = centroid_b.get();
-                }
-
-                auto distances_to_own =
-                    CalculateDistanceFromEmbeddingToCluster(query_own, neighbor.data, neighbor);
-                auto distances_to_a =
-                    CalculateDistanceFromEmbeddingToCluster(query_a, neighbor.data, neighbor);
-                auto distances_to_b =
-                    CalculateDistanceFromEmbeddingToCluster(query_b, neighbor.data, neighbor);
-
-                for (uint32_t p = 0; p < neighbor.used_capacity; p++) {
-                    if (neighbor.HasTombstone(p))
-                        continue;
-
-                    distance_t dist_a = distances_to_a[p];
-                    distance_t dist_b = distances_to_b[p];
-                    distance_t dist_to_own = distances_to_own[p];
-
-                    if (dist_to_own < dist_a && dist_to_own < dist_b) {
-                        continue;
-                    }
-
-                    // We need the horizontal embedding (this happens in less than 1% of points)
-                    auto raw_emb = neighbor.GetHorizontalEmbeddingFromPDXBuffer(p);
-                    const float* emb_ptr;
-                    std::unique_ptr<float[]> emb_f32;
-                    if constexpr (Q == U8) {
-                        emb_f32.reset(new float[d]);
-                        searcher->quantizer.DequantizeEmbedding(
-                            raw_emb.get(),
-                            index.quantization_base,
-                            index.quantization_scale,
-                            emb_f32.get()
-                        );
-                        emb_ptr = emb_f32.get();
-                    } else {
-                        emb_ptr = raw_emb.get();
-                    }
-
-                    if (dist_a <= dist_b) {
-                        uint32_t row_id = neighbor.indices[p];
-                        neighbor.DeleteEmbedding(p);
-                        embs_a.insert(embs_a.end(), raw_emb.get(), raw_emb.get() + d);
-                        ids_a.push_back(row_id);
-                        for (size_t j = 0; j < d; j++)
-                            centroid_sum_a[j] += emb_ptr[j];
-                    } else if (dist_b < dist_a) {
-                        uint32_t row_id = neighbor.indices[p];
-                        neighbor.DeleteEmbedding(p);
-                        embs_b.insert(embs_b.end(), raw_emb.get(), raw_emb.get() + d);
-                        ids_b.push_back(row_id);
-                        for (size_t j = 0; j < d; j++)
-                            centroid_sum_b[j] += emb_ptr[j];
-                    }
-                }
-            }
-        }
         // Compute true centroids from accumulated sums
         size_t count_a = ids_a.size();
         size_t count_b = ids_b.size();
@@ -1156,10 +952,20 @@ class PDXTreeIndex : public IPDXIndex {
         {
             PDX_PROFILE_SCOPE("Split/ComputeTrueCentroids");
             ComputeCentroidMean(
-                centroid_sum_a.get(), count_a, centroid_a.get(), true_centroid_a.get()
+                d,
+                index.is_normalized,
+                centroid_sum_a.get(),
+                count_a,
+                centroid_a.get(),
+                true_centroid_a.get()
             );
             ComputeCentroidMean(
-                centroid_sum_b.get(), count_b, centroid_b.get(), true_centroid_b.get()
+                d,
+                index.is_normalized,
+                centroid_sum_b.get(),
+                count_b,
+                centroid_b.get(),
+                true_centroid_b.get()
             );
         }
 
@@ -1300,55 +1106,13 @@ class PDXTreeIndex : public IPDXIndex {
         for (size_t i = 0; i < num_embeddings; i++) {
             uint32_t best_cluster = candidate_ids[assignments[i]];
             uint32_t row_id = row_ids[i];
-            uint32_t new_pos =
-                QuantizeAndAppend(index.clusters[best_cluster], row_id, embeddings + i * d);
+            uint32_t new_pos = QuantizeAndAppend<Q>(
+                index, searcher->quantizer, index.clusters[best_cluster], row_id, embeddings + i * d
+            );
             SetRowIdMapping(row_id, best_cluster, new_pos);
             ReserveClusterSlotIfNeeded();
             CheckClusterHealth(index.clusters[best_cluster], allow_merges);
         }
-    }
-
-    using distance_t = pdx_distance_t<Q>;
-    using query_t = pdx_quantized_embedding_t<Q>;
-
-    inline std::unique_ptr<distance_t[]> CalculateDistanceFromEmbeddingToCluster(
-        const query_t* embedding,
-        const embedding_storage_t* pdx_embeddings,
-        cluster_t& cluster
-    ) {
-        PDX_PROFILE_SCOPE("Split/CalculatePDXDistance");
-        using distance_computer_t = DistanceComputer<DistanceMetric::L2SQ, Q>;
-
-        auto n_vectors = cluster.used_capacity;
-        auto buffer_stride = cluster.max_capacity;
-        std::unique_ptr<distance_t[]> pruning_distances =
-            std::make_unique<distance_t[]>(cluster.used_capacity);
-        std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[cluster.used_capacity]);
-        distance_computer_t::Vertical(
-            embedding,
-            pdx_embeddings,
-            n_vectors,
-            buffer_stride,
-            0,
-            index.num_vertical_dimensions,
-            pruning_distances.get(),
-            pruning_positions.get()
-        );
-        for (size_t horizontal_dimension = 0;
-             horizontal_dimension < index.num_horizontal_dimensions;
-             horizontal_dimension += H_DIM_SIZE) {
-            for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
-                size_t data_pos = (index.num_vertical_dimensions * buffer_stride) +
-                                  (horizontal_dimension * buffer_stride) +
-                                  (vector_idx * H_DIM_SIZE);
-                pruning_distances[vector_idx] += distance_computer_t::Horizontal(
-                    embedding + index.num_vertical_dimensions + horizontal_dimension,
-                    pdx_embeddings + data_pos,
-                    H_DIM_SIZE
-                );
-            }
-        }
-        return pruning_distances;
     }
 };
 
@@ -1361,6 +1125,8 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(const std::string& path) {
     auto buffer = MmapFile(path);
     auto type = static_cast<PDXIndexType>(buffer.get()[0]);
     std::unique_ptr<IPDXIndex> idx;
+    // clang-tidy reports the make_unique<T>() branches as clones although T differs
+    // NOLINTBEGIN(bugprone-branch-clone)
     switch (type) {
     case PDXIndexType::PDX_F32:
         idx = std::make_unique<PDXIndexF32>();
@@ -1379,6 +1145,7 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(const std::string& path) {
             "Unknown PDX index type: " + std::to_string(static_cast<int>(type))
         );
     }
+    // NOLINTEND(bugprone-branch-clone)
     idx->Restore(path);
     return idx;
 }

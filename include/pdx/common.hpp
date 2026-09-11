@@ -92,6 +92,11 @@ static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[20] = {16,  16,  32,  32,   
 
 static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 
+// SPFresh-like maintenance: when a cluster splits, points may be stolen from / reassigned to at
+// most this many nearest neighboring clusters, and the 2-means split runs this many iterations.
+static constexpr size_t SPLIT_MAX_NEIGHBOR_CLUSTERS = 32;
+static constexpr uint32_t SPLIT_KMEANS_ITERS = 4;
+
 static constexpr bool AllFetchingSizesMultipleOfU8InterleaveSize() {
     for (auto s : DIMENSIONS_FETCHING_SIZES) {
         if (s % U8_INTERLEAVE_SIZE != 0) {
@@ -113,9 +118,9 @@ static constexpr uint32_t AlignValue(T n) {
     return ((n + (val - 1)) / val) * val;
 }
 
-enum class DistanceMetric { L2SQ, COSINE, IP };
+enum class DistanceMetric : uint8_t { L2SQ, COSINE, IP };
 
-enum Quantization { F32, U8, F16, BF };
+enum Quantization : uint8_t { F32, U8, F16, BF };
 
 enum class PDXIndexType : uint8_t { PDX_F32 = 0, PDX_U8 = 1, PDX_TREE_F32 = 2, PDX_TREE_U8 = 3 };
 
@@ -172,8 +177,7 @@ struct PDXDimensionSplit {
     const uint32_t vertical_dimensions;
 };
 
-[[nodiscard]] static inline constexpr PDXDimensionSplit GetPDXDimensionSplit(
-    const uint32_t num_dimensions
+[[nodiscard]] static constexpr PDXDimensionSplit GetPDXDimensionSplit(const uint32_t num_dimensions
 ) {
     auto local_proportion_horizontal_dim = PROPORTION_HORIZONTAL_DIM;
     if (num_dimensions <= 128) {
@@ -230,7 +234,7 @@ static_assert(GetPDXDimensionSplit(1024).vertical_dimensions == 256);
 static_assert(GetPDXDimensionSplit(1028).horizontal_dimensions == 768);
 static_assert(GetPDXDimensionSplit(1028).vertical_dimensions == 260);
 
-[[nodiscard]] inline constexpr uint32_t ComputeNumberOfClusters(const uint32_t num_embeddings) {
+[[nodiscard]] constexpr uint32_t ComputeNumberOfClusters(const uint32_t num_embeddings) {
     if (num_embeddings < 500000) {
         return std::ceil(2 * std::sqrt(num_embeddings));
     } else if (num_embeddings < 2500000) {
@@ -240,7 +244,7 @@ static_assert(GetPDXDimensionSplit(1028).vertical_dimensions == 260);
     }
 }
 
-[[nodiscard]] inline constexpr bool DistanceMetricRequiresNormalization(
+[[nodiscard]] constexpr bool DistanceMetricRequiresNormalization(
     const PDX::DistanceMetric distance_metric
 ) {
     return distance_metric == PDX::DistanceMetric::COSINE ||

@@ -206,7 +206,8 @@ struct Cluster {
             if (d < vertical_d) {
                 uint32_t remaining = vertical_d - d;
                 out.write(
-                    reinterpret_cast<const char*>(data + d * stride), num_embeddings * remaining
+                    reinterpret_cast<const char*>(data + d * stride),
+                    static_cast<std::streamsize>(num_embeddings) * remaining
                 );
             }
         }
@@ -242,7 +243,7 @@ struct Cluster {
             if (d < vertical_d) {
                 uint32_t remaining = vertical_d - d;
                 memcpy(data + d * stride, ptr, num_embeddings * remaining);
-                ptr += num_embeddings * remaining;
+                ptr += static_cast<size_t>(num_embeddings) * remaining;
             }
         }
 

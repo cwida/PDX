@@ -124,7 +124,7 @@ void RunBenchmark(
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe] [build_fraction]\n";
-        std::cerr << "Index types: pdx_tree_f32 (default), pdx_tree_u8\n";
+        std::cerr << "Index types: pdx_f32, pdx_u8, pdx_tree_f32 (default), pdx_tree_u8\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
@@ -143,9 +143,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (index_type != "pdx_tree_f32" && index_type != "pdx_tree_u8") {
-        std::cerr << "Error: Only pdx_tree_f32 and pdx_tree_u8 support maintenance (insertion).\n";
-        std::cerr << "Got: " << index_type << "\n";
+    if (index_type != "pdx_f32" && index_type != "pdx_u8" && index_type != "pdx_tree_f32" &&
+        index_type != "pdx_tree_u8") {
+        std::cerr << "Unknown index type: " << index_type << "\n";
+        std::cerr << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
         return 1;
     }
 
@@ -200,7 +201,27 @@ int main(int argc, char* argv[]) {
 
     std::string algorithm = "insertion_" + index_type;
 
-    if (index_type == "pdx_tree_f32") {
+    if (index_type == "pdx_f32") {
+        RunBenchmark<PDX::PDXIndexF32>(
+            info,
+            dataset,
+            algorithm,
+            data.data(),
+            queries.data(),
+            nprobes_to_use,
+            proportion_to_build
+        );
+    } else if (index_type == "pdx_u8") {
+        RunBenchmark<PDX::PDXIndexU8>(
+            info,
+            dataset,
+            algorithm,
+            data.data(),
+            queries.data(),
+            nprobes_to_use,
+            proportion_to_build
+        );
+    } else if (index_type == "pdx_tree_f32") {
         RunBenchmark<PDX::PDXTreeIndexF32>(
             info,
             dataset,

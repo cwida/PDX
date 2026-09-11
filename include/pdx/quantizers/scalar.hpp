@@ -14,12 +14,10 @@ struct ScalarQuantizationParams {
 };
 
 class Quantizer {
-
   public:
     explicit Quantizer(size_t num_dimensions) : num_dimensions(num_dimensions) {}
     virtual ~Quantizer() = default;
 
-  public:
     void NormalizeQuery(const float* src, float* out) const {
         float sum = 0.0f;
         PDX_VECTORIZE_LOOP

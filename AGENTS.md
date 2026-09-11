@@ -41,6 +41,40 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 `pdx_tree_u8`). Tree indexes are currently **skipped** in `test_serialization.cpp`,
 `test_filtered_search.cpp` and `generate_test_ground_truth.cpp` ("once tree index crash is fixed").
 
+## Maintenance (SPFresh-like appends/deletes)
+
+Every index implements `Append(row_id, embedding)` / `Delete(row_id)` (pure virtual on `IPDXIndex`;
+Python `append`/`delete`). `PDXIndex` and `PDXTreeIndex` follow the same recipe; the tree additionally
+keeps the meso-cluster layer (L0) in sync. The leaf-level helpers they share live in
+`indexes/ivf_utils.hpp` (`QuantizeAndAppend`, `DequantizeClusterEmbeddings`, `PartitionClusterForSplit`,
+`StealNeighborEmbeddings`, `ComputeCentroidMean`, `CalculateDistanceFromEmbeddingToCluster`, ...).
+- **Append**: normalize+rotate → nearest centroid (vanilla: exact scan of all centroids; tree: PDX
+  search over L0) → `Cluster::AppendEmbedding` (quantized for `U8`) → `row_id_cluster_mapping` →
+  `CheckClusterHealth`. Centroids never move on a plain append.
+- **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`,
+  `CheckClusterHealth`. Search masks tombstones; `Save()` compacts them away.
+- **CheckClusterHealth** runs after *every* mutation: a full cluster (`used_capacity ==
+  max_capacity`) is compacted if it has tombstones, else split; `num_embeddings <= min_capacity`
+  destroys + merges it (vanilla skips the merge when a single cluster is left).
+- **SplitCluster**: 2-means (`SPLIT_KMEANS_ITERS`); points closer to one of the
+  `SPLIT_MAX_NEIGHBOR_CLUSTERS` nearest clusters go to "rest" and get reassigned; neighbors' points
+  closer to A/B than to their own centroid are stolen; A replaces the old slot, B is `push_back`ed.
+  Neighbor set: tree = siblings in the meso-cluster, vanilla = nearest centroids overall.
+- **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the
+  moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM) with
+  merges disabled to avoid cascades.
+- **Invariants**: `ReserveClusterSlotIfNeeded()` before holding a `cluster_t&` (splits `push_back`);
+  every structural change ends with `ComputeClusterOffsets()` (the searcher sizes its buffers from
+  `max_cluster_capacity` on each query); single writer thread. After `Restore()` the truth is
+  `index.is_normalized` and `searcher->quantizer` — `config` is only partially recovered (no
+  seed/metric on disk), so don't add code paths that depend on it.
+- Capacity knobs: `indexes/cluster.hpp` (`CAPACITY_THRESHOLD`, `MIN_CAPACITY_THRESHOLD`,
+  `MIN_MAX_CAPACITY = 256`, so small clusters need 256 slots before they split). Split knobs:
+  `common.hpp`.
+- Tests: `tests/test_maintenance.cpp` (all 4 index types, incl. forced split/merge and
+  after-restore). Benchmarks: `BenchmarkInsertion <dataset> [index_type] [nprobe] [build_fraction]`
+  and `BenchmarkWorkload <dataset> [index_type] [nprobe]` (edit `WORKLOAD` in `pdx_workload.cpp`).
+
 ## Verification gate (definition of done)
 
 **When you believe a feature is finished, prompt the user to run the verification gate. DO NOT RUN WITH EACH CODE CHANGE YOU MAKE. Run in the FOREGROUND — never background these.**

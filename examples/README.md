@@ -31,4 +31,4 @@ Our examples look for `.hdf5` files in `/benchmarks/datasets/downloaded`. These 
 
 - **`pdx_persist.py`**: Save and load a PDX index to/from disk. Builds an index, saves it with `index.save()`, then reloads it with `load_index()` and queries the restored index.
 
-- **`pdx_maintenance.py`**: Builds an index with 50% of the data, then inserts the rest of the data and query the index. Recall is maintaned and maintenance is very lightweight.
+- **`pdx_maintenance.py`**: Builds an index with 50% of the data, then inserts the rest of the data and query the index. Recall is maintained and maintenance is very lightweight. `append`/`delete` work on every index class, not only `IndexPDXIVFTreeSQ8`.

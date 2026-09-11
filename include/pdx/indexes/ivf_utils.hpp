@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -10,10 +11,13 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "pdx/clustering.hpp"
 #include "pdx/common.hpp"
+#include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/indexes/ivf_core.hpp"
+#include "pdx/profiler.hpp"
 #include "pdx/pruners/adsampling.hpp"
 #include "pdx/quantizers/scalar.hpp"
 
@@ -239,6 +243,341 @@ void PopulateIVFClusters(
     }
 
     ivf.ComputeClusterOffsets();
+}
+
+// ******************************************
+// Maintenance helpers (SPFresh-like Append/Delete), shared by PDXIndex and PDXTreeIndex.
+// Everything here works on leaf clusters and knows nothing about meso-clusters.
+// ******************************************
+
+// Dequantize raw (Q-type) embeddings to float. For F32 this is a memcpy.
+template <Quantization Q>
+inline std::unique_ptr<float[]> DequantizeClusterEmbeddings(
+    const IVF<Q>& index,
+    ScalarQuantizer<Q>& quantizer,
+    const pdx_data_t<Q>* raw_embeddings,
+    uint32_t n_emb
+) {
+    PDX_PROFILE_SCOPE("Dequantize");
+    const size_t d = index.num_dimensions;
+    std::unique_ptr<float[]> result(new float[static_cast<size_t>(n_emb) * d]);
+    if constexpr (Q == U8) {
+        for (size_t i = 0; i < n_emb; i++) {
+            quantizer.DequantizeEmbedding(
+                raw_embeddings + i * d,
+                index.quantization_base,
+                index.quantization_scale,
+                result.get() + i * d
+            );
+        }
+    } else {
+        std::memcpy(result.get(), raw_embeddings, static_cast<size_t>(n_emb) * d * sizeof(float));
+    }
+    return result;
+}
+
+// Quantize (if U8) and append a float embedding to a cluster. Returns its index in the cluster.
+template <Quantization Q>
+inline uint32_t QuantizeAndAppend(
+    const IVF<Q>& index,
+    ScalarQuantizer<Q>& quantizer,
+    Cluster<Q>& cluster,
+    uint32_t row_id,
+    const float* embedding
+) {
+    if constexpr (Q == U8) {
+        std::unique_ptr<pdx_data_t<Q>[]> quantized(new pdx_data_t<Q>[index.num_dimensions]);
+        quantizer.QuantizeEmbedding(
+            embedding, index.quantization_base, index.quantization_scale, quantized.get()
+        );
+        return cluster.AppendEmbedding(row_id, quantized.get());
+    } else {
+        return cluster.AppendEmbedding(row_id, embedding);
+    }
+}
+
+// Gather the raw embeddings and row ids at the given positions of a cluster, accumulating
+// their (float) sum into centroid_sum.
+template <Quantization Q>
+inline void GatherGroupEmbeddings(
+    const IVF<Q>& index,
+    const Cluster<Q>& cluster,
+    const std::vector<uint32_t>& group_idx,
+    const pdx_data_t<Q>* raw_embeddings,
+    const float* float_embeddings,
+    std::vector<pdx_data_t<Q>>& embs_out,
+    std::vector<uint32_t>& ids_out,
+    float* centroid_sum
+) {
+    const size_t d = index.num_dimensions;
+    for (uint32_t idx : group_idx) {
+        embs_out.insert(
+            embs_out.end(),
+            raw_embeddings + static_cast<size_t>(idx) * d,
+            raw_embeddings + (static_cast<size_t>(idx) + 1) * d
+        );
+        ids_out.push_back(cluster.indices[idx]);
+        const float* emb_f = float_embeddings + static_cast<size_t>(idx) * d;
+        for (size_t j = 0; j < d; j++) {
+            centroid_sum[j] += emb_f[j];
+        }
+    }
+}
+
+// Mean centroid from an accumulated sum; falls back to `fallback` when count == 0.
+// Re-normalized when the index stores normalized vectors.
+inline void ComputeCentroidMean(
+    uint32_t num_dimensions,
+    bool normalize,
+    const float* centroid_sum,
+    size_t count,
+    const float* fallback,
+    float* output
+) {
+    if (count == 0) {
+        std::memcpy(output, fallback, num_dimensions * sizeof(float));
+    } else {
+        float inv = 1.0f / static_cast<float>(count);
+        PDX_VECTORIZE_LOOP
+        for (size_t j = 0; j < num_dimensions; j++) {
+            output[j] = centroid_sum[j] * inv;
+        }
+    }
+    if (normalize) {
+        Quantizer q(num_dimensions);
+        q.NormalizeQuery(output, output);
+    }
+}
+
+// Distances from a (quantized) embedding to every used slot of a cluster, computed straight on
+// the PDX layout (vertical block, then 64-dim horizontal blocks). Tombstoned slots are garbage.
+template <Quantization Q>
+inline std::unique_ptr<pdx_distance_t<Q>[]> CalculateDistanceFromEmbeddingToCluster(
+    const IVF<Q>& index,
+    const pdx_quantized_embedding_t<Q>* embedding,
+    const Cluster<Q>& cluster
+) {
+    PDX_PROFILE_SCOPE("Split/CalculatePDXDistance");
+    using distance_computer_t = DistanceComputer<DistanceMetric::L2SQ, Q>;
+    using distance_t = pdx_distance_t<Q>;
+
+    const size_t n_vectors = cluster.used_capacity;
+    const size_t buffer_stride = cluster.max_capacity;
+    // Vertical() accumulates, so the distances must start zeroed
+    std::unique_ptr<distance_t[]> pruning_distances = std::make_unique<distance_t[]>(n_vectors);
+    std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[n_vectors]);
+    distance_computer_t::Vertical(
+        embedding,
+        cluster.data,
+        n_vectors,
+        buffer_stride,
+        0,
+        index.num_vertical_dimensions,
+        pruning_distances.get(),
+        pruning_positions.get()
+    );
+    const size_t vertical_block_size =
+        static_cast<size_t>(index.num_vertical_dimensions) * buffer_stride;
+    for (size_t horizontal_dimension = 0; horizontal_dimension < index.num_horizontal_dimensions;
+         horizontal_dimension += H_DIM_SIZE) {
+        for (size_t vector_idx = 0; vector_idx < n_vectors; vector_idx++) {
+            size_t data_pos = vertical_block_size + (horizontal_dimension * buffer_stride) +
+                              (vector_idx * H_DIM_SIZE);
+            pruning_distances[vector_idx] += distance_computer_t::Horizontal(
+                embedding + index.num_vertical_dimensions + horizontal_dimension,
+                cluster.data + data_pos,
+                H_DIM_SIZE
+            );
+        }
+    }
+    return pruning_distances;
+}
+
+struct SplitPartition {
+    std::unique_ptr<float[]> centroid_a;
+    std::unique_ptr<float[]> centroid_b;
+    std::vector<uint32_t> group_a_idx;
+    std::vector<uint32_t> group_b_idx;
+    std::vector<uint32_t> group_rest_idx; // closer to a neighboring cluster than to A or B
+};
+
+// 2-means over the (float) embeddings of a cluster that is about to split. Every position lands
+// in group A, group B, or "rest" when one of the neighboring clusters' centroids is closer than
+// both A and B (the caller reassigns those).
+template <Quantization Q>
+inline SplitPartition PartitionClusterForSplit(
+    const IVF<Q>& index,
+    const float* cluster_embeddings,
+    uint32_t num_embeddings,
+    const float* centroid_to_split,
+    const std::vector<uint32_t>& neighboring_clusters_ids,
+    DistanceMetric distance_metric,
+    uint32_t seed
+) {
+    using distance_computer_f32_t = DistanceComputer<DistanceMetric::L2SQ, F32>;
+    const size_t d = index.num_dimensions;
+    SplitPartition partition;
+    partition.centroid_a.reset(new float[d]);
+    partition.centroid_b.reset(new float[d]);
+    {
+        PDX_PROFILE_SCOPE("Split/KMeans");
+        KMeansResult split_result = ComputeKMeans(
+            cluster_embeddings,
+            num_embeddings,
+            d,
+            2,
+            distance_metric,
+            seed,
+            true,
+            1.0f,
+            SPLIT_KMEANS_ITERS,
+            false,
+            1
+        );
+        std::memcpy(partition.centroid_a.get(), split_result.centroids.data(), d * sizeof(float));
+        std::memcpy(
+            partition.centroid_b.get(), split_result.centroids.data() + d, d * sizeof(float)
+        );
+        partition.group_a_idx.reserve(split_result.assignments[0].size());
+        partition.group_b_idx.reserve(split_result.assignments[1].size());
+    }
+
+    // Assign each embedding to A, B, or rest (closer elsewhere)
+    {
+        PDX_PROFILE_SCOPE("Split/Partition");
+        const float* centroid_a = partition.centroid_a.get();
+        const float* centroid_b = partition.centroid_b.get();
+        for (size_t i = 0; i < num_embeddings; i++) {
+            const float* emb = cluster_embeddings + i * d;
+            float dist_old = distance_computer_f32_t::Horizontal(emb, centroid_to_split, d);
+            // TODO(@lkuffo, med): We could avoid one of these
+            // since we have the distance from k-means, we just need to bring it here
+            float dist_a = distance_computer_f32_t::Horizontal(emb, centroid_a, d);
+            float dist_b = distance_computer_f32_t::Horizontal(emb, centroid_b, d);
+            float min_ab = std::min(dist_a, dist_b);
+            auto& group_ab = dist_a <= dist_b ? partition.group_a_idx : partition.group_b_idx;
+            if (min_ab <= dist_old) {
+                group_ab.push_back(i);
+                continue;
+            }
+            bool closer_elsewhere = false;
+            for (uint32_t c : neighboring_clusters_ids) {
+                float dist = distance_computer_f32_t::Horizontal(
+                    emb, index.centroids.data() + static_cast<size_t>(c) * d, d
+                );
+                if (dist < min_ab) {
+                    closer_elsewhere = true;
+                    break;
+                }
+            }
+            if (closer_elsewhere) {
+                partition.group_rest_idx.push_back(i);
+            } else {
+                group_ab.push_back(i);
+            }
+        }
+    }
+    return partition;
+}
+
+// Steal from the neighboring clusters the embeddings that are closer to centroid A or B than to
+// their own centroid: they are tombstoned in the neighbor and appended to the A/B groups (raw
+// embeddings, row ids, centroid sums). The caller must refresh the row-id mapping of the moved
+// ids once the new clusters exist.
+template <Quantization Q>
+inline void StealNeighborEmbeddings(
+    IVF<Q>& index,
+    ScalarQuantizer<Q>& quantizer,
+    const std::vector<uint32_t>& neighboring_clusters_ids,
+    const float* centroid_a,
+    const float* centroid_b,
+    std::vector<pdx_data_t<Q>>& embs_a,
+    std::vector<uint32_t>& ids_a,
+    float* centroid_sum_a,
+    std::vector<pdx_data_t<Q>>& embs_b,
+    std::vector<uint32_t>& ids_b,
+    float* centroid_sum_b
+) {
+    PDX_PROFILE_SCOPE("Split/NeighborReassign");
+    using query_t = pdx_quantized_embedding_t<Q>;
+    using distance_t = pdx_distance_t<Q>;
+    const size_t d = index.num_dimensions;
+    for (uint32_t neighbor_id : neighboring_clusters_ids) {
+        auto& neighbor = index.clusters[neighbor_id];
+        const float* neighbor_centroid =
+            index.centroids.data() + static_cast<size_t>(neighbor_id) * d;
+
+        // Quantize centroids for U8, or use directly for F32
+        std::unique_ptr<query_t[]> q_own, q_a, q_b;
+        const query_t* query_own;
+        const query_t* query_a;
+        const query_t* query_b;
+        if constexpr (Q == U8) {
+            q_own.reset(new query_t[d]);
+            q_a.reset(new query_t[d]);
+            q_b.reset(new query_t[d]);
+            quantizer.QuantizeEmbedding(
+                neighbor_centroid, index.quantization_base, index.quantization_scale, q_own.get()
+            );
+            quantizer.QuantizeEmbedding(
+                centroid_a, index.quantization_base, index.quantization_scale, q_a.get()
+            );
+            quantizer.QuantizeEmbedding(
+                centroid_b, index.quantization_base, index.quantization_scale, q_b.get()
+            );
+            query_own = q_own.get();
+            query_a = q_a.get();
+            query_b = q_b.get();
+        } else {
+            query_own = neighbor_centroid;
+            query_a = centroid_a;
+            query_b = centroid_b;
+        }
+
+        auto distances_to_own =
+            CalculateDistanceFromEmbeddingToCluster<Q>(index, query_own, neighbor);
+        auto distances_to_a = CalculateDistanceFromEmbeddingToCluster<Q>(index, query_a, neighbor);
+        auto distances_to_b = CalculateDistanceFromEmbeddingToCluster<Q>(index, query_b, neighbor);
+
+        for (uint32_t p = 0; p < neighbor.used_capacity; p++) {
+            if (neighbor.HasTombstone(p))
+                continue;
+
+            distance_t dist_a = distances_to_a[p];
+            distance_t dist_b = distances_to_b[p];
+            distance_t dist_to_own = distances_to_own[p];
+
+            if (dist_to_own < dist_a && dist_to_own < dist_b) {
+                continue;
+            }
+
+            // We need the horizontal embedding (this happens in less than 1% of points)
+            auto raw_emb = neighbor.GetHorizontalEmbeddingFromPDXBuffer(p);
+            const float* emb_ptr;
+            std::unique_ptr<float[]> emb_f32;
+            if constexpr (Q == U8) {
+                emb_f32.reset(new float[d]);
+                quantizer.DequantizeEmbedding(
+                    raw_emb.get(), index.quantization_base, index.quantization_scale, emb_f32.get()
+                );
+                emb_ptr = emb_f32.get();
+            } else {
+                emb_ptr = raw_emb.get();
+            }
+
+            const uint32_t row_id = neighbor.indices[p];
+            neighbor.DeleteEmbedding(p);
+            const bool goes_to_a = dist_a <= dist_b;
+            auto& embs = goes_to_a ? embs_a : embs_b;
+            auto& ids = goes_to_a ? ids_a : ids_b;
+            float* centroid_sum = goes_to_a ? centroid_sum_a : centroid_sum_b;
+            embs.insert(embs.end(), raw_emb.get(), raw_emb.get() + d);
+            ids.push_back(row_id);
+            for (size_t j = 0; j < d; j++) {
+                centroid_sum[j] += emb_ptr[j];
+            }
+        }
+    }
 }
 
 } // namespace PDX
