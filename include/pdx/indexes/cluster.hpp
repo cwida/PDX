@@ -3,6 +3,7 @@
 #include "pdx/common.hpp"
 #include "pdx/profiler.hpp"
 #include "pdx/utils.hpp"
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -41,7 +42,7 @@ struct Cluster {
     Cluster(Cluster&& other) noexcept
         : num_embeddings(other.num_embeddings), used_capacity(other.used_capacity),
           max_capacity(other.max_capacity), min_capacity(other.min_capacity),
-          num_dimensions(other.num_dimensions), n_accessed(other.n_accessed),
+          num_dimensions(other.num_dimensions), n_accessed(other.n_accessed.load()),
           n_inserted(other.n_inserted), n_deleted(other.n_deleted), id(other.id),
           mesocluster_id(other.mesocluster_id), indices(other.indices), data(other.data),
           tombstones(std::move(other.tombstones)) {
@@ -71,7 +72,7 @@ struct Cluster {
             min_capacity = other.min_capacity;
             // num_dimensions: const and guaranteed same — skip
             // cluster_mutex: keep our own — skip
-            n_accessed = other.n_accessed;
+            n_accessed = other.n_accessed.load();
             n_inserted = other.n_inserted;
             n_deleted = other.n_deleted;
             id = other.id;
@@ -94,7 +95,7 @@ struct Cluster {
     uint32_t min_capacity{};
     const uint32_t num_dimensions{};
     std::mutex cluster_mutex;
-    size_t n_accessed = 0;
+    std::atomic<size_t> n_accessed{0};
     size_t n_inserted = 0;
     size_t n_deleted = 0;
     uint32_t id{};             // Position in IVF::clusters vector

@@ -176,7 +176,8 @@ class PDXTreeIndex : public IPDXIndex {
         }
     }
 
-    // Ranks the leaf clusters by centroid distance (no meso-cluster pass), like FilteredSearch
+    // TODO(@lkuffo, med): IterativeSearch (and FilteredSearch) fallback to vanilla IVF
+    // (all leaf clusters are ranked, no meso-cluster pruning)
     std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
         const float* query_embedding,
         uint32_t knn,

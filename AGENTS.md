@@ -49,14 +49,23 @@ The DuckDB extension (PDXearch) is the reference consumer: one cursor per row gr
   when filtered, clusters without passing tuples are not queued. `Done()` ⇔ the queue is exhausted. It
   never looks at the heap: callers stop on "heap holds k entries **or** every cursor is done".
 - The `TopKHeap` (`heap`, `mutex`, `thread_safe`) belongs to the caller; construct it thread-safe when
-  several cursors share it and they take `GetLock()` on every threshold read and merge. While the heap
-  holds fewer than k entries a cursor runs `Start`/`FilteredStart` under the lock, exactly like the
-  single-shot loop, and `GetPruningThreshold` returns the mask value (no real pruning) as a guard
-  against an empty heap.
-- Single-shot `Search`/`FilteredSearch` are unchanged and bit-identical to a cursor drained in any chunk
-  size (`tests/test_iterative_search.cpp`). The cursor does not bump `n_accessed`.
+  several cursors share it. Every search helper takes it: `GetPruningThreshold` takes `GetLock()`
+  itself, `Start`/`FilteredStart`/`MergeIntoHeap` run under the caller's lock. While the heap holds
+  fewer than k entries a cursor runs `Start`/`FilteredStart` under the lock, and `GetPruningThreshold`
+  returns the mask value (no real pruning) as a guard against an empty heap.
+- Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopKHeap`, one cursor
+  over the n_probe-clamped ranking (the tree hands its L0 order in via `SetClusterAccessOrder` as a
+  preset), drained with one `Next`. `ProbeCluster` is the only probing loop; it bumps `n_accessed`
+  (relaxed atomic) for `GetNumVectorsAccessed`. A cursor drained in any chunk size is bit-identical
+  to `Search` (`tests/test_iterative_search.cpp`).
 - `BenchmarkIterativeFiltered <dataset> [index_type] [nprobe] [selectivity]` mirrors the DuckDB
   extension's loop: `Next(nprobe)`, then `Next(5)` until k results or `Done()`.
+- **The tree's meso-cluster (L0) layer is not supported by cursors or by `FilteredSearch`.** Both
+  rank all leaf centroids flat, so a tree cursor is a vanilla IVF search over the tree's leaves: same
+  or better recall, but the ranking is O(leaves × d) instead of a PDX-pruned L0 pass. Only single-shot
+  unfiltered `Search` uses L0. A cursor cannot reuse it because L0 returns exactly nprobe leaves and
+  cursors must be resumable past nprobe; the fix, when a consumer needs it, is an L0 head with a lazily
+  flat-ranked tail passed through `preset_clusters_access_order`.
 
 ## Maintenance (SPFresh-like appends/deletes)
 

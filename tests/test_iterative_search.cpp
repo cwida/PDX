@@ -349,6 +349,39 @@ TEST_P(IterativeSearchTest, FilteredSplitProbeBudgetMatchesSingleShotNProbe) {
     }
 }
 
+// Search runs on a cursor too: with nprobe 1 it must probe exactly one whole cluster (for the
+// tree, the one its meso-cluster layer ranked first) and return only rows from it.
+TEST_P(IterativeSearchTest, NProbeOneProbesExactlyOneCluster) {
+    ForIndexType(GetParam(), [](auto tag) {
+        using IndexType = typename decltype(tag)::type;
+        auto data = TestUtils::LoadTestData(D);
+        auto base = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+        auto& index = dynamic_cast<IndexType&>(*base);
+        std::vector<uint32_t> cluster_of_row(TestUtils::N_TRAIN);
+        for (uint32_t c = 0; c < index.GetNumClusters(); c++) {
+            for (uint32_t row_id : index.GetClusterRowIds(c)) {
+                cluster_of_row[row_id] = c;
+            }
+        }
+        index.SetNProbe(1);
+        for (size_t q = 0; q < N_QUERIES; ++q) {
+            const size_t accessed_before = index.GetNumVectorsAccessed();
+            auto results = index.Search(data.queries.data() + q * D, TestUtils::KNN);
+            ASSERT_FALSE(results.empty());
+            const uint32_t probed = cluster_of_row[results[0].index];
+            for (const auto& r : results) {
+                EXPECT_EQ(cluster_of_row[r.index], probed);
+            }
+            EXPECT_EQ(
+                results.size(), std::min<size_t>(TestUtils::KNN, index.GetClusterSize(probed))
+            );
+            EXPECT_EQ(
+                index.GetNumVectorsAccessed() - accessed_before, index.GetClusterSize(probed)
+            );
+        }
+    });
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     IterativeSearchTest,
