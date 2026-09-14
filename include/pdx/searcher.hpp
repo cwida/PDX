@@ -41,13 +41,9 @@ class IIterativeSearch {
     [[nodiscard]] virtual size_t ClustersRemaining() const = 0;
 };
 
-// Top-k heap of one search, handed to every search helper. GetPruningThreshold takes GetLock()
-// itself; Start/FilteredStart/MergeIntoHeap write under the caller's lock. The lock only engages
-// when `thread_safe`, which is what lets several cursors (e.g. one per DuckDB row group) share it.
 struct TopKHeap {
     explicit TopKHeap(bool thread_safe = false) : thread_safe(thread_safe) {}
 
-    // Engaged only when thread_safe; hold it while touching `heap` from a cursor
     [[nodiscard]] std::unique_lock<std::mutex> GetLock() {
         return thread_safe ? std::unique_lock<std::mutex>(mutex) : std::unique_lock<std::mutex>();
     }
