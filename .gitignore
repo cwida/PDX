@@ -107,8 +107,6 @@ cmake_install.cmake
 /benchmarks/BenchmarkSpecialFilters
 /benchmarks/BenchmarkInsertion
 /benchmarks/BenchmarkWorkload
-/benchmarks/BenchmarkForestFiltered
-/benchmarks/BenchmarkForestEndToEnd
 /benchmarks/BenchmarkIterativeFiltered
 
 # Test binaries (but keep the committed test data)

@@ -90,7 +90,8 @@ static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[20] = {16,  16,  32,  32,   
 static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 
 // Maintenance (SPFresh-like)
-// When a cluster splits, points may be stolen from / reassigned to at most SPLIT_MAX_NEIGHBOR_CLUSTERS
+// When a cluster splits, points may be stolen from / reassigned to at most
+// SPLIT_MAX_NEIGHBOR_CLUSTERS
 static constexpr size_t SPLIT_MAX_NEIGHBOR_CLUSTERS = 32;
 // The 2-means cluster split runs this many iterations
 static constexpr uint32_t SPLIT_KMEANS_ITERS = 4;

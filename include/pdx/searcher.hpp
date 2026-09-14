@@ -877,13 +877,11 @@ class PDXearch {
     std::vector<KNNCandidate> Search(
         const float* PDX_RESTRICT const raw_query,
         const uint32_t k,
-        const bool is_query_trasnformed = false,
-        Heap* forest_heap = nullptr
+        const bool is_query_transformed = false
     ) {
-        Heap local_heap{};
-        Heap& heap = forest_heap ? *forest_heap : local_heap;
+        Heap heap{};
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
-        if (is_query_trasnformed) {
+        if (is_query_transformed) {
             std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
         } else {
             if (!pdx_data.is_normalized) {
@@ -1002,9 +1000,6 @@ class PDXearch {
                 );
             }
         }
-        if (forest_heap) {
-            return {};
-        }
         std::vector<KNNCandidate> result = BuildResultSetFromHeap(k, heap);
         return result;
     }
@@ -1017,11 +1012,9 @@ class PDXearch {
         const float* PDX_RESTRICT const raw_query,
         const uint32_t k,
         const PredicateEvaluator& predicate_evaluator,
-        const bool is_query_transformed = false,
-        Heap* forest_heap = nullptr
+        const bool is_query_transformed = false
     ) {
-        Heap local_heap{};
-        Heap& heap = forest_heap ? *forest_heap : local_heap;
+        Heap heap{};
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
         if (is_query_transformed) {
             std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
@@ -1146,9 +1139,6 @@ class PDXearch {
                 }
             }
         } // Profiling scope
-        if (forest_heap) {
-            return {};
-        }
         std::vector<KNNCandidate> result = BuildResultSetFromHeap(k, heap);
         return result;
     }

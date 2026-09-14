@@ -27,12 +27,7 @@
 namespace PDX {
 
 template <PDX::Quantization Q>
-class PDXForestIndex;
-
-template <PDX::Quantization Q>
 class PDXTreeIndex : public IPDXIndex {
-    friend class PDXForestIndex<Q>;
-
   public:
     using embedding_storage_t = PDX::pdx_data_t<Q>;
     using cluster_t = PDX::Cluster<Q>;
@@ -50,7 +45,7 @@ class PDXTreeIndex : public IPDXIndex {
     uint32_t d = 0;
     PDX::IVFTree<Q> index;
     // The pruner is either owned by this index (owned_pruner) or externally provided (pruner)
-    // The experimental IVForest is the use case for an externally provided pruner
+    // `pruner` points to `owned_pruner` unless the caller provided one to share across indexes
     // where multiple IVFTrees share the same pruner and rotation matrix
     std::unique_ptr<PDX::ADSamplingPruner> owned_pruner;
     PDX::ADSamplingPruner* pruner = nullptr;

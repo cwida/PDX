@@ -33,9 +33,6 @@ All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`) and shar
 - Tree IVF: A layer of mesoclusters is added on top of the plain IVF centroids, where PDX-pruning is also
   applied — `PDXTreeIndex` (`ivf_tree.hpp`, storage `IVFTree`). Python: `IndexPDXIVFTree` /
   `IndexPDXIVFTreeSQ8` (the fastest, README's default).
-- Forest IVF (experimental): A forest of many IVF trees. Data is partitioned horizontally, and each
-  partition contains an IVF index — `PDXForestIndex` (`ivf_forest.hpp`). Not in `PDXIndexType`, not in
-  the Python bindings, not covered by tests; benchmarked via `BenchmarkForest*`.
 
 Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`,
 `pdx_tree_u8`). Tree indexes are currently **skipped** in `test_serialization.cpp`,
@@ -121,7 +118,7 @@ links, compile definitions and the `-march` flags. Benchmark binaries have **no*
 ```bash
 cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 # Index building + search (index_type defaults to pdx_f32; nprobe 0/omitted sweeps a preset list)
-# `index_type`: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8   (forest has its own BenchmarkForest* binaries)
+# `index_type`: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8
 ./benchmarks/BenchmarkEndToEnd <dataset_id> [index_type] [nprobe]
 ```
 Add a benchmark with `pdx_add_benchmark(<Name> <source>)` in `benchmarks/CMakeLists.txt`; a test with

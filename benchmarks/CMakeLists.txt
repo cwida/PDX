@@ -15,8 +15,6 @@ pdx_add_benchmark(BenchmarkFiltered pdx_filtered.cpp)
 pdx_add_benchmark(BenchmarkSpecialFilters pdx_special_filtered.cpp)
 pdx_add_benchmark(BenchmarkInsertion pdx_insertion.cpp)
 pdx_add_benchmark(BenchmarkWorkload pdx_workload.cpp)
-pdx_add_benchmark(BenchmarkForestEndToEnd pdx_forest_end_to_end.cpp)
-pdx_add_benchmark(BenchmarkForestFiltered pdx_forest_filtered.cpp)
 pdx_add_benchmark(BenchmarkIterativeFiltered pdx_iterative_filtered.cpp)
 
 add_custom_target(benchmarks
@@ -28,7 +26,5 @@ add_custom_target(benchmarks
         BenchmarkSpecialFilters
         BenchmarkInsertion
         BenchmarkWorkload
-        BenchmarkForestEndToEnd
-        BenchmarkForestFiltered
         BenchmarkIterativeFiltered
 )
