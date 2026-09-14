@@ -273,6 +273,9 @@ class PDXearch {
         TopKHeap& top_k_heap,
         const tombstones_t& tombstones
     ) {
+        if (n_vectors == 0) {
+            return;
+        }
         Heap& heap = top_k_heap.heap;
         ResetPruningDistances(n_vectors, pruning_distances);
         distance_computer_t::Vertical(
@@ -343,6 +346,9 @@ class PDXearch {
         const tombstones_t& tombstones
     ) {
         // PDX_PROFILE_SCOPE("Search/FilteredStart");
+        if (n_vectors == 0) {
+            return;
+        }
         Heap& heap = top_k_heap.heap;
         ResetPruningDistances(n_vectors, pruning_distances);
         size_t n_vectors_not_pruned = 0;

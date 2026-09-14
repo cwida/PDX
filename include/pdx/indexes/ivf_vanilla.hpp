@@ -404,6 +404,9 @@ class PDXIndex : public IPDXIndex {
     ) const {
         PDX_PROFILE_SCOPE("PredicateEvaluator");
         PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
+        if (index.total_capacity == 0) {
+            return evaluator;
+        }
         for (const auto row_id : passing_row_ids) {
             const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
             if (cluster_id == DELETED_MARKER)

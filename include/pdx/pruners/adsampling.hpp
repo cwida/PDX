@@ -147,9 +147,11 @@ class ADSamplingPruner {
         if (visited_dimensions == num_dimensions) {
             return 1.0;
         }
-        return static_cast<float>(visited_dimensions) / num_dimensions *
-               (1.0 + pruning_aggressiveness / std::sqrt(visited_dimensions)) *
-               (1.0 + pruning_aggressiveness / std::sqrt(visited_dimensions));
+        return static_cast<float>(
+            static_cast<float>(visited_dimensions) / num_dimensions *
+            (1.0 + pruning_aggressiveness / std::sqrt(visited_dimensions)) *
+            (1.0 + pruning_aggressiveness / std::sqrt(visited_dimensions))
+        );
     }
 
     void BuildFlipMasks() {
