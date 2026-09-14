@@ -656,11 +656,6 @@ class PDXearch {
             return queued_clusters_size - n_probed_clusters;
         }
 
-        // Only valid when this cursor is the sole writer of the heap
-        [[nodiscard]] std::vector<KNNCandidate> Results() {
-            return ::PDX::BuildResultSetFromHeap(k, top_k_heap->heap);
-        }
-
       private:
         friend class PDXearch;
 
@@ -904,7 +899,7 @@ class PDXearch {
             preset_clusters_access_order
         );
         search_cursor.Next(search_cursor.ClustersRemaining());
-        return search_cursor.Results();
+        return BuildResultSetFromHeap(k, top_k_heap.heap);
     }
 
     // TODO(@lkuffo, high): FastPath
@@ -921,7 +916,7 @@ class PDXearch {
         IterativeSearch<true> search_cursor(*this, k, top_k_heap, &predicate_evaluator);
         InitializeSearchCursor(search_cursor, raw_query, is_query_transformed, ClustersToVisit());
         search_cursor.Next(search_cursor.ClustersRemaining());
-        return search_cursor.Results();
+        return BuildResultSetFromHeap(k, top_k_heap.heap);
     }
 };
 
