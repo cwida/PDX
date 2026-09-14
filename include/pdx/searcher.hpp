@@ -41,8 +41,9 @@ class IIterativeSearch {
     [[nodiscard]] virtual size_t ClustersRemaining() const = 0;
 };
 
-// Top-k heap of one search. Cursors lock `mutex` on every threshold read and merge only when
-// `thread_safe`, which is what lets several cursors (e.g. one per DuckDB row group) share it.
+// Top-k heap of one search, handed to every search helper. GetPruningThreshold takes GetLock()
+// itself; Start/FilteredStart/MergeIntoHeap write under the caller's lock. The lock only engages
+// when `thread_safe`, which is what lets several cursors (e.g. one per DuckDB row group) share it.
 struct TopKHeap {
     explicit TopKHeap(bool thread_safe = false) : thread_safe(thread_safe) {}
 
@@ -112,23 +113,19 @@ class PDXearch {
     // The pruning threshold by default is the top of the heap
     void GetPruningThreshold(
         uint32_t k,
-        Heap& heap,
+        TopKHeap& top_k_heap,
         distance_t& pruning_threshold,
-        uint32_t current_dimension_idx,
-        TopKHeap* top_k_heap = nullptr
+        uint32_t current_dimension_idx
     ) {
         float float_threshold;
         {
-            std::unique_lock<std::mutex> lock;
-            if (top_k_heap) {
-                lock = top_k_heap->GetLock();
-            }
+            auto lock = top_k_heap.GetLock();
             // Fewer than k candidates: nothing real can be pruned, only masked slots
-            if (heap.size() < k) {
+            if (top_k_heap.heap.size() < k) {
                 pruning_threshold = std::numeric_limits<distance_t>::max() / 2;
                 return;
             }
-            float_threshold = pruner.GetPruningThreshold(k, heap, current_dimension_idx);
+            float_threshold = pruner.GetPruningThreshold(k, top_k_heap.heap, current_dimension_idx);
         }
         if constexpr (Q == U8) {
             // We need to avoid undefined behaviour when overflow happens
@@ -278,9 +275,10 @@ class PDXearch {
         const uint32_t* vector_indices,
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
-        Heap& heap,
+        TopKHeap& top_k_heap,
         const tombstones_t& tombstones
     ) {
+        Heap& heap = top_k_heap.heap;
         ResetPruningDistances(n_vectors, pruning_distances);
         distance_computer_t::Vertical(
             query,
@@ -344,12 +342,13 @@ class PDXearch {
         const uint32_t* vector_indices,
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
-        Heap& heap,
+        TopKHeap& top_k_heap,
         uint8_t* selection_vector,
         uint32_t passing_tuples,
         const tombstones_t& tombstones
     ) {
         // PDX_PROFILE_SCOPE("Search/FilteredStart");
+        Heap& heap = top_k_heap.heap;
         ResetPruningDistances(n_vectors, pruning_distances);
         size_t n_vectors_not_pruned = 0;
         float selection_percentage =
@@ -439,13 +438,12 @@ class PDXearch {
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
         distance_t& pruning_threshold,
-        Heap& heap,
+        TopKHeap& top_k_heap,
         uint32_t& current_dimension_idx,
         size_t& n_vectors_not_pruned,
         const tombstones_t& tombstones,
         uint32_t passing_tuples = 0,
-        uint8_t* selection_vector = nullptr,
-        TopKHeap* top_k_heap = nullptr
+        uint8_t* selection_vector = nullptr
     ) {
         // PDX_PROFILE_SCOPE("Search/Warmup");
         current_dimension_idx = 0;
@@ -464,7 +462,7 @@ class PDXearch {
                 return;
             }
         }
-        GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
+        GetPruningThreshold(k, top_k_heap, pruning_threshold, current_dimension_idx);
         while (n_tuples_to_prune < tuples_needed_to_exit &&
                current_dimension_idx < pdx_data.num_vertical_dimensions) {
             size_t last_dimension_to_fetch = std::min(
@@ -483,7 +481,7 @@ class PDXearch {
             );
             current_dimension_idx = last_dimension_to_fetch;
             cur_subgrouping_size_idx += 1;
-            GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
+            GetPruningThreshold(k, top_k_heap, pruning_threshold, current_dimension_idx);
             n_tuples_to_prune = 0;
             EvaluatePruningPredicateScalar(
                 n_tuples_to_prune, n_vectors, pruning_distances, pruning_threshold
@@ -502,15 +500,14 @@ class PDXearch {
         uint32_t* pruning_positions,
         distance_t* pruning_distances,
         distance_t& pruning_threshold,
-        Heap& heap,
+        TopKHeap& top_k_heap,
         uint32_t& current_dimension_idx,
         size_t& n_vectors_not_pruned,
         const tombstones_t& tombstones,
-        const uint8_t* selection_vector = nullptr,
-        TopKHeap* top_k_heap = nullptr
+        const uint8_t* selection_vector = nullptr
     ) {
         // PDX_PROFILE_SCOPE("Search/Prune");
-        GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
+        GetPruningThreshold(k, top_k_heap, pruning_threshold, current_dimension_idx);
         MaskDistancesWithTombstones(tombstones, pruning_distances);
         InitPositionsArray<FILTERED>(
             n_vectors,
@@ -545,7 +542,7 @@ class PDXearch {
             // end of clipping
             current_horizontal_dimension += H_DIM_SIZE;
             current_dimension_idx += H_DIM_SIZE;
-            GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
+            GetPruningThreshold(k, top_k_heap, pruning_threshold, current_dimension_idx);
             assert(
                 current_dimension_idx == current_vertical_dimension + current_horizontal_dimension
             );
@@ -586,7 +583,7 @@ class PDXearch {
             assert(
                 current_dimension_idx == current_vertical_dimension + current_horizontal_dimension
             );
-            GetPruningThreshold(k, heap, pruning_threshold, current_dimension_idx, top_k_heap);
+            GetPruningThreshold(k, top_k_heap, pruning_threshold, current_dimension_idx);
             EvaluatePruningPredicateOnPositionsArray(
                 cur_n_vectors_not_pruned,
                 n_vectors_not_pruned,
@@ -606,8 +603,9 @@ class PDXearch {
         const uint32_t k,
         const uint32_t* pruning_positions,
         const distance_t* pruning_distances,
-        Heap& heap
+        TopKHeap& top_k_heap
     ) {
+        Heap& heap = top_k_heap.heap;
         for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
             const size_t index = pruning_positions[position_idx];
             float current_distance = static_cast<float>(pruning_distances[index]);
@@ -706,7 +704,7 @@ class PDXearch {
                             cluster.indices,
                             pruning_positions.get(),
                             pruning_distances.get(),
-                            heap,
+                            *top_k_heap,
                             selection_vector,
                             passing_tuples,
                             cluster.tombstones
@@ -721,7 +719,7 @@ class PDXearch {
                             cluster.indices,
                             pruning_positions.get(),
                             pruning_distances.get(),
-                            heap,
+                            *top_k_heap,
                             cluster.tombstones
                         );
                     }
@@ -741,13 +739,12 @@ class PDXearch {
                 pruning_positions.get(),
                 pruning_distances.get(),
                 pruning_threshold,
-                heap,
+                *top_k_heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
                 cluster.tombstones,
                 passing_tuples,
-                selection_vector,
-                top_k_heap
+                selection_vector
             );
             s.template Prune<FILTERED>(
                 prepared_query,
@@ -758,12 +755,11 @@ class PDXearch {
                 pruning_positions.get(),
                 pruning_distances.get(),
                 pruning_threshold,
-                heap,
+                *top_k_heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
                 cluster.tombstones,
-                selection_vector,
-                top_k_heap
+                selection_vector
             );
             if (n_vectors_not_pruned) {
                 auto lock = top_k_heap->GetLock();
@@ -773,7 +769,7 @@ class PDXearch {
                     k,
                     pruning_positions.get(),
                     pruning_distances.get(),
-                    heap
+                    *top_k_heap
                 );
             }
         }
@@ -879,7 +875,8 @@ class PDXearch {
         const uint32_t k,
         const bool is_query_transformed = false
     ) {
-        Heap heap{};
+        TopKHeap top_k_heap{};
+        Heap& heap = top_k_heap.heap;
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
         if (is_query_transformed) {
             std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
@@ -955,7 +952,7 @@ class PDXearch {
                     cluster.indices,
                     pruning_positions.get(),
                     pruning_distances.get(),
-                    heap,
+                    top_k_heap,
                     cluster.tombstones
                 );
                 continue;
@@ -970,7 +967,7 @@ class PDXearch {
                 pruning_positions.get(),
                 pruning_distances.get(),
                 pruning_threshold,
-                heap,
+                top_k_heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
                 cluster.tombstones
@@ -984,7 +981,7 @@ class PDXearch {
                 pruning_positions.get(),
                 pruning_distances.get(),
                 pruning_threshold,
-                heap,
+                top_k_heap,
                 current_dimension_idx,
                 n_vectors_not_pruned,
                 cluster.tombstones
@@ -996,7 +993,7 @@ class PDXearch {
                     k,
                     pruning_positions.get(),
                     pruning_distances.get(),
-                    heap
+                    top_k_heap
                 );
             }
         }
@@ -1014,7 +1011,8 @@ class PDXearch {
         const PredicateEvaluator& predicate_evaluator,
         const bool is_query_transformed = false
     ) {
-        Heap heap{};
+        TopKHeap top_k_heap{};
+        Heap& heap = top_k_heap.heap;
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
         if (is_query_transformed) {
             std::copy(raw_query, raw_query + pdx_data.num_dimensions, query.get());
@@ -1088,7 +1086,7 @@ class PDXearch {
                         cluster.indices,
                         pruning_positions.get(),
                         pruning_distances.get(),
-                        heap,
+                        top_k_heap,
                         selection_vector,
                         passing_tuples,
                         cluster.tombstones
@@ -1105,7 +1103,7 @@ class PDXearch {
                     pruning_positions.get(),
                     pruning_distances.get(),
                     pruning_threshold,
-                    heap,
+                    top_k_heap,
                     current_dimension_idx,
                     n_vectors_not_pruned,
                     cluster.tombstones,
@@ -1121,7 +1119,7 @@ class PDXearch {
                     pruning_positions.get(),
                     pruning_distances.get(),
                     pruning_threshold,
-                    heap,
+                    top_k_heap,
                     current_dimension_idx,
                     n_vectors_not_pruned,
                     cluster.tombstones,
@@ -1134,7 +1132,7 @@ class PDXearch {
                         k,
                         pruning_positions.get(),
                         pruning_distances.get(),
-                        heap
+                        top_k_heap
                     );
                 }
             }
