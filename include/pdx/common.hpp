@@ -59,9 +59,6 @@
 #define PDX_PREFETCH(addr, rw, locality) ((void) 0)
 #endif
 
-// Cross-compiler vectorization hint for loops.
-// Clang: #pragma clang loop vectorize(enable)
-// GCC:   #pragma GCC ivdep (asserts no loop-carried dependencies, enabling vectorization)
 #if defined(__clang__)
 #define PDX_VECTORIZE_LOOP _Pragma("clang loop vectorize(enable)")
 #elif defined(__GNUC__)
@@ -92,9 +89,10 @@ static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[20] = {16,  16,  32,  32,   
 
 static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 
-// SPFresh-like maintenance: when a cluster splits, points may be stolen from / reassigned to at
-// most this many nearest neighboring clusters, and the 2-means split runs this many iterations.
+// Maintenance (SPFresh-like)
+// When a cluster splits, points may be stolen from / reassigned to at most SPLIT_MAX_NEIGHBOR_CLUSTERS
 static constexpr size_t SPLIT_MAX_NEIGHBOR_CLUSTERS = 32;
+// The 2-means cluster split runs this many iterations
 static constexpr uint32_t SPLIT_KMEANS_ITERS = 4;
 
 static constexpr bool AllFetchingSizesMultipleOfU8InterleaveSize() {

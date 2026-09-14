@@ -131,8 +131,6 @@ class PDXIndex : public IPDXIndex {
 
         // Load IVF data
         index.Load(ptr);
-        // No PDXIndexConfig is stored on disk: recover what maintenance needs so that an index
-        // loaded through LoadPDXIndex() can Append/Delete like a freshly built one.
         config.num_dimensions = index.num_dimensions;
         config.normalize = index.is_normalized;
 

@@ -101,7 +101,6 @@ inline std::unique_ptr<float[]> NormalizeAndRotate(
 }
 
 // Store the embeddings into this cluster's preallocated buffers in the transposed PDX layout.
-//
 // See the README of the following for a description of the PDX layout:
 // https://github.com/cwida/pdx
 template <PDX::Quantization q, typename T>
@@ -247,7 +246,6 @@ void PopulateIVFClusters(
 
 // ******************************************
 // Maintenance helpers (SPFresh-like Append/Delete), shared by PDXIndex and PDXTreeIndex.
-// Everything here works on leaf clusters and knows nothing about meso-clusters.
 // ******************************************
 
 // Dequantize raw (Q-type) embeddings to float. For F32 this is a memcpy.

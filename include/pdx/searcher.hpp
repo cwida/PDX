@@ -695,8 +695,6 @@ class PDXearch {
             {
                 auto lock = top_k_heap->GetLock();
                 if (heap.size() < k) {
-                    // We cannot prune until we fill the heap. clang-tidy 18 misreads this
-                    // if-constexpr over two different calls as identical branches.
                     // NOLINTNEXTLINE(bugprone-branch-clone)
                     if constexpr (FILTERED) {
                         s.FilteredStart(

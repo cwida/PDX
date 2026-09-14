@@ -49,6 +49,9 @@ class PDXTreeIndex : public IPDXIndex {
     PDXIndexConfig config{};
     uint32_t d = 0;
     PDX::IVFTree<Q> index;
+    // The pruner is either owned by this index (owned_pruner) or externally provided (pruner)
+    // The experimental IVForest is the use case for an externally provided pruner
+    // where multiple IVFTrees share the same pruner and rotation matrix
     std::unique_ptr<PDX::ADSamplingPruner> owned_pruner;
     PDX::ADSamplingPruner* pruner = nullptr;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
@@ -125,8 +128,6 @@ class PDXTreeIndex : public IPDXIndex {
         // Load IVFTree data
         index.Load(ptr);
         d = index.num_dimensions;
-        // No PDXIndexConfig is stored on disk: recover what maintenance needs so that an index
-        // loaded through LoadPDXIndex() can Append/Delete like a freshly built one.
         config.num_dimensions = d;
         config.normalize = index.is_normalized;
 
@@ -1146,7 +1147,6 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(const std::string& path) {
     auto buffer = MmapFile(path);
     auto type = static_cast<PDXIndexType>(buffer.get()[0]);
     std::unique_ptr<IPDXIndex> idx;
-    // clang-tidy reports the make_unique<T>() branches as clones although T differs
     // NOLINTBEGIN(bugprone-branch-clone)
     switch (type) {
     case PDXIndexType::PDX_F32:
