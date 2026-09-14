@@ -290,6 +290,11 @@ class IVFTree : public IVF<Q> {
         memcpy(l0.centroids.data(), (float*) next_value, sizeof(float) * n_clusters_l0 * dims);
         next_value += sizeof(float) * n_clusters_l0 * dims;
 
+        // === L1 centroids ===
+        this->centroids.resize(static_cast<size_t>(n_clusters_l1) * dims);
+        memcpy(this->centroids.data(), (float*) next_value, sizeof(float) * n_clusters_l1 * dims);
+        next_value += sizeof(float) * n_clusters_l1 * dims;
+
         // === U8 quantization params ===
         if constexpr (Q == U8) {
             this->quantization_base = ((float*) next_value)[0];
@@ -370,6 +375,12 @@ class IVFTree : public IVF<Q> {
         out.write(
             reinterpret_cast<const char*>(l0.centroids.data()),
             sizeof(float) * n_clusters_l0 * this->num_dimensions
+        );
+
+        // L1 centroids
+        out.write(
+            reinterpret_cast<const char*>(this->centroids.data()),
+            sizeof(float) * this->num_clusters * this->num_dimensions
         );
 
         // === U8 quantization params ===

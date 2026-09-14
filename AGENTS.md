@@ -34,72 +34,22 @@ All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`) and shar
   applied — `PDXTreeIndex` (`ivf_tree.hpp`, storage `IVFTree`). Python: `IndexPDXIVFTree` /
   `IndexPDXIVFTreeSQ8` (the fastest, README's default).
 
-Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`,
-`pdx_tree_u8`). Tree indexes are currently **skipped** in `test_serialization.cpp`,
-`test_filtered_search.cpp` and `generate_test_ground_truth.cpp` ("once tree index crash is fixed").
+Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`).
 
 ## Resumable search (cursor)
 
-`PDXearch<Q>::IterativeSearch<FILTERED>` (from `BeginIterativeSearch` / `BeginFilteredIterativeSearch`,
-or type-erased as `IIterativeSearch` via `IPDXIndex::BeginIterativeSearch(query, k, top_k_heap,
-passing_row_ids*)`) owns all per-query state, so any number of cursors run concurrently on one searcher.
-The DuckDB extension (PDXearch) is the reference consumer: one cursor per row group into one shared
-`TopKHeap`.
-- `Next(n)` probes the next n of the `queued_clusters`, ranked once at `Begin`; empty clusters and,
-  when filtered, clusters without passing tuples are not queued. `Done()` ⇔ the queue is exhausted. It
-  never looks at the heap: callers stop on "heap holds k entries **or** every cursor is done".
-- The `TopKHeap` (`heap`, `mutex`, `thread_safe`) belongs to the caller; construct it thread-safe when
-  several cursors share it. Every search helper takes it: `GetPruningThreshold` takes `GetLock()`
-  itself, `Start`/`FilteredStart`/`MergeIntoHeap` run under the caller's lock. While the heap holds
-  fewer than k entries a cursor runs `Start`/`FilteredStart` under the lock, and `GetPruningThreshold`
-  returns the mask value (no real pruning) as a guard against an empty heap.
-- Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopKHeap`, one cursor
-  over the n_probe-clamped ranking (the tree hands its L0 order in via `SetClusterAccessOrder` as a
-  preset), drained with one `Next`. `ProbeCluster` is the only probing loop; it bumps `n_accessed`
-  (relaxed atomic) for `GetNumVectorsAccessed`. A cursor drained in any chunk size is bit-identical
-  to `Search` (`tests/test_iterative_search.cpp`).
-- `BenchmarkIterativeFiltered <dataset> [index_type] [nprobe] [selectivity]` mirrors the DuckDB
-  extension's loop: `Next(nprobe)`, then `Next(5)` until k results or `Done()`.
-- **The tree's meso-cluster (L0) layer is not supported by cursors or by `FilteredSearch`.** Both
-  rank all leaf centroids flat, so a tree cursor is a vanilla IVF search over the tree's leaves: same
-  or better recall, but the ranking is O(leaves × d) instead of a PDX-pruned L0 pass. Only single-shot
-  unfiltered `Search` uses L0. A cursor cannot reuse it because L0 returns exactly nprobe leaves and
-  cursors must be resumable past nprobe; the fix, when a consumer needs it, is an L0 head with a lazily
-  flat-ranked tail passed through `preset_clusters_access_order`.
+`PDXearch<Q>::IterativeSearch<FILTERED>` allows for: i) concurrent queries on one index, ii) resume a search. The API of a resumable search is: `Next(n)`: probes the next n clusters ranked once at `Begin`; `Done()`: the clusters are exhausted. 
+
+Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopKHeap`, one cursor over the n_probe-clamped ranking. Note: The tree's meso-cluster (L0) layer is not supported by cursors or by `FilteredSearch`. Both rank all leaf centroids flat, so a tree cursor is a vanilla IVF search over the tree's leaves.
 
 ## Maintenance (SPFresh-like appends/deletes)
 
-Every index implements `Append(row_id, embedding)` / `Delete(row_id)` (pure virtual on `IPDXIndex`;
-Python `append`/`delete`). `PDXIndex` and `PDXTreeIndex` follow the same recipe; the tree additionally
-keeps the meso-cluster layer (L0) in sync. The leaf-level helpers they share live in
-`indexes/ivf_utils.hpp` (`QuantizeAndAppend`, `DequantizeClusterEmbeddings`, `PartitionClusterForSplit`,
-`StealNeighborEmbeddings`, `ComputeCentroidMean`, `CalculateDistanceFromEmbeddingToCluster`, ...).
-- **Append**: normalize+rotate → nearest centroid (vanilla: exact scan of all centroids; tree: PDX
-  search over L0) → `Cluster::AppendEmbedding` (quantized for `U8`) → `row_id_cluster_mapping` →
-  `CheckClusterHealth`. Centroids never move on a plain append.
-- **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`,
-  `CheckClusterHealth`. Search masks tombstones; `Save()` compacts them away.
-- **CheckClusterHealth** runs after *every* mutation: a full cluster (`used_capacity ==
-  max_capacity`) is compacted if it has tombstones, else split; `num_embeddings <= min_capacity`
-  destroys + merges it (vanilla skips the merge when a single cluster is left).
-- **SplitCluster**: 2-means (`SPLIT_KMEANS_ITERS`); points closer to one of the
-  `SPLIT_MAX_NEIGHBOR_CLUSTERS` nearest clusters go to "rest" and get reassigned; neighbors' points
-  closer to A/B than to their own centroid are stolen; A replaces the old slot, B is `push_back`ed.
-  Neighbor set: tree = siblings in the meso-cluster, vanilla = nearest centroids overall.
-- **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the
-  moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM) with
-  merges disabled to avoid cascades.
-- **Invariants**: `ReserveClusterSlotIfNeeded()` before holding a `cluster_t&` (splits `push_back`);
-  every structural change ends with `ComputeClusterOffsets()` (the searcher sizes its buffers from
-  `max_cluster_capacity` on each query); single writer thread. After `Restore()` the truth is
-  `index.is_normalized` and `searcher->quantizer` — `config` is only partially recovered (no
-  seed/metric on disk), so don't add code paths that depend on it.
-- Capacity knobs: `indexes/cluster.hpp` (`CAPACITY_THRESHOLD`, `MIN_CAPACITY_THRESHOLD`,
-  `MIN_MAX_CAPACITY = 256`, so small clusters need 256 slots before they split). Split knobs:
-  `common.hpp`.
-- Tests: `tests/test_maintenance.cpp` (all 4 index types, incl. forced split/merge and
-  after-restore). Benchmarks: `BenchmarkInsertion <dataset> [index_type] [nprobe] [build_fraction]`
-  and `BenchmarkWorkload <dataset> [index_type] [nprobe]` (edit `WORKLOAD` in `pdx_workload.cpp`).
+Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIndex` additionally keeps the meso-cluster layer (L0) in sync. The leaf-level helpers they share live in `indexes/ivf_utils.hpp`. 
+- **Append**: normalize+rotate → nearest centroid (vanilla: exact scan of all centroids; tree: PDX search over L0). Centroids never move on a plain append.
+- **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`, `CheckClusterHealth`. Search masks tombstones; `Save()` compacts them away.
+- **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM) with merges disabled to avoid cascades.
+- **Invariants**: `ReserveClusterSlotIfNeeded()` before holding a `cluster_t&` (splits `push_back`); every structural change ends with `ComputeClusterOffsets()` (the searcher sizes its buffers from `max_cluster_capacity` on each query); single writer thread.
+- Knobs: `indexes/cluster.hpp` (`CAPACITY_THRESHOLD`, `MIN_CAPACITY_THRESHOLD`, `MIN_MAX_CAPACITY = 256`, so small clusters need 256 slots before they split). Split knobs: `common.hpp`.
 
 ## Verification gate (definition of done)
 
@@ -121,22 +71,16 @@ New feature ⇒ ship a unit test with it (C++ in `tests/`, Python in `python/tes
 
 ## Build & run (beyond the gate)
 
-Header-only; consumers link the `PDX` INTERFACE target (alias `PDX::PDX`), which carries the
-include dirs (`include/`, bundled `extern/Eigen`, `extern/SuperKMeans/include`), BLAS/OpenMP/FFTW
-links, compile definitions and the `-march` flags. Benchmark binaries have **no** `.out` suffix.
+Header-only; consumers link the `PDX` INTERFACE target (alias `PDX::PDX`), which carries the include dirs (`include/`, bundled `extern/Eigen`, `extern/SuperKMeans/include`), BLAS/OpenMP/FFTW links, compile definitions and the `-march` flags. Benchmark binaries have **no** `.out` suffix.
 ```bash
 cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 # Index building + search (index_type defaults to pdx_f32; nprobe 0/omitted sweeps a preset list)
 # `index_type`: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8
 ./benchmarks/BenchmarkEndToEnd <dataset_id> [index_type] [nprobe]
 ```
-Add a benchmark with `pdx_add_benchmark(<Name> <source>)` in `benchmarks/CMakeLists.txt`; a test with
-`pdx_add_test(<name>.out <source>)` in `tests/CMakeLists.txt` (+ the `tests` custom target list).
+Add a benchmark with `pdx_add_benchmark(<Name> <source>)` in `benchmarks/CMakeLists.txt`; a test with `pdx_add_test(<name>.out <source>)` in `tests/CMakeLists.txt` (+ the `tests` custom target list).
 
-Knobs: `-DPDX_MARCH` (default `native`, empty disables `-march`), `-DPDX_PORTABLE` (`-mavx2 -mfma` on
-x86_64 / plain `-O3` elsewhere, for wheels; also via the `PDX_PORTABLE` env var in `pip install .`),
-`-DPDX_SKIP_FFTW`, `-DBLAS_LIBRARIES` (a good BLAS is critical — distro/apt OpenBLAS is slow, build
-from source). See INSTALL.md.
+Knobs: `-DPDX_MARCH` (default `native`, empty disables `-march`), `-DPDX_PORTABLE` (`-mavx2 -mfma` on x86_64 / plain `-O3` elsewhere, for wheels; also via the `PDX_PORTABLE` env var in `pip install .`), `-DPDX_SKIP_FFTW`, `-DBLAS_LIBRARIES` (a good BLAS is critical — distro/apt OpenBLAS is slow, build from source). See INSTALL.md.
 
 
 ## Code style
