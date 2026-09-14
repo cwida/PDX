@@ -128,6 +128,13 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
         __m256i y_vec2_u8;
         __m256i y_vec1_u8;
         __m256i y_diff_u8;
+        // dpbusd reads its second operand as signed, so a difference d >= 128 is squared as
+        // d * (d - 256). dpbusd(diff, diff & 0x80) yields -128 * sum(d | d >= 128); subtracting it
+        // twice adds the missing 256 * d back (exact in two's complement).
+        const __m512i zero = _mm512_setzero_si512();
+        const __m512i high_bit = _mm512_set1_epi8(static_cast<char>(0x80));
+        const __m256i y_zero = _mm256_setzero_si256();
+        const __m256i y_high_bit = _mm256_set1_epi8(static_cast<char>(0x80));
         const uint32_t* query_grouped = reinterpret_cast<const uint32_t*>(query);
         size_t dim_idx = start_dimension;
         for (; dim_idx + 4 <= end_dimension; dim_idx += 4) {
@@ -148,12 +155,14 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
                     diff_u8 = _mm512_or_si512(
                         _mm512_subs_epu8(vec1_u8, vec2_u8), _mm512_subs_epu8(vec2_u8, vec1_u8)
                     );
-                    // We can use this asymmetric dot product as our values are mostly 7-bit
-                    // Hence, the [sign] properties of the second operand are ignored
-                    // As results will never be negative, it can be stored on distances_p[i] without
-                    // issues and it saturates to MAX_INT
+                    // _mm512_storeu_si512(
+                    //     &distances_p[i], _mm512_dpbusds_epi32(res, diff_u8, diff_u8)
+                    // );
+                    const __m512i corr =
+                        _mm512_dpbusd_epi32(zero, diff_u8, _mm512_and_si512(diff_u8, high_bit));
+                    res = _mm512_dpbusd_epi32(res, diff_u8, diff_u8);
                     _mm512_storeu_si512(
-                        &distances_p[i], _mm512_dpbusds_epi32(res, diff_u8, diff_u8)
+                        &distances_p[i], _mm512_sub_epi32(res, _mm512_slli_epi32(corr, 1))
                     );
                 }
                 y_vec1_u8 = _mm256_set1_epi32(query_value);
@@ -166,9 +175,17 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
                         _mm256_subs_epu8(y_vec1_u8, y_vec2_u8),
                         _mm256_subs_epu8(y_vec2_u8, y_vec1_u8)
                     );
+                    // _mm256_storeu_si256(
+                    //     reinterpret_cast<__m256i*>(&distances_p[i]),
+                    //     _mm256_dpbusds_epi32(y_res, y_diff_u8, y_diff_u8)
+                    // );
+                    const __m256i y_corr = _mm256_dpbusd_epi32(
+                        y_zero, y_diff_u8, _mm256_and_si256(y_diff_u8, y_high_bit)
+                    );
+                    y_res = _mm256_dpbusd_epi32(y_res, y_diff_u8, y_diff_u8);
                     _mm256_storeu_si256(
                         reinterpret_cast<__m256i*>(&distances_p[i]),
-                        _mm256_dpbusds_epi32(y_res, y_diff_u8, y_diff_u8)
+                        _mm256_sub_epi32(y_res, _mm256_slli_epi32(y_corr, 1))
                     );
                 }
             }
@@ -212,7 +229,10 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
         const data_t* PDX_RESTRICT vector2,
         size_t num_dimensions
     ) {
-        __m512i d2_i32_vec = _mm512_setzero_si512();
+        // __m512i d2_i32_vec = _mm512_setzero_si512();
+        __m512i d2_low_i32 = _mm512_setzero_si512();
+        __m512i d2_high_i32 = _mm512_setzero_si512();
+        const __m512i zero = _mm512_setzero_si512();
         __m512i a_u8_vec, b_u8_vec;
 
     simsimd_l2sq_u8_ice_cycle:
@@ -233,12 +253,19 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
             _mm512_subs_epu8(a_u8_vec, b_u8_vec), _mm512_subs_epu8(b_u8_vec, a_u8_vec)
         );
 
-        // Multiply and accumulate at `int8` level which are actually uint7, accumulate at `int32`
-        // level:
-        d2_i32_vec = _mm512_dpbusds_epi32(d2_i32_vec, d_u8_vec, d_u8_vec);
+        // dpbusd would read the second operand as signed (wrong for differences >= 128): widen to
+        // 16 bits and square with the i16 dot product on two independent accumulators
+        // d2_i32_vec = _mm512_dpbusds_epi32(d2_i32_vec, d_u8_vec, d_u8_vec);
+        const __m512i d_low_i16 = _mm512_unpacklo_epi8(d_u8_vec, zero);
+        const __m512i d_high_i16 = _mm512_unpackhi_epi8(d_u8_vec, zero);
+        d2_low_i32 = _mm512_dpwssd_epi32(d2_low_i32, d_low_i16, d_low_i16);
+        d2_high_i32 = _mm512_dpwssd_epi32(d2_high_i32, d_high_i16, d_high_i16);
         if (num_dimensions)
             goto simsimd_l2sq_u8_ice_cycle;
-        return _mm512_reduce_add_epi32(d2_i32_vec);
+        // return _mm512_reduce_add_epi32(d2_i32_vec);
+        return static_cast<distance_t>(
+            _mm512_reduce_add_epi32(_mm512_add_epi32(d2_low_i32, d2_high_i32))
+        );
     };
 };
 
