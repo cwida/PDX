@@ -769,6 +769,7 @@ class PDXearch {
         TopKHeap* top_k_heap;
         uint32_t k;
         const PredicateEvaluator* evaluator;
+        // To keep the evaluator alive as long as the cursor is alive
         std::unique_ptr<PredicateEvaluator> owned_evaluator;
         std::unique_ptr<float[]> query;
         std::unique_ptr<quantized_embedding_t[]> quantized_query;
