@@ -88,7 +88,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             d2 += d * d;
         }
 
-        return static_cast<distance_t>(d2);
+        return static_cast<distance_t>(d2); // NOLINT(bugprone-narrowing-conversions)
     };
 
     static void FlipSign(const data_t* data, data_t* out, const uint32_t* masks, size_t d) {
