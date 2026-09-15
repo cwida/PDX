@@ -95,7 +95,6 @@ else()
         message(STATUS "BLAS library found: ${BLAS_LIBRARIES}")
         list(APPEND _PDX_LINK_LIBS ${BLAS_LIBRARIES})
     endif()
-    list(APPEND _PDX_COMPILE_DEFS EIGEN_USE_BLAS)
 endif()
 
 # ── FFTW (optional) ──
@@ -121,11 +120,20 @@ if(TARGET Eigen3::Eigen)
     list(APPEND _PDX_LINK_LIBS Eigen3::Eigen)
 else()
     message(STATUS "Eigen: using bundled extern/Eigen")
-    list(APPEND _PDX_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/extern/Eigen)
+    # Exposed as Eigen3::Eigen so SuperKMeans below shares this copy instead of its own
+    add_library(pdx_bundled_eigen INTERFACE)
+    add_library(Eigen3::Eigen ALIAS pdx_bundled_eigen)
+    target_include_directories(pdx_bundled_eigen INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/extern/Eigen)
+    list(APPEND _PDX_LINK_LIBS Eigen3::Eigen)
 endif()
 
-# ── SuperKMeans (header-only, used for index construction) ──
-list(APPEND _PDX_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/extern/SuperKMeans/include)
+# ── SuperKMeans (index construction; brings cpuinfo, numkong and ruy through its own CMake) ──
+set(SKMEANS_PORTABLE ${PDX_PORTABLE} CACHE BOOL "" FORCE)
+set(SKMEANS_MARCH "${PDX_MARCH}" CACHE STRING "" FORCE)
+# FFTW is found, linked and HAS_FFTW-defined by PDX above; FindFFTW cannot run a second time
+set(SKMEANS_SKIP_FFTW ON CACHE BOOL "" FORCE)
+add_subdirectory(extern/SuperKMeans)
+list(APPEND _PDX_LINK_LIBS superkmeans::superkmeans)
 
 # ── INTERFACE library target ──
 add_library(PDX INTERFACE)

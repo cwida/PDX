@@ -71,7 +71,7 @@ New feature ⇒ ship a unit test with it (C++ in `tests/`, Python in `python/tes
 
 ## Build & run (beyond the gate)
 
-Header-only; consumers link the `PDX` INTERFACE target (alias `PDX::PDX`), which carries the include dirs (`include/`, bundled `extern/Eigen`, `extern/SuperKMeans/include`), BLAS/OpenMP/FFTW links, compile definitions and the `-march` flags. Benchmark binaries have **no** `.out` suffix.
+Header-only; consumers link the `PDX` INTERFACE target (alias `PDX::PDX`), which carries the include dirs (`include/`, bundled `extern/Eigen` exposed as `Eigen3::Eigen`), the `superkmeans::superkmeans` target from `add_subdirectory(extern/SuperKMeans)`, BLAS/OpenMP/FFTW links, compile definitions and the `-march` flags. Benchmark binaries have **no** `.out` suffix.
 ```bash
 cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 # Index building + search (index_type defaults to pdx_f32; nprobe 0/omitted sweeps a preset list)
