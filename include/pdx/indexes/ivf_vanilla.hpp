@@ -404,7 +404,7 @@ class PDXIndex : public IPDXIndex {
     ) const {
         PDX_PROFILE_SCOPE("PredicateEvaluator");
         PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
-        if (index.total_capacity == 0) {
+        if (index.num_clusters == 0 || index.total_capacity == 0) {
             return evaluator;
         }
         for (const auto row_id : passing_row_ids) {
