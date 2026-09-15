@@ -5,6 +5,7 @@ We are actively developing PDX and accepting contributions! Any kind of PR is we
 These are our current priorities:
 
 **Features**:
+- Support IVFTree with Filtered and Iterative search.
 - Out-of-core execution (disk-based setting).
 - Implement multi-threading capabilities.
 - Add PDX to the [VIBE benchmark](https://vector-index-bench.github.io/).

@@ -88,11 +88,7 @@ class ADSamplingPruner {
 
     const matrix_t& GetMatrix() const { return matrix; }
 
-    float GetPruningThreshold(
-        uint32_t,
-        std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>& heap,
-        const uint32_t current_dimension_idx
-    ) const {
+    float GetPruningThreshold(uint32_t, Heap& heap, const uint32_t current_dimension_idx) const {
         float ratio = current_dimension_idx == num_dimensions ? 1 : ratios[current_dimension_idx];
         return heap.top().distance * ratio;
     }
@@ -151,9 +147,11 @@ class ADSamplingPruner {
         if (visited_dimensions == num_dimensions) {
             return 1.0;
         }
-        return static_cast<float>(visited_dimensions) / num_dimensions *
-               (1.0 + pruning_aggressiveness / std::sqrt(visited_dimensions)) *
-               (1.0 + pruning_aggressiveness / std::sqrt(visited_dimensions));
+        return static_cast<float>(
+            static_cast<float>(visited_dimensions) / num_dimensions *
+            (1.0 + pruning_aggressiveness / std::sqrt(visited_dimensions)) *
+            (1.0 + pruning_aggressiveness / std::sqrt(visited_dimensions))
+        );
     }
 
     void BuildFlipMasks() {

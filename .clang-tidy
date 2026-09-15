@@ -19,4 +19,4 @@ CheckOptions:
   - key: bugprone-narrowing-conversions.WarnOnEquivalentBitWidth
     value: false
 
-HeaderFilterRegex: 'include/superkmeans/.*'
+HeaderFilterRegex: 'include/pdx/.*'

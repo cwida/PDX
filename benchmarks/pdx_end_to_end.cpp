@@ -10,7 +10,8 @@
 #include <vector>
 
 #include "benchmark_utils.hpp"
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 #include "pdx/profiler.hpp"
 #include "pdx/utils.hpp"
 
@@ -94,6 +95,8 @@ void RunBenchmark(
             }
         }
 
+        PDX::Profiler::Get().Reset();
+
         std::vector<PhasesRuntime> runtimes;
         runtimes.resize(NUM_MEASURE_RUNS * n_queries);
         TicToc clock;
@@ -107,6 +110,7 @@ void RunBenchmark(
             }
         }
         PDX::Profiler::Get().PrintHierarchical();
+        std::cout << "Vectors accessed: " << pdx_index.GetNumVectorsAccessed() << "\n";
 
         BenchmarkMetadata results_metadata = {
             dataset,

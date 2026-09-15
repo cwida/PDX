@@ -14,15 +14,13 @@ struct ScalarQuantizationParams {
 };
 
 class Quantizer {
-
   public:
     explicit Quantizer(size_t num_dimensions) : num_dimensions(num_dimensions) {}
     virtual ~Quantizer() = default;
 
-  public:
     void NormalizeQuery(const float* src, float* out) const {
         float sum = 0.0f;
-#pragma clang loop vectorize(enable)
+        PDX_VECTORIZE_LOOP
         for (size_t i = 0; i < num_dimensions; ++i) {
             sum += src[i] * src[i];
         }
@@ -33,7 +31,7 @@ class Quantizer {
 
         // float inverse_norm = 1.0f / std::sqrt(sum);
         float norm = std::sqrt(sum);
-#pragma clang loop vectorize(enable)
+        PDX_VECTORIZE_LOOP
         for (size_t i = 0; i < num_dimensions; ++i) {
             out[i] = src[i] / norm; // * inverse_norm;
         }

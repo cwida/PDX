@@ -6,7 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 #include "test_utils.hpp"
 
 namespace {
@@ -52,6 +53,48 @@ TEST_P(SerializationTest, SaveLoadProducesSameSearchResults) {
                 std::abs(original_results[q][i].distance - loaded_results[i].distance) /
                 std::max(original_results[q][i].distance, 1e-6f);
             EXPECT_LT(rel_error, 1e-5f) << "Distance mismatch at query " << q << " position " << i;
+        }
+    }
+
+    std::remove(path.c_str());
+}
+
+// Filtered search ranks clusters through the leaf centroids, which Search does not touch on the
+// tree
+TEST_P(SerializationTest, SaveLoadProducesSameFilteredSearchResults) {
+    std::string index_type = GetParam();
+    size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+
+    auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
+    index->SetNProbe(16);
+
+    std::vector<size_t> passing_ids;
+    for (size_t i = 0; i < TestUtils::N_TRAIN; i += 3) {
+        passing_ids.push_back(i);
+    }
+
+    std::vector<std::vector<PDX::KNNCandidate>> original_results;
+    for (size_t q = 0; q < 50; ++q) {
+        original_results.push_back(
+            index->FilteredSearch(data.queries.data() + q * d, TestUtils::KNN, passing_ids)
+        );
+    }
+
+    std::string path = "/tmp/pdx_test_filtered_" + index_type;
+    index->Save(path);
+    auto loaded = PDX::LoadPDXIndex(path);
+    ASSERT_NE(loaded, nullptr);
+    loaded->SetNProbe(16);
+
+    for (size_t q = 0; q < 50; ++q) {
+        auto loaded_results =
+            loaded->FilteredSearch(data.queries.data() + q * d, TestUtils::KNN, passing_ids);
+        ASSERT_EQ(original_results[q].size(), loaded_results.size())
+            << "Result count mismatch for query " << q;
+        for (size_t i = 0; i < original_results[q].size(); ++i) {
+            EXPECT_EQ(original_results[q][i].index, loaded_results[i].index)
+                << "ID mismatch at query " << q << " position " << i;
         }
     }
 
@@ -104,8 +147,7 @@ TEST_P(SerializationTest, LoadAutoDetectsType) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     SerializationTest,
-    // TODO: add tree indexes once crash is fixed
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

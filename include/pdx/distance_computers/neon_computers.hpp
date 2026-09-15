@@ -48,9 +48,10 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const data_t* PDX_RESTRICT vector2,
         size_t num_dimensions
     ) {
+        // PDX_PROFILE_SCOPE("Search/SIMD");
 #if defined(__APPLE__)
         distance_t distance = 0.0;
-#pragma clang loop vectorize(enable)
+        PDX_VECTORIZE_LOOP
         for (size_t i = 0; i < num_dimensions; ++i) {
             distance_t diff = vector1[i] - vector2[i];
             distance += diff * diff;

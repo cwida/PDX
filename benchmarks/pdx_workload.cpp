@@ -9,7 +9,8 @@
 #include <vector>
 
 #include "benchmark_utils.hpp"
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 #include "pdx/profiler.hpp"
 #include "pdx/utils.hpp"
 
@@ -231,7 +232,7 @@ int main(int argc, char* argv[]) {
 
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe]\n";
-        std::cerr << "Index types: pdx_tree_f32 (default), pdx_tree_u8\n";
+        std::cerr << "Index types: pdx_f32, pdx_u8, pdx_tree_f32 (default), pdx_tree_u8\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
@@ -243,9 +244,10 @@ int main(int argc, char* argv[]) {
     std::string index_type = (argc > 2) ? argv[2] : "pdx_tree_f32";
     size_t arg_ivf_nprobe = (argc > 3) ? std::atoi(argv[3]) : 0;
 
-    if (index_type != "pdx_tree_f32" && index_type != "pdx_tree_u8") {
-        std::cerr << "Error: Only pdx_tree_f32 and pdx_tree_u8 support maintenance.\n";
-        std::cerr << "Got: " << index_type << "\n";
+    if (index_type != "pdx_f32" && index_type != "pdx_u8" && index_type != "pdx_tree_f32" &&
+        index_type != "pdx_tree_u8") {
+        std::cerr << "Unknown index type: " << index_type << "\n";
+        std::cerr << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
         return 1;
     }
 
@@ -316,7 +318,15 @@ int main(int argc, char* argv[]) {
 
     std::string algorithm = "workload_" + index_type;
 
-    if (index_type == "pdx_tree_f32") {
+    if (index_type == "pdx_f32") {
+        RunWorkload<PDX::PDXIndexF32>(
+            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, workload
+        );
+    } else if (index_type == "pdx_u8") {
+        RunWorkload<PDX::PDXIndexU8>(
+            info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, workload
+        );
+    } else if (index_type == "pdx_tree_f32") {
         RunWorkload<PDX::PDXTreeIndexF32>(
             info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, workload
         );

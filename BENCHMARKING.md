@@ -78,6 +78,8 @@ make benchmarks
 - Index Creation and Search: `/benchmarks/BenchmarkEndToEnd`
 - PDX IVF: `/benchmarks/BenchmarkPDXIVF`
 - FAISS IVF: `/benchmarks/python_scripts/ivf_faiss.py`
+- Maintenance, build a fraction of the data then insert the rest and search: `/benchmarks/BenchmarkInsertion <dataset> [index_type] [nprobe] [build_fraction]`
+- Maintenance, a build/insert/delete workload (edit `WORKLOAD` in `pdx_workload.cpp`) then search: `/benchmarks/BenchmarkWorkload <dataset> [index_type] [nprobe]`
 
 PDX programs have three parameters:
 - `<index_type>` to specify the type of PDX index to use. We support 4 index types. From least to most performant: 

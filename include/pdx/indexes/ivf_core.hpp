@@ -1,7 +1,7 @@
 #pragma once
 
-#include "pdx/cluster.hpp"
 #include "pdx/common.hpp"
+#include "pdx/indexes/cluster.hpp"
 #include "pdx/utils.hpp"
 #include <cassert>
 #include <cstdint>
@@ -96,7 +96,7 @@ class IVF {
         num_clusters = ((uint32_t*) next_value)[0];
         next_value += sizeof(uint32_t);
         auto* cluster_headers = (uint32_t*) next_value;
-        next_value += num_clusters * 2 * sizeof(uint32_t);
+        next_value += static_cast<size_t>(num_clusters) * 2 * sizeof(uint32_t);
         clusters.reserve(num_clusters);
         for (size_t i = 0; i < num_clusters; ++i) {
             uint32_t n_emb = cluster_headers[i * 2];
@@ -110,10 +110,10 @@ class IVF {
             next_value += sizeof(uint32_t) * clusters[i].num_embeddings;
         }
 
-        is_normalized = ((char*) next_value)[0];
+        is_normalized = next_value[0];
         next_value += sizeof(char);
 
-        centroids.resize(num_clusters * num_dimensions);
+        centroids.resize(static_cast<size_t>(num_clusters) * num_dimensions);
         memcpy(
             centroids.data(), (float*) next_value, sizeof(float) * num_clusters * num_dimensions
         );
@@ -236,7 +236,7 @@ class IVFTree : public IVF<Q> {
         l0.num_clusters = n_clusters_l0;
 
         auto* l0_headers = (uint32_t*) next_value;
-        next_value += n_clusters_l0 * 2 * sizeof(uint32_t);
+        next_value += static_cast<size_t>(n_clusters_l0) * 2 * sizeof(uint32_t);
 
         l0.clusters.reserve(n_clusters_l0);
         for (size_t i = 0; i < n_clusters_l0; ++i) {
@@ -260,7 +260,7 @@ class IVFTree : public IVF<Q> {
         this->num_clusters = n_clusters_l1;
 
         auto* l1_headers = (uint32_t*) next_value;
-        next_value += n_clusters_l1 * 2 * sizeof(uint32_t);
+        next_value += static_cast<size_t>(n_clusters_l1) * 2 * sizeof(uint32_t);
 
         this->clusters.reserve(n_clusters_l1);
         for (size_t i = 0; i < n_clusters_l1; ++i) {
@@ -280,15 +280,20 @@ class IVFTree : public IVF<Q> {
         }
 
         // === Shared metadata ===
-        bool normalized = ((char*) next_value)[0];
+        bool normalized = next_value[0];
         this->is_normalized = normalized;
         l0.is_normalized = normalized;
         next_value += sizeof(char);
 
         // === L0 centroids (centroids_pdx from file) ===
-        l0.centroids.resize(n_clusters_l0 * dims);
+        l0.centroids.resize(static_cast<size_t>(n_clusters_l0) * dims);
         memcpy(l0.centroids.data(), (float*) next_value, sizeof(float) * n_clusters_l0 * dims);
         next_value += sizeof(float) * n_clusters_l0 * dims;
+
+        // === L1 centroids ===
+        this->centroids.resize(static_cast<size_t>(n_clusters_l1) * dims);
+        memcpy(this->centroids.data(), (float*) next_value, sizeof(float) * n_clusters_l1 * dims);
+        next_value += sizeof(float) * n_clusters_l1 * dims;
 
         // === U8 quantization params ===
         if constexpr (Q == U8) {
@@ -370,6 +375,12 @@ class IVFTree : public IVF<Q> {
         out.write(
             reinterpret_cast<const char*>(l0.centroids.data()),
             sizeof(float) * n_clusters_l0 * this->num_dimensions
+        );
+
+        // L1 centroids
+        out.write(
+            reinterpret_cast<const char*>(this->centroids.data()),
+            sizeof(float) * this->num_clusters * this->num_dimensions
         );
 
         // === U8 quantization params ===

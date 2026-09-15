@@ -9,7 +9,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "Checking C++ formatting in SuperKMeans project..."
+echo "Checking C++ formatting in PDX project..."
 echo "Project root: $PROJECT_ROOT"
 
 REQUIRED_VERSION="18.1.8"

@@ -8,7 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 #include "test_utils.hpp"
 
 namespace {
@@ -47,6 +48,9 @@ TEST_P(FilteredSearchTest, FilteredResultsAreSubsetOfPassingIds) {
 
 TEST_P(FilteredSearchTest, FilteredSearchMatchesUnfilteredWhenAllPass) {
     std::string index_type = GetParam();
+    if (index_type.find("tree") != std::string::npos) {
+        GTEST_SKIP() << "tree Search ranks clusters through L0, FilteredSearch ranks them flat";
+    }
     size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
@@ -196,8 +200,7 @@ TEST_P(FilteredSearchTest, TinyFilterExhaustiveReturnsAllPassingIds) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     FilteredSearchTest,
-    // TODO: add tree indexes once crash is fixed
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

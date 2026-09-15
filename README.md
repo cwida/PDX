@@ -57,7 +57,7 @@ index.delete(row_id_to_delete)
 
 ```
 
-`IndexPDXIVFTreeSQ8` is our fastest index that will give you the best performance alongside lightweight maintenance. It is a two-level IVF index with 8-bit quantization.
+`IndexPDXIVFTreeSQ8` is our fastest index that will give you the best performance alongside lightweight maintenance. It is a two-level IVF index with 8-bit quantization. All index types (`IndexPDXIVF`, `IndexPDXIVFSQ8`, `IndexPDXIVFTree`, `IndexPDXIVFTreeSQ8`) support `append` and `delete`.
 
 Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We support Flat (`float32`) and Quantized (`8-bit`) indexes, as well as the most common distance metrics. 
 

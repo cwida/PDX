@@ -7,7 +7,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 
 namespace py = pybind11;
 
@@ -57,6 +58,7 @@ class PyPDXIndex {
             .hierarchical_indexing = hierarchical_indexing,
             .n_threads = n_threads,
         };
+        // NOLINTBEGIN(bugprone-branch-clone)
         if (index_type == "pdx_f32") {
             index = std::make_unique<PDXIndexF32>(config);
         } else if (index_type == "pdx_u8") {
@@ -71,6 +73,7 @@ class PyPDXIndex {
                 ". Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8"
             );
         }
+        // NOLINTEND(bugprone-branch-clone)
     }
 
     static PyPDXIndex LoadFromFile(const std::string& path) {

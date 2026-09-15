@@ -13,7 +13,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 #   CLANG_TIDY=/opt/homebrew/opt/llvm@18/bin/clang-tidy ./scripts/tidy_check.sh
 CLANG_TIDY="${CLANG_TIDY:-clang-tidy}"
 
-echo "Running clang-tidy on SuperKMeans project..."
+echo "Running clang-tidy on PDX project..."
 echo "Project root: $PROJECT_ROOT"
 echo "Using: $CLANG_TIDY ($($CLANG_TIDY --version 2>&1 | head -1))"
 
@@ -56,8 +56,8 @@ for dir in "${DIRECTORIES[@]}"; do
             total_files=$((total_files + 1))
             relative_file="${file#$PROJECT_ROOT/}"
 
-            # Only check warnings from headers in include/superkmeans/
-            header_warnings=$($CLANG_TIDY -p "$PROJECT_ROOT" "$file" 2>&1 | grep "warning:" | grep "include/superkmeans/" || true)
+            # Only check warnings from headers in include/pdx/
+            header_warnings=$($CLANG_TIDY -p "$PROJECT_ROOT" "$file" 2>&1 | grep "warning:" | grep "include/pdx/" || true)
             if [ -z "$header_warnings" ]; then
                 echo "  ✓ $relative_file"
             else

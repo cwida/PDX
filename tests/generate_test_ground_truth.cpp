@@ -4,12 +4,12 @@
 #include <iostream>
 #include <vector>
 
-#include "pdx/index.hpp"
+#include "pdx/indexes/ivf_tree.hpp"
+#include "pdx/indexes/ivf_vanilla.hpp"
 #include "test_utils.hpp"
 
 int main() {
-    std::vector<std::string> index_types = {"pdx_f32", "pdx_u8"};
-    // TODO: add "pdx_tree_f32", "pdx_tree_u8" once tree index crash is fixed
+    std::vector<std::string> index_types = {"pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"};
     std::vector<size_t> dimensions = {384};
     std::vector<size_t> nprobes = {1, 2, 4, 8, 16, 32, 64};
 
