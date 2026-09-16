@@ -2,6 +2,7 @@
 
 #include "pdx/common.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
+#include "superkmeans/common.h"
 #include <Eigen/Dense>
 #include <omp.h>
 #include <queue>
@@ -220,26 +221,22 @@ class ADSamplingPruner {
             return;
         }
 #endif
-        const char trans_a = 'N';
-        const char trans_b = 'N';
-        const float alpha = 1.0f;
-        const float beta = 0.0f;
-        int dim = static_cast<int>(num_dimensions);
-        int n_blas = static_cast<int>(n);
-        sgemm_(
-            &trans_a,
-            &trans_b,
-            &dim,
-            &n_blas,
-            &dim,
-            &alpha,
+        const int dim = static_cast<int>(num_dimensions);
+        const int n_blas = static_cast<int>(n);
+        skmeans::Sgemm(
+            'N',
+            'N',
+            dim,
+            n_blas,
+            dim,
+            1.0f,
             matrix.data(),
-            &dim,
+            dim,
             embeddings,
-            &dim,
-            &beta,
+            dim,
+            0.0f,
             out_buffer,
-            &dim
+            dim
         );
     }
 };

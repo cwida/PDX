@@ -81,7 +81,7 @@ struct KMeansResult {
         auto kmeans = skmeans::HierarchicalSuperKMeans(num_clusters, num_dimensions, config);
         result.centroids = kmeans.Train(embeddings, num_embeddings);
         if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-            assignments = kmeans.FastAssign(
+            assignments = kmeans.AssignTrainingPoints(
                 embeddings, result.centroids.data(), num_embeddings, num_clusters
             );
         } else {
@@ -101,7 +101,7 @@ struct KMeansResult {
         auto kmeans = skmeans::SuperKMeans(num_clusters, num_dimensions, config);
         result.centroids = kmeans.Train(embeddings, num_embeddings);
         if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-            assignments = kmeans.FastAssign(
+            assignments = kmeans.AssignTrainingPoints(
                 embeddings, result.centroids.data(), num_embeddings, num_clusters
             );
         } else {

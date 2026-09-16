@@ -17,6 +17,7 @@ set(PDX_MARCH "native" CACHE STRING "Target architecture for -march (e.g. native
 set(PDX_SKIP_FFTW OFF CACHE BOOL "Skip FFTW dependency entirely")
 set(PDX_COMPILE_TESTS OFF CACHE BOOL "Whether to compile tests")
 set(PDX_COMPILE_BENCHMARKS OFF CACHE BOOL "Whether to compile benchmarks")
+set(PDX_COMPILE_PYTHON ${PROJECT_IS_TOP_LEVEL} CACHE BOOL "Whether to compile the Python bindings (when pybind11 is found)")
 
 # ── Compiler flags (top-level only) ──
 if(PROJECT_IS_TOP_LEVEL)
@@ -95,7 +96,6 @@ else()
         message(STATUS "BLAS library found: ${BLAS_LIBRARIES}")
         list(APPEND _PDX_LINK_LIBS ${BLAS_LIBRARIES})
     endif()
-    list(APPEND _PDX_COMPILE_DEFS EIGEN_USE_BLAS)
 endif()
 
 # ── FFTW (optional) ──
@@ -121,11 +121,20 @@ if(TARGET Eigen3::Eigen)
     list(APPEND _PDX_LINK_LIBS Eigen3::Eigen)
 else()
     message(STATUS "Eigen: using bundled extern/Eigen")
-    list(APPEND _PDX_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/extern/Eigen)
+    # Exposed as Eigen3::Eigen so SuperKMeans below shares this copy instead of its own
+    add_library(pdx_bundled_eigen INTERFACE)
+    add_library(Eigen3::Eigen ALIAS pdx_bundled_eigen)
+    target_include_directories(pdx_bundled_eigen INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/extern/Eigen)
+    list(APPEND _PDX_LINK_LIBS Eigen3::Eigen)
 endif()
 
-# ── SuperKMeans (header-only, used for index construction) ──
-list(APPEND _PDX_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/extern/SuperKMeans/include)
+# ── SuperKMeans (index construction; brings cpuinfo, numkong and ruy through its own CMake) ──
+set(SKMEANS_PORTABLE ${PDX_PORTABLE} CACHE BOOL "" FORCE)
+set(SKMEANS_MARCH "${PDX_MARCH}" CACHE STRING "" FORCE)
+# FFTW is found, linked and HAS_FFTW-defined by PDX above; FindFFTW cannot run a second time
+set(SKMEANS_SKIP_FFTW ON CACHE BOOL "" FORCE)
+add_subdirectory(extern/SuperKMeans)
+list(APPEND _PDX_LINK_LIBS superkmeans::superkmeans)
 
 # ── INTERFACE library target ──
 add_library(PDX INTERFACE)
@@ -179,11 +188,13 @@ else()
 endif()
 
 # ── Python bindings ──
-find_package(Python COMPONENTS Interpreter Development.Module QUIET)
-set(PYBIND11_FINDPYTHON ON)
-find_package(pybind11 CONFIG QUIET)
+if(PDX_COMPILE_PYTHON)
+    find_package(Python COMPONENTS Interpreter Development.Module QUIET)
+    set(PYBIND11_FINDPYTHON ON)
+    find_package(pybind11 CONFIG QUIET)
+endif()
 
-if(Python_FOUND AND pybind11_FOUND)
+if(PDX_COMPILE_PYTHON AND Python_FOUND AND pybind11_FOUND)
     message(STATUS "Python bindings enabled")
     message(STATUS "Python executable: ${Python_EXECUTABLE}")
     message(STATUS "Python include dirs: ${Python_INCLUDE_DIRS}")
@@ -198,5 +209,5 @@ if(Python_FOUND AND pybind11_FOUND)
         COMPONENT python
     )
 else()
-    message(STATUS "Python bindings disabled (pybind11 not found)")
+    message(STATUS "Python bindings disabled")
 endif()
