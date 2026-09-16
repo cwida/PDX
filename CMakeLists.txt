@@ -17,6 +17,7 @@ set(PDX_MARCH "native" CACHE STRING "Target architecture for -march (e.g. native
 set(PDX_SKIP_FFTW OFF CACHE BOOL "Skip FFTW dependency entirely")
 set(PDX_COMPILE_TESTS OFF CACHE BOOL "Whether to compile tests")
 set(PDX_COMPILE_BENCHMARKS OFF CACHE BOOL "Whether to compile benchmarks")
+set(PDX_COMPILE_PYTHON ${PROJECT_IS_TOP_LEVEL} CACHE BOOL "Whether to compile the Python bindings (when pybind11 is found)")
 
 # ── Compiler flags (top-level only) ──
 if(PROJECT_IS_TOP_LEVEL)
@@ -187,11 +188,13 @@ else()
 endif()
 
 # ── Python bindings ──
-find_package(Python COMPONENTS Interpreter Development.Module QUIET)
-set(PYBIND11_FINDPYTHON ON)
-find_package(pybind11 CONFIG QUIET)
+if(PDX_COMPILE_PYTHON)
+    find_package(Python COMPONENTS Interpreter Development.Module QUIET)
+    set(PYBIND11_FINDPYTHON ON)
+    find_package(pybind11 CONFIG QUIET)
+endif()
 
-if(Python_FOUND AND pybind11_FOUND)
+if(PDX_COMPILE_PYTHON AND Python_FOUND AND pybind11_FOUND)
     message(STATUS "Python bindings enabled")
     message(STATUS "Python executable: ${Python_EXECUTABLE}")
     message(STATUS "Python include dirs: ${Python_INCLUDE_DIRS}")
@@ -206,5 +209,5 @@ if(Python_FOUND AND pybind11_FOUND)
         COMPONENT python
     )
 else()
-    message(STATUS "Python bindings disabled (pybind11 not found)")
+    message(STATUS "Python bindings disabled")
 endif()
