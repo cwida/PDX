@@ -80,7 +80,7 @@ cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 ```
 Add a benchmark with `pdx_add_benchmark(<Name> <source>)` in `benchmarks/CMakeLists.txt`; a test with `pdx_add_test(<name>.out <source>)` in `tests/CMakeLists.txt` (+ the `tests` custom target list).
 
-Knobs: `-DPDX_MARCH` (default `native`, empty disables `-march`), `-DPDX_PORTABLE` (`-mavx2 -mfma` on x86_64 / plain `-O3` elsewhere, for wheels; also via the `PDX_PORTABLE` env var in `pip install .`), `-DPDX_SKIP_FFTW`, `-DBLAS_LIBRARIES` (a good BLAS is critical — distro/apt OpenBLAS is slow, build from source). See INSTALL.md.
+Knobs: `-DPDX_MARCH` (default `native`, empty disables `-march`), `-DPDX_PORTABLE` (`-mavx2 -mfma` on x86_64 / plain `-O3` elsewhere, for wheels; also via the `PDX_PORTABLE` env var in `pip install .`), `-DPDX_SKIP_FFTW`, `-DPDX_COMPILE_PYTHON` (bindings; defaults to ON only when PDX is the top-level project), `-DBLAS_LIBRARIES` (a good BLAS is critical — distro/apt OpenBLAS is slow, build from source). See INSTALL.md.
 
 
 ## Code style
