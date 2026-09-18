@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 #include "pdx/indexes/ivf_tree.hpp"
@@ -98,6 +99,39 @@ TEST(RowIdMapping, GrowsAndReusesIds) {
     index.Append(far_row_id, embedding);
     EXPECT_EQ(index.Search(embedding, 1)[0].index, far_row_id);
     EXPECT_THROW(index.Append(far_row_id, embedding), std::invalid_argument);
+}
+
+TEST(RowIdMapping, BaseRowIdKeepsTheMappingLocal) {
+    auto data = TestUtils::LoadTestData(D);
+    const size_t base_row_id = 3000000;
+    std::vector<size_t> row_ids(TestUtils::N_TRAIN);
+    std::iota(row_ids.begin(), row_ids.end(), base_row_id);
+
+    PDX::PDXIndexF32 reference(MakeConfig());
+    reference.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+
+    auto config = MakeConfig();
+    config.base_row_id = base_row_id;
+    PDX::PDXIndexF32 index(config);
+    index.BuildIndex(row_ids.data(), data.train.data(), TestUtils::N_TRAIN);
+
+    EXPECT_EQ(index.GetInMemorySizeInBytes(), reference.GetInMemorySizeInBytes());
+    for (size_t q = 0; q < 20; q++) {
+        const float* query = data.queries.data() + q * D;
+        auto expected = Ids(reference.Search(query, TestUtils::KNN));
+        for (auto& id : expected) {
+            id += base_row_id;
+        }
+        EXPECT_EQ(Ids(index.Search(query, TestUtils::KNN)), expected);
+    }
+
+    EXPECT_EQ(index.GetRowIdMapping(base_row_id - 1).first, PDX::DELETED_MARKER);
+    EXPECT_NE(index.GetRowIdMapping(base_row_id).first, PDX::DELETED_MARKER);
+    EXPECT_NO_THROW(index.Delete(base_row_id - 1));
+    index.Delete(base_row_id);
+    EXPECT_EQ(index.GetRowIdMapping(base_row_id).first, PDX::DELETED_MARKER);
+    index.Append(base_row_id, data.train.data());
+    EXPECT_EQ(index.Search(data.train.data(), 1)[0].index, base_row_id);
 }
 
 } // namespace

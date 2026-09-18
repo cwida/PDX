@@ -37,6 +37,7 @@ struct PDXIndexConfig {
     bool hierarchical_indexing = true;
     uint32_t n_threads = 0; // 0 = omp_get_max_threads()
     bool is_data_transformed = false;
+    size_t base_row_id = 0;
 
     void Validate() const {
         if (num_dimensions == 0 || num_dimensions > PDX_MAX_DIMS) {
@@ -81,20 +82,24 @@ struct RowIdClusterMapping {
     static constexpr entry_t DELETED{DELETED_MARKER, DELETED_MARKER};
 
     void Set(size_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {
-        if (row_id >= entries.size()) {
-            entries.resize(std::max(row_id + 1, entries.size() * 2), DELETED);
+        assert(row_id >= base_row_id);
+        const size_t position = row_id - base_row_id;
+        if (position >= entries.size()) {
+            entries.resize(std::max(position + 1, entries.size() * 2), DELETED);
         }
-        entries[row_id] = {cluster_id, idx_in_cluster};
+        entries[position] = {cluster_id, idx_in_cluster};
     }
 
     void Delete(size_t row_id) {
-        if (row_id < entries.size()) {
-            entries[row_id] = DELETED;
+        if (row_id >= base_row_id && row_id - base_row_id < entries.size()) {
+            entries[row_id - base_row_id] = DELETED;
         }
     }
 
     [[nodiscard]] entry_t Get(size_t row_id) const {
-        return row_id < entries.size() ? entries[row_id] : DELETED;
+        return row_id >= base_row_id && row_id - base_row_id < entries.size()
+                   ? entries[row_id - base_row_id]
+                   : DELETED;
     }
 
     template <class Clusters>
@@ -102,19 +107,20 @@ struct RowIdClusterMapping {
         size_t size = 0;
         for (uint32_t c = 0; c < num_clusters; c++) {
             for (uint32_t p = 0; p < clusters[c].num_embeddings; p++) {
-                size = std::max(size, static_cast<size_t>(clusters[c].indices[p]) + 1);
+                size = std::max(size, clusters[c].indices[p] - base_row_id + 1);
             }
         }
         entries.assign(size, DELETED);
         for (uint32_t c = 0; c < num_clusters; c++) {
             for (uint32_t p = 0; p < clusters[c].num_embeddings; p++) {
-                entries[clusters[c].indices[p]] = {c, p};
+                entries[clusters[c].indices[p] - base_row_id] = {c, p};
             }
         }
     }
 
     [[nodiscard]] size_t SizeInBytes() const { return entries.size() * sizeof(entry_t); }
 
+    size_t base_row_id = 0;
     std::vector<entry_t> entries;
 };
 

@@ -9,7 +9,6 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 #include "pdx/clustering.hpp"
@@ -59,12 +58,14 @@ class PDXTreeIndex : public IPDXIndex {
         PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
         owned_pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
         pruner = owned_pruner.get();
+        row_id_cluster_mapping.base_row_id = config.base_row_id;
     }
 
     PDXTreeIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
         : config(config), d(config.num_dimensions), pruner(&external_pruner) {
         config.Validate();
         PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
+        row_id_cluster_mapping.base_row_id = config.base_row_id;
     }
 
     void Save(const std::string& path) override {
