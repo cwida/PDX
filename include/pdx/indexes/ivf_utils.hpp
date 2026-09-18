@@ -36,6 +36,7 @@ struct PDXIndexConfig {
     uint32_t kmeans_iters = 10;
     bool hierarchical_indexing = true;
     uint32_t n_threads = 0; // 0 = omp_get_max_threads()
+    bool is_data_transformed = false;
 
     void Validate() const {
         if (num_dimensions == 0 || num_dimensions > PDX_MAX_DIMS) {
@@ -71,6 +72,50 @@ struct PDXIndexConfig {
             );
         }
     }
+};
+
+// Dense in row id: PDX assigns row ids by position, so a sparse id space wastes memory here
+struct RowIdClusterMapping {
+    using entry_t = std::pair<uint32_t, uint32_t>;
+    static_assert(sizeof(entry_t) == 2 * sizeof(uint32_t));
+    static constexpr entry_t DELETED{DELETED_MARKER, DELETED_MARKER};
+
+    void Set(size_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {
+        if (row_id >= entries.size()) {
+            entries.resize(std::max(row_id + 1, entries.size() * 2), DELETED);
+        }
+        entries[row_id] = {cluster_id, idx_in_cluster};
+    }
+
+    void Delete(size_t row_id) {
+        if (row_id < entries.size()) {
+            entries[row_id] = DELETED;
+        }
+    }
+
+    [[nodiscard]] entry_t Get(size_t row_id) const {
+        return row_id < entries.size() ? entries[row_id] : DELETED;
+    }
+
+    template <class Clusters>
+    void Rebuild(const Clusters& clusters, uint32_t num_clusters) {
+        size_t size = 0;
+        for (uint32_t c = 0; c < num_clusters; c++) {
+            for (uint32_t p = 0; p < clusters[c].num_embeddings; p++) {
+                size = std::max(size, static_cast<size_t>(clusters[c].indices[p]) + 1);
+            }
+        }
+        entries.assign(size, DELETED);
+        for (uint32_t c = 0; c < num_clusters; c++) {
+            for (uint32_t p = 0; p < clusters[c].num_embeddings; p++) {
+                entries[clusters[c].indices[p]] = {c, p};
+            }
+        }
+    }
+
+    [[nodiscard]] size_t SizeInBytes() const { return entries.size() * sizeof(entry_t); }
+
+    std::vector<entry_t> entries;
 };
 
 inline std::unique_ptr<float[]> NormalizeAndRotate(
