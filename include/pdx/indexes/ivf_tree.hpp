@@ -1041,7 +1041,8 @@ class PDXTreeIndex : public IPDXIndex {
                 ids_rest.get(),
                 float_rest.get(),
                 static_cast<uint32_t>(group_rest_idx.size()),
-                mesocluster_id
+                mesocluster_id,
+                false
             );
         }
 
@@ -1055,6 +1056,9 @@ class PDXTreeIndex : public IPDXIndex {
     // within the given mesocluster.
     // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
     // TODO(@lkuffo, med): We can optimize reassignments by doing GEMM+PRUNING for assignments
+    // TODO(@lkuffo, high): Same stale-assignments problem as PDXIndex::ReassignEmbeddings (see the
+    // TODO there); here a merge also rewrites the meso-cluster's `indices` the candidates came
+    // from.
     void ReassignEmbeddings(
         uint32_t* row_ids,
         const float* embeddings,
