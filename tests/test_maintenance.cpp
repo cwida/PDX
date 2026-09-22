@@ -396,6 +396,61 @@ void RunAppendCascadeThenDeleteHalf() {
     EXPECT_GE(total_recall / static_cast<float>(n_queries), 0.9f);
 }
 
+// Test 9: Delete every other row of a built index (every cluster drops to its merge threshold at
+// once); the survivors must still be exact-searchable
+template <typename IndexT>
+void RunBuildThenDeleteHalf() {
+    constexpr size_t d = 8;
+    constexpr size_t n_total = 50000;
+    constexpr size_t n_queries = 100;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+    std::vector<float> queries(n_queries * d);
+    for (auto& value : queries) {
+        value = uniform(gen);
+    }
+
+    auto config = MakeConfig(d);
+    config.num_clusters = 480;
+    IndexT index(config);
+    index.BuildIndex(data.data(), n_total);
+    index.SetNProbe(0);
+    for (size_t row_id = 0; row_id < n_total; row_id += 2) {
+        index.Delete(row_id);
+    }
+    ExpectIndexHoldsExactly(index, n_total / 2);
+
+    std::vector<float> odd_rows(n_total / 2 * d);
+    for (size_t i = 0; i < n_total / 2; i++) {
+        std::copy(
+            data.begin() + static_cast<long>((2 * i + 1) * d),
+            data.begin() + static_cast<long>((2 * i + 2) * d),
+            odd_rows.begin() + static_cast<long>(i * d)
+        );
+    }
+    auto gt_odd = TestUtils::ComputeBruteForceCosineKNN(
+        odd_rows.data(), queries.data(), n_total / 2, n_queries, d, TestUtils::KNN
+    );
+    float total_recall = 0.0f;
+    for (size_t q = 0; q < n_queries; q++) {
+        auto results = index.Search(queries.data() + q * d, TestUtils::KNN);
+        for (auto& r : results) {
+            EXPECT_EQ(r.index % 2, 1u) << "deleted row_id " << r.index << " returned";
+            r.index = (r.index - 1) / 2;
+        }
+        total_recall += TestUtils::ComputeRecall(results, gt_odd.indices[q], TestUtils::KNN);
+    }
+    EXPECT_GE(total_recall / static_cast<float>(n_queries), 0.9f);
+}
+
+TEST_P(MaintenanceTest, BuildThenDeleteHalf) {
+    ForIndexType(GetParam(), [](auto tag) { RunBuildThenDeleteHalf<typename decltype(tag)::type>(); });
+}
+
 TEST_P(MaintenanceTest, AppendCascadeThenDeleteHalf) {
     ForIndexType(GetParam(), [](auto tag) {
         RunAppendCascadeThenDeleteHalf<typename decltype(tag)::type>();
