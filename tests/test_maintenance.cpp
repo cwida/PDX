@@ -447,8 +447,53 @@ void RunBuildThenDeleteHalf() {
     EXPECT_GE(total_recall / static_cast<float>(n_queries), 0.9f);
 }
 
+// Test 11: Ask for more neighbors than live rows remain after mass deletes: the heap never fills,
+// so tombstoned slots must be skipped rather than masked, or deleted/stale ids leak into the result
+template <typename IndexT>
+void RunSearchWithKAboveLiveCount() {
+    constexpr size_t d = 8;
+    constexpr size_t n_total = 20000;
+    constexpr size_t keep_every = 20;
+    constexpr size_t n_live = n_total / keep_every;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+
+    auto config = MakeConfig(d);
+    config.num_clusters = 64;
+    IndexT index(config);
+    index.BuildIndex(data.data(), n_total);
+    index.SetNProbe(0);
+    for (size_t row_id = 0; row_id < n_total; row_id++) {
+        if (row_id % keep_every != 0) {
+            index.Delete(row_id);
+        }
+    }
+    ExpectIndexHoldsExactly(index, n_live);
+
+    auto results = index.Search(data.data(), n_live + n_live / 2);
+    EXPECT_EQ(results.size(), n_live);
+    std::unordered_set<uint32_t> seen;
+    for (const auto& r : results) {
+        EXPECT_EQ(r.index % keep_every, 0u) << "deleted row_id " << r.index << " returned";
+        EXPECT_LT(r.index, n_total) << "stale row_id " << r.index << " returned";
+        EXPECT_TRUE(seen.insert(r.index).second) << "row_id " << r.index << " returned twice";
+    }
+}
+
+TEST_P(MaintenanceTest, SearchWithKAboveLiveCount) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunSearchWithKAboveLiveCount<typename decltype(tag)::type>();
+    });
+}
+
 TEST_P(MaintenanceTest, BuildThenDeleteHalf) {
-    ForIndexType(GetParam(), [](auto tag) { RunBuildThenDeleteHalf<typename decltype(tag)::type>(); });
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBuildThenDeleteHalf<typename decltype(tag)::type>();
+    });
 }
 
 TEST_P(MaintenanceTest, AppendCascadeThenDeleteHalf) {

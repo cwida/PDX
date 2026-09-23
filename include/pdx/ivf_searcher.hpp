@@ -303,9 +303,10 @@ class PDXearch {
             }
         }
         MaskDistancesWithTombstones(tombstones, pruning_distances);
+        // Only live vectors may enter the heap
         size_t max_possible_k = std::min(
             static_cast<size_t>(k) - heap.size(),
-            n_vectors
+            n_vectors - tombstones.size()
         ); // Note: Start() should not be called if heap.size() >= k
         std::unique_ptr<size_t[]> indices_sorted(new size_t[n_vectors]);
         std::iota(indices_sorted.get(), indices_sorted.get() + n_vectors, static_cast<size_t>(0));

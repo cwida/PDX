@@ -51,7 +51,7 @@ Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopK
 
 Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIndex` additionally keeps the meso-cluster layer (L0) in sync. The leaf-level helpers they share live in `indexes/ivf_utils.hpp`. 
 - **Append**: normalize+rotate → nearest centroid (vanilla: exact scan of all centroids; tree: PDX search over L0). Centroids never move on a plain append.
-- **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`, `CheckClusterHealth`. Search masks tombstones; `Save()` compacts them away.
+- **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`, `CheckClusterHealth`. Search masks tombstones and never lets them into the heap, also while the heap is not yet full (`k` above the live count); `Save()` compacts them away.
 - **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM) with merges disabled to avoid cascades.
 - **ReassignEmbeddings** (also used by `SplitCluster` for the "rest" group) always runs with merges disabled: it snapshots the nearest-centroid assignments before its loop, and a merge inside the loop would swap-and-pop cluster ids from under it (see the TODO at its definition for the root fix). Clusters drained by `StealNeighborEmbeddings` therefore merge only when a later Append/Delete touches them.
 - **Invariants**: `ReserveClusterSlotIfNeeded()` before holding a `cluster_t&` (splits `push_back`); every structural change ends with `ComputeClusterOffsets()` (the searcher sizes its buffers from `max_cluster_capacity` on each query); single writer thread.
