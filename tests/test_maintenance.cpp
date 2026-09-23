@@ -448,7 +448,7 @@ void RunBuildThenDeleteHalf() {
 }
 
 // Test 11: Ask for more neighbors than live rows remain after mass deletes: the heap never fills,
-// so tombstoned slots must be skipped rather than masked, or deleted/stale ids leak into the result
+// so tombstoned slots must be skipped rather than masked
 template <typename IndexT>
 void RunSearchWithKAboveLiveCount() {
     constexpr size_t d = 8;
