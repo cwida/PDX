@@ -303,29 +303,31 @@ class PDXearch {
             }
         }
         MaskDistancesWithTombstones(tombstones, pruning_distances);
-        // Only live vectors may enter the heap
-        size_t max_possible_k = std::min(
-            static_cast<size_t>(k) - heap.size(),
-            n_vectors - tombstones.size()
-        ); // Note: Start() should not be called if heap.size() >= k
+        // Only live vectors may enter the heap; masked tombstones sort last
+        const size_t n_candidates = n_vectors - tombstones.size();
         std::unique_ptr<size_t[]> indices_sorted(new size_t[n_vectors]);
         std::iota(indices_sorted.get(), indices_sorted.get() + n_vectors, static_cast<size_t>(0));
         std::partial_sort(
             indices_sorted.get(),
-            indices_sorted.get() + static_cast<int64_t>(max_possible_k),
+            indices_sorted.get() + static_cast<int64_t>(n_candidates),
             indices_sorted.get() + n_vectors,
             [pruning_distances](size_t i1, size_t i2) {
                 return pruning_distances[i1] < pruning_distances[i2];
             }
         );
-        // insert first k results into the heap
-        for (size_t idx = 0; idx < max_possible_k; ++idx) {
+        for (size_t idx = 0; idx < n_candidates; ++idx) {
             auto embedding = KNNCandidate{};
             size_t index = indices_sorted[idx];
             embedding.index = vector_indices[index];
             embedding.distance = static_cast<float>(pruning_distances[index]);
             if constexpr (Q == U8) {
                 embedding.distance *= pdx_data.inverse_quantization_scale_squared;
+            }
+            if (heap.size() >= k) {
+                if (embedding.distance >= heap.top().distance) {
+                    break;
+                }
+                heap.pop();
             }
             heap.push(embedding);
         }
@@ -400,28 +402,33 @@ class PDXearch {
             );
         }
         // TODO: Everything down from here is a bottleneck when selection % is ultra low
-        size_t max_possible_k =
-            std::min(static_cast<size_t>(k) - heap.size(), static_cast<size_t>(passing_tuples));
+        // Only passing vectors may enter the heap; masked ones sort last
+        const size_t n_candidates = static_cast<size_t>(passing_tuples);
         MaskDistancesWithSelectionVector(n_vectors, pruning_distances, selection_vector);
         MaskDistancesWithTombstones(tombstones, pruning_distances);
         std::unique_ptr<size_t[]> indices_sorted(new size_t[n_vectors]);
         std::iota(indices_sorted.get(), indices_sorted.get() + n_vectors, static_cast<size_t>(0));
         std::partial_sort(
             indices_sorted.get(),
-            indices_sorted.get() + static_cast<int64_t>(max_possible_k),
+            indices_sorted.get() + static_cast<int64_t>(n_candidates),
             indices_sorted.get() + n_vectors,
             [pruning_distances](size_t i1, size_t i2) {
                 return pruning_distances[i1] < pruning_distances[i2];
             }
         );
-        // insert first k results into the heap
-        for (size_t idx = 0; idx < max_possible_k; ++idx) {
+        for (size_t idx = 0; idx < n_candidates; ++idx) {
             auto embedding = KNNCandidate{};
             size_t index = indices_sorted[idx];
             embedding.index = vector_indices[index];
             embedding.distance = static_cast<float>(pruning_distances[index]);
             if constexpr (Q == U8) {
                 embedding.distance *= pdx_data.inverse_quantization_scale_squared;
+            }
+            if (heap.size() >= k) {
+                if (embedding.distance >= heap.top().distance) {
+                    break;
+                }
+                heap.pop();
             }
             heap.push(embedding);
         }
