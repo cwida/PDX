@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <queue>
 #include <random>
@@ -95,6 +96,7 @@ static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 static constexpr size_t SPLIT_MAX_NEIGHBOR_CLUSTERS = 32;
 // The 2-means cluster split runs this many iterations
 static constexpr uint32_t SPLIT_KMEANS_ITERS = 4;
+static constexpr uint32_t DELETED_MARKER = std::numeric_limits<uint32_t>::max();
 
 static constexpr bool AllFetchingSizesMultipleOfU8InterleaveSize() {
     for (auto s : DIMENSIONS_FETCHING_SIZES) {

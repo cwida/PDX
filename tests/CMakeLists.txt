@@ -42,6 +42,8 @@ pdx_add_test(test_filtered_search.out test_filtered_search.cpp)
 pdx_add_test(test_index_properties.out test_index_properties.cpp)
 pdx_add_test(test_maintenance.out test_maintenance.cpp)
 pdx_add_test(test_iterative_search.out test_iterative_search.cpp)
+pdx_add_test(test_flat_index.out test_flat_index.cpp)
+pdx_add_test(test_transformed_input.out test_transformed_input.cpp)
 
 add_custom_target(tests
     DEPENDS
@@ -52,4 +54,6 @@ add_custom_target(tests
         test_index_properties.out
         test_maintenance.out
         test_iterative_search.out
+        test_flat_index.out
+        test_transformed_input.out
 )
