@@ -36,10 +36,19 @@ All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`) and shar
 - Flat: exact search over one row-major block of transformed `float32` embeddings, for sets too
   small to cluster — `FlatIndex` (`flat.hpp`, storage `Flat` in `flat_core.hpp`, search
   `FlatSearcher` in `flat_searcher.hpp`). Same `IPDXIndex` API (one cluster; the cursor is `Done()`
-  after its first `Next`), no Save/Restore, not in `PDXIndexType` nor the Python bindings.
+  after its first `Next`), `PDX_FLAT` in `PDXIndexType`, not in the Python bindings.
   `GetRowIds()`/`GetEmbeddings()` feed a `PDXIndex::BuildIndex` with `is_data_transformed`.
 
-Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`).
+Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`;
+`PDX_FLAT` is serialization only).
+- File: `Save(path)` / `LoadPDXIndex(path)` write and read the type, the rotation matrix (`WriteRotationMatrix` /
+  `ReadRotationMatrix`) and the payload.
+- Stream (for indexes that share one rotation, e.g. one index per partition of a table): `SaveToStream(out)` writes
+  `[PDX_SERIALIZATION_VERSION][type][PDXIndexConfig]` (`WriteStreamHeader`) and the payload, no rotation, tombstones
+  compacted; `LoadPDXIndexFromStream(in, pruner)` constructs the index on `pruner` (which must hold the saving
+  rotation) and calls `LoadFromStream`. A version mismatch throws `std::runtime_error`.
+- Every format is implemented once: the `Load` functions are templates over a reader (`BufferReader` for buffers,
+  `StreamReader` for streams, in `utils.hpp`); `IVF::LoadClusters` reads a level's clusters for `IVF` and `IVFTree`.
 
 ## Resumable search (cursor)
 

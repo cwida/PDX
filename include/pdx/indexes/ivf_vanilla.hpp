@@ -35,6 +35,11 @@ class IPDXIndex {
     virtual void SetNProbe(uint32_t n_probe) = 0;
     virtual void Save(const std::string& path) = 0;
     virtual void Restore(const std::string& path) = 0;
+    // The stream holds no rotation matrix: LoadPDXIndexFromStream loads it into an index on the
+    // pruner it was saved with (indexes that share one rotation persist it once). LoadFromStream
+    // reads what follows the header.
+    virtual void SaveToStream(std::ostream& out) = 0;
+    virtual void LoadFromStream(std::istream& in) = 0;
     virtual uint32_t GetNumDimensions() const = 0;
     virtual uint32_t GetNumClusters() const = 0;
     virtual uint32_t GetClusterSize(uint32_t cluster_id) const = 0;
@@ -93,60 +98,42 @@ class PDXIndex : public IPDXIndex {
     }
 
     void Save(const std::string& path) override {
-        // Compact all clusters before saving
-        for (uint32_t c = 0; c < index.num_clusters; c++) {
-            auto moves = index.clusters[c].CompactCluster();
-            for (const auto& [row_id, new_idx] : moves) {
-                SetRowIdMapping(row_id, c, new_idx);
-            }
-        }
+        CompactClusters();
 
         std::ofstream out(path, std::ios::binary);
-
-        uint8_t type_flag = static_cast<uint8_t>(GetIndexType());
-        out.write(reinterpret_cast<const char*>(&type_flag), sizeof(uint8_t));
-
-        // Rotation matrix
-        const auto& matrix = pruner->GetMatrix();
-        uint32_t matrix_rows = static_cast<uint32_t>(matrix.rows());
-        uint32_t matrix_cols = static_cast<uint32_t>(matrix.cols());
-        out.write(reinterpret_cast<const char*>(&matrix_rows), sizeof(uint32_t));
-        out.write(reinterpret_cast<const char*>(&matrix_cols), sizeof(uint32_t));
-        out.write(
-            reinterpret_cast<const char*>(matrix.data()), sizeof(float) * matrix_rows * matrix_cols
-        );
-
-        // IVF data
+        WriteValue(out, static_cast<uint8_t>(GetIndexType()));
+        WriteRotationMatrix(out, *pruner);
         index.Save(out);
     }
 
     void Restore(const std::string& path) override {
         auto buffer = MmapFile(path);
         char* ptr = buffer.get();
+        BufferReader reader{ptr};
 
         // Index type flag
-        ptr += sizeof(uint8_t);
-
-        // Rotation matrix (ptr may be misaligned after the uint8_t type flag)
-        uint32_t matrix_rows, matrix_cols;
-        std::memcpy(&matrix_rows, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        std::memcpy(&matrix_cols, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        const size_t matrix_floats = static_cast<size_t>(matrix_rows) * matrix_cols;
-        auto aligned_matrix = std::unique_ptr<float[]>(new float[matrix_floats]);
-        std::memcpy(aligned_matrix.get(), ptr, sizeof(float) * matrix_floats);
-        ptr += sizeof(float) * matrix_floats;
-
-        // Load IVF data
-        index.Load(ptr);
+        ReadValue<uint8_t>(reader);
+        const auto matrix = ReadRotationMatrix(reader);
+        index.Load(reader);
         config.num_dimensions = index.num_dimensions;
         config.normalize = index.is_normalized;
 
         // Create pruner and searcher
-        owned_pruner =
-            std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, aligned_matrix.get());
+        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(index.num_dimensions, matrix.get());
         pruner = owned_pruner.get();
+        searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
+        BuildRowIdClusterMapping();
+    }
+
+    void SaveToStream(std::ostream& out) override {
+        CompactClusters();
+        WriteStreamHeader(out, GetIndexType(), config);
+        index.Save(out);
+    }
+
+    void LoadFromStream(std::istream& in) override {
+        StreamReader reader{in};
+        index.Load(reader);
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         BuildRowIdClusterMapping();
     }
@@ -400,6 +387,15 @@ class PDXIndex : public IPDXIndex {
 
     void BuildRowIdClusterMapping() {
         row_id_cluster_mapping.Rebuild(index.clusters, index.num_clusters);
+    }
+
+    void CompactClusters() {
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            auto moves = index.clusters[c].CompactCluster();
+            for (const auto& [row_id, new_idx] : moves) {
+                SetRowIdMapping(row_id, c, new_idx);
+            }
+        }
     }
 
     PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids

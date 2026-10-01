@@ -30,6 +30,8 @@ class FlatIndex : public IPDXIndex {
     RowIdClusterMapping row_id_cluster_mapping;
 
   public:
+    FlatIndex() = default;
+
     explicit FlatIndex(PDXIndexConfig config)
         : config(config), index(config.num_dimensions, Normalize(config)) {
         config.Validate();
@@ -140,12 +142,40 @@ class FlatIndex : public IPDXIndex {
 
     void SetNProbe(uint32_t) override {}
 
-    void Save(const std::string&) override {
-        throw std::logic_error("FlatIndex does not support Save");
+    void Save(const std::string& path) override {
+        std::ofstream out(path, std::ios::binary);
+        WriteValue(out, static_cast<uint8_t>(PDXIndexType::PDX_FLAT));
+        WriteRotationMatrix(out, *pruner);
+        index.Save(out);
     }
 
-    void Restore(const std::string&) override {
-        throw std::logic_error("FlatIndex does not support Restore");
+    void Restore(const std::string& path) override {
+        auto buffer = MmapFile(path);
+        char* ptr = buffer.get();
+        BufferReader reader{ptr};
+
+        // Index type flag
+        ReadValue<uint8_t>(reader);
+        const auto matrix = ReadRotationMatrix(reader);
+        index.Load(reader);
+        config.num_dimensions = index.num_dimensions;
+        config.normalize = index.is_normalized;
+
+        owned_pruner = std::make_unique<ADSamplingPruner>(index.num_dimensions, matrix.get());
+        pruner = owned_pruner.get();
+        searcher = std::make_unique<FlatSearcher>(index, *pruner);
+        BuildRowIdClusterMapping();
+    }
+
+    void SaveToStream(std::ostream& out) override {
+        WriteStreamHeader(out, PDXIndexType::PDX_FLAT, config);
+        index.Save(out);
+    }
+
+    void LoadFromStream(std::istream& in) override {
+        StreamReader reader{in};
+        index.Load(reader);
+        BuildRowIdClusterMapping();
     }
 
     uint32_t GetNumDimensions() const override { return index.num_dimensions; }
@@ -213,6 +243,13 @@ class FlatIndex : public IPDXIndex {
   private:
     static bool Normalize(const PDXIndexConfig& config) {
         return config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
+    }
+
+    void BuildRowIdClusterMapping() {
+        row_id_cluster_mapping.entries.clear();
+        for (size_t position = 0; position < index.UsedCapacity(); position++) {
+            row_id_cluster_mapping.Set(index.indices[position], 0, static_cast<uint32_t>(position));
+        }
     }
 
     std::unique_ptr<std::vector<uint32_t>> PassingPositions(

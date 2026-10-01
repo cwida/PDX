@@ -123,7 +123,15 @@ enum class DistanceMetric : uint8_t { L2SQ, COSINE, IP };
 
 enum Quantization : uint8_t { F32, U8, F16, BF };
 
-enum class PDXIndexType : uint8_t { PDX_F32 = 0, PDX_U8 = 1, PDX_TREE_F32 = 2, PDX_TREE_U8 = 3 };
+enum class PDXIndexType : uint8_t {
+    PDX_F32 = 0,
+    PDX_U8 = 1,
+    PDX_TREE_F32 = 2,
+    PDX_TREE_U8 = 3,
+    PDX_FLAT = 4
+};
+
+static constexpr uint8_t PDX_SERIALIZATION_VERSION = 1;
 
 template <Quantization Q>
 struct DistanceType {

@@ -222,9 +222,9 @@ struct Cluster {
         }
     }
 
-    // Reads compact PDX data from ptr and places it into the strided buffer.
-    // Advances ptr past all read data.
-    void LoadPDXData(char*& ptr) {
+    // Reads compact PDX data (as SavePDXData writes it) and places it into the strided buffer.
+    template <class Reader>
+    void LoadPDXData(Reader& reader) {
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
@@ -232,26 +232,24 @@ struct Cluster {
 
         if constexpr (Q == Quantization::F32) {
             for (uint32_t d = 0; d < vertical_d; d++) {
-                memcpy(data + d * stride, ptr, sizeof(data_t) * num_embeddings);
-                ptr += sizeof(data_t) * num_embeddings;
+                reader.Read(data + d * stride, sizeof(data_t) * num_embeddings);
             }
         } else {
             uint32_t d = 0;
             for (; d + U8_INTERLEAVE_SIZE <= vertical_d; d += U8_INTERLEAVE_SIZE) {
-                memcpy(data + d * stride, ptr, num_embeddings * U8_INTERLEAVE_SIZE);
-                ptr += num_embeddings * U8_INTERLEAVE_SIZE;
+                reader.Read(
+                    data + d * stride, static_cast<size_t>(num_embeddings) * U8_INTERLEAVE_SIZE
+                );
             }
             if (d < vertical_d) {
                 uint32_t remaining = vertical_d - d;
-                memcpy(data + d * stride, ptr, num_embeddings * remaining);
-                ptr += static_cast<size_t>(num_embeddings) * remaining;
+                reader.Read(data + d * stride, static_cast<size_t>(num_embeddings) * remaining);
             }
         }
 
         data_t* h_base = data + stride * vertical_d;
         for (uint32_t j = 0; j < horizontal_d; j += H_DIM_SIZE) {
-            memcpy(h_base, ptr, sizeof(data_t) * num_embeddings * H_DIM_SIZE);
-            ptr += sizeof(data_t) * num_embeddings * H_DIM_SIZE;
+            reader.Read(h_base, sizeof(data_t) * num_embeddings * H_DIM_SIZE);
             h_base += stride * H_DIM_SIZE;
         }
     }

@@ -13,6 +13,7 @@
 
 #include "pdx/clustering.hpp"
 #include "pdx/common.hpp"
+#include "pdx/indexes/flat.hpp"
 #include "pdx/indexes/ivf_core.hpp"
 #include "pdx/indexes/ivf_utils.hpp"
 #include "pdx/indexes/ivf_vanilla.hpp"
@@ -69,65 +70,45 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     void Save(const std::string& path) override {
-        // Compact L1 clusters before saving (update row_id_cluster_mapping from moves)
-        for (uint32_t c = 0; c < index.num_clusters; c++) {
-            auto moves = index.clusters[c].CompactCluster();
-            for (const auto& [row_id, new_idx] : moves) {
-                SetRowIdMapping(row_id, c, new_idx);
-            }
-        }
-        // Compact L0 clusters (no mapping to update for meso-clusters)
-        for (uint32_t c = 0; c < index.l0.num_clusters; c++) {
-            index.l0.clusters[c].CompactCluster();
-        }
+        CompactClusters();
 
         std::ofstream out(path, std::ios::binary);
-
-        // Index type flag
-        uint8_t type_flag = static_cast<uint8_t>(GetIndexType());
-        out.write(reinterpret_cast<const char*>(&type_flag), sizeof(uint8_t));
-
-        // Rotation matrix
-        const auto& matrix = pruner->GetMatrix();
-        uint32_t matrix_rows = static_cast<uint32_t>(matrix.rows());
-        uint32_t matrix_cols = static_cast<uint32_t>(matrix.cols());
-        out.write(reinterpret_cast<const char*>(&matrix_rows), sizeof(uint32_t));
-        out.write(reinterpret_cast<const char*>(&matrix_cols), sizeof(uint32_t));
-        out.write(
-            reinterpret_cast<const char*>(matrix.data()), sizeof(float) * matrix_rows * matrix_cols
-        );
-
-        // IVFTree data
+        WriteValue(out, static_cast<uint8_t>(GetIndexType()));
+        WriteRotationMatrix(out, *pruner);
         index.Save(out);
     }
 
     void Restore(const std::string& path) override {
         auto buffer = MmapFile(path);
         char* ptr = buffer.get();
+        BufferReader reader{ptr};
 
         // Index type flag
-        ptr += sizeof(uint8_t);
-
-        // Rotation matrix (ptr may be misaligned after the uint8_t type flag)
-        uint32_t matrix_rows, matrix_cols;
-        std::memcpy(&matrix_rows, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        std::memcpy(&matrix_cols, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        const size_t matrix_floats = static_cast<size_t>(matrix_rows) * matrix_cols;
-        auto aligned_matrix = std::unique_ptr<float[]>(new float[matrix_floats]);
-        std::memcpy(aligned_matrix.get(), ptr, sizeof(float) * matrix_floats);
-        ptr += sizeof(float) * matrix_floats;
-
-        // Load IVFTree data
-        index.Load(ptr);
+        ReadValue<uint8_t>(reader);
+        const auto matrix = ReadRotationMatrix(reader);
+        index.Load(reader);
         d = index.num_dimensions;
         config.num_dimensions = d;
         config.normalize = index.is_normalized;
 
         // Create pruner and searchers
-        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(d, aligned_matrix.get());
+        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(d, matrix.get());
         pruner = owned_pruner.get();
+        searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
+        top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
+        BuildRowIdClusterMapping();
+    }
+
+    void SaveToStream(std::ostream& out) override {
+        CompactClusters();
+        WriteStreamHeader(out, GetIndexType(), config);
+        index.Save(out);
+    }
+
+    void LoadFromStream(std::istream& in) override {
+        StreamReader reader{in};
+        index.Load(reader);
+        d = index.num_dimensions;
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
         BuildRowIdClusterMapping();
@@ -458,6 +439,19 @@ class PDXTreeIndex : public IPDXIndex {
 
     void BuildRowIdClusterMapping() {
         row_id_cluster_mapping.Rebuild(index.clusters, index.num_clusters);
+    }
+
+    void CompactClusters() {
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            auto moves = index.clusters[c].CompactCluster();
+            for (const auto& [row_id, new_idx] : moves) {
+                SetRowIdMapping(row_id, c, new_idx);
+            }
+        }
+        // No mapping to update for meso-clusters
+        for (uint32_t c = 0; c < index.l0.num_clusters; c++) {
+            index.l0.clusters[c].CompactCluster();
+        }
     }
 
     PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids
@@ -1154,6 +1148,9 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(const std::string& path) {
     case PDXIndexType::PDX_TREE_U8:
         idx = std::make_unique<PDXTreeIndexU8>();
         break;
+    case PDXIndexType::PDX_FLAT:
+        idx = std::make_unique<FlatIndex>();
+        break;
     default:
         throw std::runtime_error(
             "Unknown PDX index type: " + std::to_string(static_cast<int>(type))
@@ -1161,6 +1158,56 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(const std::string& path) {
     }
     // NOLINTEND(bugprone-branch-clone)
     idx->Restore(path);
+    return idx;
+}
+
+// Loads what SaveToStream wrote into an index on `pruner`, which must hold the rotation the index
+// was saved with. Throws std::runtime_error for a stream of another PDX_SERIALIZATION_VERSION.
+inline std::unique_ptr<IPDXIndex> LoadPDXIndexFromStream(
+    std::istream& in,
+    ADSamplingPruner& pruner
+) {
+    StreamReader reader{in};
+    const auto version = ReadValue<uint8_t>(reader);
+    if (version != PDX_SERIALIZATION_VERSION) {
+        throw std::runtime_error(
+            "Unsupported PDX serialization version: " + std::to_string(static_cast<int>(version))
+        );
+    }
+    const auto type = static_cast<PDXIndexType>(ReadValue<uint8_t>(reader));
+    PDXIndexConfig config{};
+    config.Load(reader);
+    if (config.num_dimensions != pruner.num_dimensions) {
+        throw std::invalid_argument(
+            "The pruner has " + std::to_string(pruner.num_dimensions) +
+            " dimensions, the saved index " + std::to_string(config.num_dimensions)
+        );
+    }
+    std::unique_ptr<IPDXIndex> idx;
+    // NOLINTBEGIN(bugprone-branch-clone)
+    switch (type) {
+    case PDXIndexType::PDX_F32:
+        idx = std::make_unique<PDXIndexF32>(config, pruner);
+        break;
+    case PDXIndexType::PDX_U8:
+        idx = std::make_unique<PDXIndexU8>(config, pruner);
+        break;
+    case PDXIndexType::PDX_TREE_F32:
+        idx = std::make_unique<PDXTreeIndexF32>(config, pruner);
+        break;
+    case PDXIndexType::PDX_TREE_U8:
+        idx = std::make_unique<PDXTreeIndexU8>(config, pruner);
+        break;
+    case PDXIndexType::PDX_FLAT:
+        idx = std::make_unique<FlatIndex>(config, pruner);
+        break;
+    default:
+        throw std::runtime_error(
+            "Unknown PDX index type: " + std::to_string(static_cast<int>(type))
+        );
+    }
+    // NOLINTEND(bugprone-branch-clone)
+    idx->LoadFromStream(in);
     return idx;
 }
 
