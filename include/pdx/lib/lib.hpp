@@ -174,7 +174,7 @@ class PyPDXIndex {
         index->Append(row_id, static_cast<const float*>(buf.ptr));
     }
 
-    void Delete(size_t row_id) { index->Delete(row_id); }
+    bool Delete(size_t row_id) { return index->Delete(row_id); }
 };
 
 } // namespace PDX

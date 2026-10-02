@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <queue>
 #include <random>
@@ -95,6 +96,7 @@ static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 static constexpr size_t SPLIT_MAX_NEIGHBOR_CLUSTERS = 32;
 // The 2-means cluster split runs this many iterations
 static constexpr uint32_t SPLIT_KMEANS_ITERS = 4;
+static constexpr uint32_t DELETED_MARKER = std::numeric_limits<uint32_t>::max();
 
 static constexpr bool AllFetchingSizesMultipleOfU8InterleaveSize() {
     for (auto s : DIMENSIONS_FETCHING_SIZES) {
@@ -121,7 +123,15 @@ enum class DistanceMetric : uint8_t { L2SQ, COSINE, IP };
 
 enum Quantization : uint8_t { F32, U8, F16, BF };
 
-enum class PDXIndexType : uint8_t { PDX_F32 = 0, PDX_U8 = 1, PDX_TREE_F32 = 2, PDX_TREE_U8 = 3 };
+enum class PDXIndexType : uint8_t {
+    PDX_F32 = 0,
+    PDX_U8 = 1,
+    PDX_TREE_F32 = 2,
+    PDX_TREE_U8 = 3,
+    PDX_FLAT = 4
+};
+
+static constexpr uint8_t PDX_SERIALIZATION_VERSION = 1;
 
 template <Quantization Q>
 struct DistanceType {

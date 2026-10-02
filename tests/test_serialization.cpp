@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <gtest/gtest.h>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -150,5 +151,146 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
+
+// On an external pruner, as indexes that share one rotation are built.
+std::unique_ptr<PDX::IPDXIndex> BuildOnPruner(
+    const std::string& index_type,
+    const PDX::PDXIndexConfig& config,
+    PDX::ADSamplingPruner& pruner
+) {
+    if (index_type == "pdx_f32") {
+        return std::make_unique<PDX::PDXIndexF32>(config, pruner);
+    }
+    if (index_type == "pdx_u8") {
+        return std::make_unique<PDX::PDXIndexU8>(config, pruner);
+    }
+    if (index_type == "pdx_tree_f32") {
+        return std::make_unique<PDX::PDXTreeIndexF32>(config, pruner);
+    }
+    if (index_type == "pdx_tree_u8") {
+        return std::make_unique<PDX::PDXTreeIndexU8>(config, pruner);
+    }
+    return std::make_unique<PDX::FlatIndex>(config, pruner);
+}
+
+void ExpectSameResults(
+    const PDX::IPDXIndex& expected,
+    const PDX::IPDXIndex& actual,
+    const float* queries,
+    size_t d,
+    const std::vector<size_t>& passing_ids
+) {
+    for (size_t q = 0; q < 50; ++q) {
+        const float* query = queries + q * d;
+        const auto expected_results = expected.Search(query, TestUtils::KNN);
+        const auto actual_results = actual.Search(query, TestUtils::KNN);
+        ASSERT_EQ(expected_results.size(), actual_results.size()) << "query " << q;
+        for (size_t i = 0; i < expected_results.size(); ++i) {
+            EXPECT_EQ(expected_results[i].index, actual_results[i].index) << "query " << q;
+        }
+        const auto expected_filtered = expected.FilteredSearch(query, TestUtils::KNN, passing_ids);
+        const auto actual_filtered = actual.FilteredSearch(query, TestUtils::KNN, passing_ids);
+        ASSERT_EQ(expected_filtered.size(), actual_filtered.size()) << "filtered query " << q;
+        for (size_t i = 0; i < expected_filtered.size(); ++i) {
+            EXPECT_EQ(expected_filtered[i].index, actual_filtered[i].index)
+                << "filtered query " << q;
+        }
+    }
+}
+
+class StreamSerializationTest : public ::testing::TestWithParam<std::string> {};
+
+TEST_P(StreamSerializationTest, LoadsTheSameIndexOnTheSamePruner) {
+    const std::string& index_type = GetParam();
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+    };
+    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
+    auto index = BuildOnPruner(index_type, config, pruner);
+    index->BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    index->SetNProbe(16);
+    // The save compacts these tombstones away.
+    for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; row_id += 7) {
+        index->Delete(row_id);
+    }
+
+    std::stringstream stream;
+    index->SaveToStream(stream);
+    auto loaded = PDX::LoadPDXIndexFromStream(stream, pruner);
+    ASSERT_NE(loaded, nullptr);
+    loaded->SetNProbe(16);
+
+    std::vector<size_t> passing_ids;
+    for (size_t i = 0; i < TestUtils::N_TRAIN; i += 3) {
+        passing_ids.push_back(i);
+    }
+    ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
+
+    // The loaded index keeps its config and row id mapping, so maintenance continues the same way.
+    index->Append(TestUtils::N_TRAIN, data.queries.data());
+    loaded->Append(TestUtils::N_TRAIN, data.queries.data());
+    passing_ids.push_back(TestUtils::N_TRAIN);
+    ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AllIndexTypes,
+    StreamSerializationTest,
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "flat"),
+    [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
+);
+
+TEST(FileSerialization, FlatSaveLoadProducesSameResults) {
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .seed = TestUtils::SEED,
+        .normalize = true,
+    };
+    PDX::FlatIndex index(config);
+    index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; row_id += 7) {
+        index.Delete(row_id);
+    }
+
+    const std::string path = "/tmp/pdx_test_flat";
+    index.Save(path);
+    auto loaded = PDX::LoadPDXIndex(path);
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_EQ(loaded->GetNumDimensions(), index.GetNumDimensions());
+
+    std::vector<size_t> passing_ids;
+    for (size_t i = 0; i < TestUtils::N_TRAIN; i += 3) {
+        passing_ids.push_back(i);
+    }
+    ExpectSameResults(index, *loaded, data.queries.data(), d, passing_ids);
+    std::remove(path.c_str());
+}
+
+TEST(StreamSerialization, OtherVersionThrows) {
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d), .seed = TestUtils::SEED
+    };
+    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
+    PDX::FlatIndex index(config, pruner);
+    index.BuildIndex(data.train.data(), 100);
+
+    std::stringstream stream;
+    index.SaveToStream(stream);
+    auto bytes = stream.str();
+    bytes[0] = static_cast<char>(PDX::PDX_SERIALIZATION_VERSION + 1);
+    std::stringstream other_version(bytes);
+    EXPECT_THROW(PDX::LoadPDXIndexFromStream(other_version, pruner), std::runtime_error);
+}
 
 } // namespace

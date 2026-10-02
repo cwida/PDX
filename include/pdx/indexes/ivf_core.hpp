@@ -87,43 +87,49 @@ class IVF {
     }
 
     void Load(char* input) {
-        char* next_value = input;
-        num_dimensions = ((uint32_t*) input)[0];
-        num_vertical_dimensions = ((uint32_t*) input)[1];
-        num_horizontal_dimensions = ((uint32_t*) input)[2];
+        BufferReader reader{input};
+        Load(reader);
+    }
 
-        next_value += sizeof(uint32_t) * 3;
-        num_clusters = ((uint32_t*) next_value)[0];
-        next_value += sizeof(uint32_t);
-        auto* cluster_headers = (uint32_t*) next_value;
-        next_value += static_cast<size_t>(num_clusters) * 2 * sizeof(uint32_t);
+    // Reads the num_clusters clusters of num_dimensions as Save writes them: the (num_embeddings,
+    // max_capacity) of every cluster, then each cluster's PDX data, then each cluster's row ids.
+    template <class Reader>
+    void LoadClusters(Reader& reader) {
+        std::unique_ptr<uint32_t[]> cluster_headers(
+            new uint32_t[static_cast<size_t>(num_clusters) * 2]
+        );
+        reader.Read(
+            cluster_headers.get(), static_cast<size_t>(num_clusters) * 2 * sizeof(uint32_t)
+        );
         clusters.reserve(num_clusters);
         for (size_t i = 0; i < num_clusters; ++i) {
-            uint32_t n_emb = cluster_headers[i * 2];
-            uint32_t max_cap = cluster_headers[i * 2 + 1];
-            clusters.emplace_back(n_emb, max_cap, num_dimensions);
+            clusters.emplace_back(
+                cluster_headers[i * 2], cluster_headers[i * 2 + 1], num_dimensions
+            );
             clusters[i].id = i;
-            clusters[i].LoadPDXData(next_value);
+            clusters[i].LoadPDXData(reader);
         }
         for (size_t i = 0; i < num_clusters; ++i) {
-            memcpy(clusters[i].indices, next_value, sizeof(uint32_t) * clusters[i].num_embeddings);
-            next_value += sizeof(uint32_t) * clusters[i].num_embeddings;
+            reader.Read(clusters[i].indices, sizeof(uint32_t) * clusters[i].num_embeddings);
         }
+    }
 
-        is_normalized = next_value[0];
-        next_value += sizeof(char);
+    template <class Reader>
+    void Load(Reader& reader) {
+        num_dimensions = ReadValue<uint32_t>(reader);
+        num_vertical_dimensions = ReadValue<uint32_t>(reader);
+        num_horizontal_dimensions = ReadValue<uint32_t>(reader);
+        num_clusters = ReadValue<uint32_t>(reader);
+        LoadClusters(reader);
+
+        is_normalized = ReadValue<char>(reader) != 0;
 
         centroids.resize(static_cast<size_t>(num_clusters) * num_dimensions);
-        memcpy(
-            centroids.data(), (float*) next_value, sizeof(float) * num_clusters * num_dimensions
-        );
-        next_value += sizeof(float) * num_clusters * num_dimensions;
+        reader.Read(centroids.data(), sizeof(float) * num_clusters * num_dimensions);
 
         if constexpr (Q == U8) {
-            quantization_base = ((float*) next_value)[0];
-            next_value += sizeof(float);
-            quantization_scale = ((float*) next_value)[0];
-            next_value += sizeof(float);
+            quantization_base = ReadValue<float>(reader);
+            quantization_scale = ReadValue<float>(reader);
             quantization_scale_squared = quantization_scale * quantization_scale;
             inverse_quantization_scale_squared = 1.0f / quantization_scale_squared;
         }
@@ -216,91 +222,50 @@ class IVFTree : public IVF<Q> {
           ) {}
 
     void Load(char* input) {
-        char* next_value = input;
+        BufferReader reader{input};
+        Load(reader);
+    }
 
+    template <class Reader>
+    void Load(Reader& reader) {
         // Header
-        uint32_t dims = ((uint32_t*) input)[0];
-        uint32_t v_dims = ((uint32_t*) input)[1];
-        uint32_t h_dims = ((uint32_t*) input)[2];
-        next_value += sizeof(uint32_t) * 3;
-
-        uint32_t n_clusters_l1 = ((uint32_t*) next_value)[0];
-        next_value += sizeof(uint32_t);
-        uint32_t n_clusters_l0 = ((uint32_t*) next_value)[0];
-        next_value += sizeof(uint32_t);
+        const auto dims = ReadValue<uint32_t>(reader);
+        const auto v_dims = ReadValue<uint32_t>(reader);
+        const auto h_dims = ReadValue<uint32_t>(reader);
+        const auto n_clusters_l1 = ReadValue<uint32_t>(reader);
+        const auto n_clusters_l0 = ReadValue<uint32_t>(reader);
 
         // === L0 (meso-clusters, always F32) ===
         l0.num_dimensions = dims;
         l0.num_vertical_dimensions = v_dims;
         l0.num_horizontal_dimensions = h_dims;
         l0.num_clusters = n_clusters_l0;
-
-        auto* l0_headers = (uint32_t*) next_value;
-        next_value += static_cast<size_t>(n_clusters_l0) * 2 * sizeof(uint32_t);
-
-        l0.clusters.reserve(n_clusters_l0);
-        for (size_t i = 0; i < n_clusters_l0; ++i) {
-            uint32_t n_emb = l0_headers[i * 2];
-            uint32_t max_cap = l0_headers[i * 2 + 1];
-            l0.clusters.emplace_back(n_emb, max_cap, dims);
-            l0.clusters[i].id = i;
-            l0.clusters[i].LoadPDXData(next_value);
-        }
-        for (size_t i = 0; i < n_clusters_l0; ++i) {
-            memcpy(
-                l0.clusters[i].indices, next_value, sizeof(uint32_t) * l0.clusters[i].num_embeddings
-            );
-            next_value += sizeof(uint32_t) * l0.clusters[i].num_embeddings;
-        }
+        l0.LoadClusters(reader);
 
         // === L1 (data clusters, inherited fields) ===
         this->num_dimensions = dims;
         this->num_vertical_dimensions = v_dims;
         this->num_horizontal_dimensions = h_dims;
         this->num_clusters = n_clusters_l1;
-
-        auto* l1_headers = (uint32_t*) next_value;
-        next_value += static_cast<size_t>(n_clusters_l1) * 2 * sizeof(uint32_t);
-
-        this->clusters.reserve(n_clusters_l1);
-        for (size_t i = 0; i < n_clusters_l1; ++i) {
-            uint32_t n_emb = l1_headers[i * 2];
-            uint32_t max_cap = l1_headers[i * 2 + 1];
-            this->clusters.emplace_back(n_emb, max_cap, dims);
-            this->clusters[i].id = i;
-            this->clusters[i].LoadPDXData(next_value);
-        }
-        for (size_t i = 0; i < n_clusters_l1; ++i) {
-            memcpy(
-                this->clusters[i].indices,
-                next_value,
-                sizeof(uint32_t) * this->clusters[i].num_embeddings
-            );
-            next_value += sizeof(uint32_t) * this->clusters[i].num_embeddings;
-        }
+        this->LoadClusters(reader);
 
         // === Shared metadata ===
-        bool normalized = next_value[0];
+        const bool normalized = ReadValue<char>(reader) != 0;
         this->is_normalized = normalized;
         l0.is_normalized = normalized;
-        next_value += sizeof(char);
 
         // === L0 centroids (centroids_pdx from file) ===
         l0.centroids.resize(static_cast<size_t>(n_clusters_l0) * dims);
-        memcpy(l0.centroids.data(), (float*) next_value, sizeof(float) * n_clusters_l0 * dims);
-        next_value += sizeof(float) * n_clusters_l0 * dims;
+        reader.Read(l0.centroids.data(), sizeof(float) * n_clusters_l0 * dims);
 
         // === L1 centroids ===
         this->centroids.resize(static_cast<size_t>(n_clusters_l1) * dims);
-        memcpy(this->centroids.data(), (float*) next_value, sizeof(float) * n_clusters_l1 * dims);
-        next_value += sizeof(float) * n_clusters_l1 * dims;
+        reader.Read(this->centroids.data(), sizeof(float) * n_clusters_l1 * dims);
 
         // === U8 quantization params ===
         if constexpr (Q == U8) {
-            this->quantization_base = ((float*) next_value)[0];
-            next_value += sizeof(float);
-            this->quantization_scale = ((float*) next_value)[0];
-            next_value += sizeof(float);
+            this->quantization_base = ReadValue<float>(reader);
+            this->quantization_scale = ReadValue<float>(reader);
             this->quantization_scale_squared = this->quantization_scale * this->quantization_scale;
             this->inverse_quantization_scale_squared = 1.0f / this->quantization_scale_squared;
         }

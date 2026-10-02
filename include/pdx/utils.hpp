@@ -1,9 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <fcntl.h>
 #include <fstream>
+#include <istream>
 #include <memory>
+#include <ostream>
+#include <stdexcept>
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -29,3 +33,41 @@ inline std::unique_ptr<char[]> MmapFile(const std::string& filename) {
 
     return data;
 }
+
+namespace PDX {
+
+// The Load functions read the format through one of these, so it is implemented once for buffers
+// and for streams.
+struct BufferReader {
+    char*& ptr;
+
+    void Read(void* dst, size_t num_bytes) {
+        std::memcpy(dst, ptr, num_bytes);
+        ptr += num_bytes;
+    }
+};
+
+struct StreamReader {
+    std::istream& in;
+
+    void Read(void* dst, size_t num_bytes) {
+        in.read(static_cast<char*>(dst), static_cast<std::streamsize>(num_bytes));
+        if (!in) {
+            throw std::runtime_error("Unexpected end of a PDX index stream");
+        }
+    }
+};
+
+template <class T, class Reader>
+T ReadValue(Reader& reader) {
+    T value;
+    reader.Read(&value, sizeof(T));
+    return value;
+}
+
+template <class T>
+void WriteValue(std::ostream& out, const T& value) {
+    out.write(reinterpret_cast<const char*>(&value), sizeof(T));
+}
+
+} // namespace PDX
