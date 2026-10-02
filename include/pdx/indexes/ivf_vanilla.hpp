@@ -47,8 +47,10 @@ class IPDXIndex {
     virtual size_t GetInMemorySizeInBytes() const = 0;
     // Maintenance (SPFresh-like). Concurrent writes must go through a single writer thread.
     virtual void Append(size_t row_id, const float* embedding) = 0;
-    virtual void Delete(size_t row_id) = 0;
+    // Returns whether the row was in the index: deleting an absent row is a no-op.
+    virtual bool Delete(size_t row_id) = 0;
     virtual std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const = 0;
+    bool Contains(size_t row_id) const { return GetRowIdMapping(row_id).first != DELETED_MARKER; }
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
     // share it); passing_row_ids to filter (nullptr: unfiltered).
     virtual std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
@@ -323,8 +325,7 @@ class PDXIndex : public IPDXIndex {
     // Concurrent writes must always go through a single writer thread
     void Append(size_t row_id, const float* PDX_RESTRICT embedding) override {
         PDX_PROFILE_SCOPE("Append");
-        const auto [existing_cluster, _] = GetRowIdMapping(row_id);
-        if (existing_cluster != DELETED_MARKER) {
+        if (Contains(row_id)) {
             throw std::invalid_argument(
                 "Append: row_id " + std::to_string(row_id) + " already exists in the index"
             );
@@ -357,11 +358,11 @@ class PDXIndex : public IPDXIndex {
     }
 
     // Concurrent deletes must always go through a single writer thread
-    void Delete(size_t row_id) override {
+    bool Delete(size_t row_id) override {
         PDX_PROFILE_SCOPE("Delete");
         const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
         if (cluster_id == DELETED_MARKER) {
-            return;
+            return false;
         }
         ReserveClusterSlotIfNeeded();
         auto& cluster = index.clusters[cluster_id];
@@ -369,6 +370,7 @@ class PDXIndex : public IPDXIndex {
         DeleteRowIdMapping(row_id);
         index.total_num_embeddings--;
         CheckClusterHealth(cluster);
+        return true;
     }
 
   private:

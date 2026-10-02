@@ -129,7 +129,10 @@ void RunInsertDeleteAndSearch() {
     IndexT index(MakeConfig(D));
     index.BuildIndex(data.train.data(), n_build);
     index.Append(inserted_row_id, data.train.data() + inserted_row_id * D);
-    index.Delete(inserted_row_id);
+    EXPECT_TRUE(index.Contains(inserted_row_id));
+    EXPECT_TRUE(index.Delete(inserted_row_id));
+    EXPECT_FALSE(index.Contains(inserted_row_id));
+    EXPECT_FALSE(index.Delete(inserted_row_id));
     index.SetNProbe(0);
 
     auto results = index.Search(data.train.data() + inserted_row_id * D, TestUtils::KNN);

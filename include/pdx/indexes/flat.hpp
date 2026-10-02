@@ -76,7 +76,7 @@ class FlatIndex : public IPDXIndex {
     }
 
     void Append(size_t row_id, const float* embedding) override {
-        if (GetRowIdMapping(row_id).first != DELETED_MARKER) {
+        if (Contains(row_id)) {
             throw std::invalid_argument(
                 "Append: row_id " + std::to_string(row_id) + " already exists in the index"
             );
@@ -92,13 +92,14 @@ class FlatIndex : public IPDXIndex {
         row_id_cluster_mapping.Set(row_id, 0, position);
     }
 
-    void Delete(size_t row_id) override {
+    bool Delete(size_t row_id) override {
         const auto [cluster_id, position] = GetRowIdMapping(row_id);
         if (cluster_id == DELETED_MARKER) {
-            return;
+            return false;
         }
         index.DeleteEmbedding(position);
         row_id_cluster_mapping.Delete(row_id);
+        return true;
     }
 
     std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const override {

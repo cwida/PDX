@@ -113,7 +113,7 @@ TEST(FlatIndex, AppendDeleteAndReappend) {
 
     PDX::FlatIndex index(MakeConfig());
     index.BuildIndex(data.train.data(), last);
-    EXPECT_EQ(index.GetRowIdMapping(last).first, PDX::DELETED_MARKER);
+    EXPECT_FALSE(index.Contains(last));
 
     index.Append(last, last_embedding);
     auto results = index.Search(last_embedding, 1);
@@ -122,11 +122,11 @@ TEST(FlatIndex, AppendDeleteAndReappend) {
     EXPECT_EQ(index.GetClusterSize(0), TestUtils::N_TRAIN);
     EXPECT_THROW(index.Append(last, last_embedding), std::invalid_argument);
 
-    index.Delete(last);
+    EXPECT_TRUE(index.Delete(last));
     EXPECT_NE(index.Search(last_embedding, 1)[0].index, last);
     EXPECT_EQ(index.GetClusterSize(0), last);
-    EXPECT_NO_THROW(index.Delete(last));
-    EXPECT_NO_THROW(index.Delete(TestUtils::N_TRAIN + 12345));
+    EXPECT_FALSE(index.Delete(last));
+    EXPECT_FALSE(index.Delete(TestUtils::N_TRAIN + 12345));
 
     index.Append(last, last_embedding);
     EXPECT_EQ(index.Search(last_embedding, 1)[0].index, last);

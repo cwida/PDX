@@ -188,8 +188,7 @@ class PDXTreeIndex : public IPDXIndex {
     // Concurrent writes must always go through a single writer thread
     void Append(size_t row_id, const float* PDX_RESTRICT embedding) override {
         PDX_PROFILE_SCOPE("Append");
-        const auto [existing_cluster, _] = GetRowIdMapping(row_id);
-        if (existing_cluster != DELETED_MARKER) {
+        if (Contains(row_id)) {
             throw std::invalid_argument(
                 "Append: row_id " + std::to_string(row_id) + " already exists in the index"
             );
@@ -226,11 +225,11 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     // Concurrent deletes must always go through a single writer thread
-    void Delete(size_t row_id) override {
+    bool Delete(size_t row_id) override {
         PDX_PROFILE_SCOPE("Delete");
         const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
         if (cluster_id == DELETED_MARKER) {
-            return;
+            return false;
         }
         ReserveClusterSlotIfNeeded();
         auto& cluster = index.clusters[cluster_id];
@@ -238,6 +237,7 @@ class PDXTreeIndex : public IPDXIndex {
         DeleteRowIdMapping(row_id);
         index.total_num_embeddings--;
         CheckClusterHealth(cluster);
+        return true;
     }
 
     void BuildIndex(const float* const embeddings, const size_t num_embeddings) override {
