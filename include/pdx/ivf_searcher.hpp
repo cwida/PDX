@@ -795,15 +795,21 @@ class PDXearch {
         std::unique_ptr<uint32_t[]> pruning_positions;
     };
 
+    // `clusters_access_order`: the query's GetClustersAccessOrder, to skip ranking the clusters again (nullptr: rank).
     [[nodiscard]] IterativeSearch<false> BeginIterativeSearch(
         const float* PDX_RESTRICT raw_query,
         uint32_t k,
         TopKHeap& top_k_heap,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const uint32_t* clusters_access_order = nullptr
     ) {
         IterativeSearch<false> search_cursor(*this, k, top_k_heap, nullptr);
         InitializeSearchCursor(
-            search_cursor, raw_query, is_query_transformed, pdx_data.num_clusters
+            search_cursor,
+            raw_query,
+            is_query_transformed,
+            pdx_data.num_clusters,
+            clusters_access_order
         );
         return search_cursor;
     }
@@ -813,18 +819,56 @@ class PDXearch {
         uint32_t k,
         std::unique_ptr<PredicateEvaluator> evaluator,
         TopKHeap& top_k_heap,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const uint32_t* clusters_access_order = nullptr
     ) {
         assert(evaluator);
         IterativeSearch<true> search_cursor(*this, k, top_k_heap, evaluator.get());
         search_cursor.owned_evaluator = std::move(evaluator);
         InitializeSearchCursor(
-            search_cursor, raw_query, is_query_transformed, pdx_data.num_clusters
+            search_cursor,
+            raw_query,
+            is_query_transformed,
+            pdx_data.num_clusters,
+            clusters_access_order
         );
         return search_cursor;
     }
 
+    // All clusters, nearest centroid to the query first. Searches of the same query can share it.
+    [[nodiscard]] std::vector<uint32_t> GetClustersAccessOrder(
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed = false
+    ) {
+        std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
+        TransformQuery(raw_query, is_query_transformed, query.get());
+        std::vector<uint32_t> clusters_access_order(pdx_data.num_clusters);
+        GetClustersAccessOrderIVF(
+            query.get(), pdx_data, pdx_data.num_clusters, clusters_access_order.data()
+        );
+        return clusters_access_order;
+    }
+
   protected:
+    // Writes the query as the index stores its embeddings (normalized if needed, then rotated) into `query`, which
+    // holds num_dimensions floats.
+    void TransformQuery(
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed,
+        float* PDX_RESTRICT query
+    ) {
+        const size_t d = pdx_data.num_dimensions;
+        if (is_query_transformed) {
+            std::copy(raw_query, raw_query + d, query);
+        } else if (!pdx_data.is_normalized) {
+            pruner.PreprocessQuery(raw_query, query);
+        } else {
+            std::unique_ptr<float[]> normalized_query(new float[d]);
+            quantizer.NormalizeQuery(raw_query, normalized_query.get());
+            pruner.PreprocessQuery(normalized_query.get(), query);
+        }
+    }
+
     template <bool FILTERED>
     void InitializeSearchCursor(
         IterativeSearch<FILTERED>& search_cursor,
@@ -835,15 +879,7 @@ class PDXearch {
     ) {
         const size_t d = pdx_data.num_dimensions;
         search_cursor.query.reset(new float[d]);
-        if (is_query_transformed) {
-            std::copy(raw_query, raw_query + d, search_cursor.query.get());
-        } else if (!pdx_data.is_normalized) {
-            pruner.PreprocessQuery(raw_query, search_cursor.query.get());
-        } else {
-            std::unique_ptr<float[]> normalized_query(new float[d]);
-            quantizer.NormalizeQuery(raw_query, normalized_query.get());
-            pruner.PreprocessQuery(normalized_query.get(), search_cursor.query.get());
-        }
+        TransformQuery(raw_query, is_query_transformed, search_cursor.query.get());
         if constexpr (Q == U8) {
             search_cursor.quantized_query.reset(new quantized_embedding_t[d]);
             quantizer.QuantizeEmbedding(

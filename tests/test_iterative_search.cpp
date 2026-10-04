@@ -95,6 +95,39 @@ TEST_P(IterativeSearchTest, ChunkedExhaustiveMatchesSingleShot) {
     }
 }
 
+// A cursor started from GetClustersAccessOrder probes the same clusters, in the same order, as one that ranks them.
+TEST_P(IterativeSearchTest, SharedClustersAccessOrderMatchesOwnRanking) {
+    auto data = TestUtils::LoadTestData(D);
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    const auto passing = EveryThirdId();
+    for (size_t q = 0; q < N_QUERIES; ++q) {
+        const float* query = data.queries.data() + q * D;
+        const auto clusters_access_order = index->GetClustersAccessOrder(query);
+        ASSERT_EQ(clusters_access_order.size(), index->GetNumClusters());
+        for (const std::vector<size_t>* filter :
+             {static_cast<const std::vector<size_t>*>(nullptr), &passing}) {
+            PDX::TopKHeap own_top_k_heap;
+            auto own_cursor =
+                index->BeginIterativeSearch(query, TestUtils::KNN, own_top_k_heap, filter);
+            PDX::TopKHeap shared_top_k_heap;
+            auto shared_cursor = index->BeginIterativeSearch(
+                query, TestUtils::KNN, shared_top_k_heap, filter, false, &clusters_access_order
+            );
+            own_cursor->Next(3);
+            shared_cursor->Next(3);
+            EXPECT_EQ(own_cursor->ClustersRemaining(), shared_cursor->ClustersRemaining());
+            ExpectSameResults(
+                PDX::BuildResultSetFromHeap(TestUtils::KNN, own_top_k_heap.heap),
+                PDX::BuildResultSetFromHeap(TestUtils::KNN, shared_top_k_heap.heap)
+            );
+            ExpectSameResults(
+                Drain(*own_cursor, own_top_k_heap, TestUtils::KNN, 5),
+                Drain(*shared_cursor, shared_top_k_heap, TestUtils::KNN, 5)
+            );
+        }
+    }
+}
+
 TEST_P(IterativeSearchTest, NextAccountsForEveryNonEmptyCluster) {
     auto data = TestUtils::LoadTestData(D);
     auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);

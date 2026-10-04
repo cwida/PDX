@@ -52,12 +52,19 @@ class IPDXIndex {
     virtual std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const = 0;
     bool Contains(size_t row_id) const { return GetRowIdMapping(row_id).first != DELETED_MARKER; }
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
-    // share it); passing_row_ids to filter (nullptr: unfiltered).
+    // share it); passing_row_ids to filter (nullptr: unfiltered). clusters_access_order: the query's
+    // GetClustersAccessOrder, so that several searches of one query rank the clusters once (nullptr: rank).
     virtual std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
         const float* query_embedding,
         uint32_t knn,
         TopKHeap& top_k_heap,
         const std::vector<size_t>* passing_row_ids,
+        bool is_query_transformed = false,
+        const std::vector<uint32_t>* clusters_access_order = nullptr
+    ) const = 0;
+    // All clusters, nearest centroid to the query first.
+    virtual std::vector<uint32_t> GetClustersAccessOrder(
+        const float* query_embedding,
         bool is_query_transformed = false
     ) const = 0;
 };
@@ -161,12 +168,19 @@ class PDXIndex : public IPDXIndex {
         uint32_t knn,
         TopKHeap& top_k_heap,
         const std::vector<size_t>* passing_row_ids,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const std::vector<uint32_t>* clusters_access_order = nullptr
     ) const override {
+        const uint32_t* preset_clusters_access_order =
+            clusters_access_order ? clusters_access_order->data() : nullptr;
         if (!passing_row_ids) {
             return std::make_unique<typename PDXearch<Q>::template IterativeSearch<false>>(
                 searcher->BeginIterativeSearch(
-                    query_embedding, knn, top_k_heap, is_query_transformed
+                    query_embedding,
+                    knn,
+                    top_k_heap,
+                    is_query_transformed,
+                    preset_clusters_access_order
                 )
             );
         }
@@ -174,9 +188,21 @@ class PDXIndex : public IPDXIndex {
             std::make_unique<PredicateEvaluator>(CreatePredicateEvaluator(*passing_row_ids));
         return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
             searcher->BeginFilteredIterativeSearch(
-                query_embedding, knn, std::move(evaluator), top_k_heap, is_query_transformed
+                query_embedding,
+                knn,
+                std::move(evaluator),
+                top_k_heap,
+                is_query_transformed,
+                preset_clusters_access_order
             )
         );
+    }
+
+    std::vector<uint32_t> GetClustersAccessOrder(
+        const float* query_embedding,
+        bool is_query_transformed = false
+    ) const override {
+        return searcher->GetClustersAccessOrder(query_embedding, is_query_transformed);
     }
 
     void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }

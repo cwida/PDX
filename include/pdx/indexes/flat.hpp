@@ -123,7 +123,8 @@ class FlatIndex : public IPDXIndex {
         uint32_t knn,
         TopKHeap& top_k_heap,
         const std::vector<size_t>* passing_row_ids,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr
     ) const override {
         if (!passing_row_ids) {
             return std::make_unique<FlatSearcher::IterativeSearch>(searcher->BeginIterativeSearch(
@@ -139,6 +140,11 @@ class FlatIndex : public IPDXIndex {
                 is_query_transformed
             )
         );
+    }
+
+    // Its one cluster.
+    std::vector<uint32_t> GetClustersAccessOrder(const float*, bool = false) const override {
+        return {0};
     }
 
     void SetNProbe(uint32_t) override {}

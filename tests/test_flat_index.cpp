@@ -56,6 +56,7 @@ TEST(FlatIndex, CursorMatchesSearch) {
 
     for (size_t q = 0; q < 20; q++) {
         const float* query = data.queries.data() + q * D;
+        EXPECT_EQ(index.GetClustersAccessOrder(query), std::vector<uint32_t> {0});
         PDX::TopKHeap top_k_heap;
         auto cursor = index.BeginIterativeSearch(query, TestUtils::KNN, top_k_heap, nullptr);
         EXPECT_FALSE(cursor->Done());

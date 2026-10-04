@@ -163,12 +163,19 @@ class PDXTreeIndex : public IPDXIndex {
         uint32_t knn,
         TopKHeap& top_k_heap,
         const std::vector<size_t>* passing_row_ids,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const std::vector<uint32_t>* clusters_access_order = nullptr
     ) const override {
+        const uint32_t* preset_clusters_access_order =
+            clusters_access_order ? clusters_access_order->data() : nullptr;
         if (!passing_row_ids) {
             return std::make_unique<typename PDXearch<Q>::template IterativeSearch<false>>(
                 searcher->BeginIterativeSearch(
-                    query_embedding, knn, top_k_heap, is_query_transformed
+                    query_embedding,
+                    knn,
+                    top_k_heap,
+                    is_query_transformed,
+                    preset_clusters_access_order
                 )
             );
         }
@@ -176,9 +183,21 @@ class PDXTreeIndex : public IPDXIndex {
             std::make_unique<PredicateEvaluator>(CreatePredicateEvaluator(*passing_row_ids));
         return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
             searcher->BeginFilteredIterativeSearch(
-                query_embedding, knn, std::move(evaluator), top_k_heap, is_query_transformed
+                query_embedding,
+                knn,
+                std::move(evaluator),
+                top_k_heap,
+                is_query_transformed,
+                preset_clusters_access_order
             )
         );
+    }
+
+    std::vector<uint32_t> GetClustersAccessOrder(
+        const float* query_embedding,
+        bool is_query_transformed = false
+    ) const override {
+        return searcher->GetClustersAccessOrder(query_embedding, is_query_transformed);
     }
 
     std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const override {
