@@ -95,7 +95,8 @@ TEST_P(IterativeSearchTest, ChunkedExhaustiveMatchesSingleShot) {
     }
 }
 
-// A cursor started from GetClustersAccessOrder probes the same clusters, in the same order, as one that ranks them.
+// A cursor started from GetClustersAccessOrder probes the same clusters, in the same order, as one
+// that ranks them.
 TEST_P(IterativeSearchTest, SharedClustersAccessOrderMatchesOwnRanking) {
     auto data = TestUtils::LoadTestData(D);
     auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);

@@ -52,8 +52,9 @@ class IPDXIndex {
     virtual std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const = 0;
     bool Contains(size_t row_id) const { return GetRowIdMapping(row_id).first != DELETED_MARKER; }
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
-    // share it); passing_row_ids to filter (nullptr: unfiltered). clusters_access_order: the query's
-    // GetClustersAccessOrder, so that several searches of one query rank the clusters once (nullptr: rank).
+    // share it); passing_row_ids to filter (nullptr: unfiltered). clusters_access_order: the
+    // query's GetClustersAccessOrder, so that several searches of one query rank the clusters once
+    // (nullptr: rank).
     virtual std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
         const float* query_embedding,
         uint32_t knn,

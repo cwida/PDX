@@ -795,7 +795,8 @@ class PDXearch {
         std::unique_ptr<uint32_t[]> pruning_positions;
     };
 
-    // `clusters_access_order`: the query's GetClustersAccessOrder, to skip ranking the clusters again (nullptr: rank).
+    // `clusters_access_order`: the query's GetClustersAccessOrder, to skip ranking the clusters
+    // again (nullptr: rank).
     [[nodiscard]] IterativeSearch<false> BeginIterativeSearch(
         const float* PDX_RESTRICT raw_query,
         uint32_t k,
@@ -850,8 +851,8 @@ class PDXearch {
     }
 
   protected:
-    // Writes the query as the index stores its embeddings (normalized if needed, then rotated) into `query`, which
-    // holds num_dimensions floats.
+    // Writes the query as the index stores its embeddings (normalized if needed, then rotated) into
+    // `query`, which holds num_dimensions floats.
     void TransformQuery(
         const float* PDX_RESTRICT raw_query,
         bool is_query_transformed,
