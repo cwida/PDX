@@ -387,6 +387,36 @@ inline std::unique_ptr<float[]> DequantizeClusterEmbeddings(
     return result;
 }
 
+// The body of GetEmbeddingsFromIndexByRowIds shared by PDXIndex and PDXTreeIndex: each row read
+// from its cluster's slot (u8 dequantized), in the order of row_ids.
+template <Quantization Q>
+inline void GetEmbeddingsFromIndexByRowIdsImpl(
+    const IVF<Q>& index,
+    [[maybe_unused]] ScalarQuantizer<Q>& quantizer,
+    const RowIdClusterMapping& row_id_cluster_mapping,
+    const std::vector<size_t>& row_ids,
+    float* out
+) {
+    const size_t d = index.num_dimensions;
+    for (size_t i = 0; i < row_ids.size(); i++) {
+        const auto [cluster_id, position] = row_id_cluster_mapping.Get(row_ids[i]);
+        if (cluster_id == DELETED_MARKER) {
+            throw std::invalid_argument(
+                "GetEmbeddingsFromIndexByRowIds: a row id is not in the index"
+            );
+        }
+        const auto embedding =
+            index.clusters[cluster_id].GetHorizontalEmbeddingFromPDXBuffer(position);
+        if constexpr (Q == U8) {
+            quantizer.DequantizeEmbedding(
+                embedding.get(), index.quantization_base, index.quantization_scale, out + i * d
+            );
+        } else {
+            std::copy(embedding.get(), embedding.get() + d, out + i * d);
+        }
+    }
+}
+
 // Quantize (if U8) and append a float embedding to a cluster. Returns its index in the cluster.
 template <Quantization Q>
 inline uint32_t QuantizeAndAppend(

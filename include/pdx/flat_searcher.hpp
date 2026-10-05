@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -86,7 +87,7 @@ class FlatSearcher {
         void ScanVector(uint32_t position, Heap& heap) const {
             const Flat& flat_data = searcher->flat_data;
             const float distance = distance_computer_t::Horizontal(
-                query.get(), flat_data.GetEmbedding(position), flat_data.num_dimensions
+                query.get(), flat_data.GetEmbeddingPtrAtPosition(position), flat_data.num_dimensions
             );
             if (heap.size() < k || distance < heap.top().distance) {
                 if (heap.size() >= k) {
@@ -159,6 +160,30 @@ class FlatSearcher {
             top_k_heap,
             std::move(passing_positions)
         );
+    }
+
+    // The query's distance to the block's one centroid, the mean of its live embeddings (infinity
+    // when it holds none), computed from the stored sums in one pass.
+    void GetDistancesToCentroids(
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed,
+        float* PDX_RESTRICT out
+    ) {
+        if (flat_data.num_embeddings == 0) {
+            out[0] = std::numeric_limits<float>::infinity();
+            return;
+        }
+        const auto query = PrepareQuery(raw_query, is_query_transformed);
+        const double inverse_num_embeddings = 1.0 / static_cast<double>(flat_data.num_embeddings);
+        const double* PDX_RESTRICT embeddings_sum = flat_data.embeddings_sum.data();
+        float distance = 0.0f;
+        PDX_VECTORIZE_LOOP
+        for (uint32_t d = 0; d < flat_data.num_dimensions; d++) {
+            const float difference =
+                query[d] - static_cast<float>(embeddings_sum[d] * inverse_num_embeddings);
+            distance += difference * difference;
+        }
+        out[0] = distance;
     }
 
   private:

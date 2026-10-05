@@ -5,6 +5,7 @@
 #include <numeric>
 #include <vector>
 
+#include "pdx/indexes/flat.hpp"
 #include "pdx/indexes/ivf_tree.hpp"
 #include "test_utils.hpp"
 
@@ -77,6 +78,54 @@ TEST(TransformedInput, PDXIndexU8) {
 
 TEST(TransformedInput, PDXTreeIndexF32) {
     RunTransformedBuildMatchesRawBuild<PDX::PDXTreeIndexF32>();
+}
+
+// GetEmbeddingsFromIndexByRowIds gives back the transformed embeddings the index was built from
+// (u8: within its quantization error), in the order of the requested row ids.
+template <typename IndexT>
+void RunEmbeddingsFromIndexByRowIdsComeBack(const float tolerance) {
+    auto data = TestUtils::LoadTestData(D);
+    PDX::ADSamplingPruner pruner(D, TestUtils::SEED);
+    auto transformed =
+        PDX::NormalizeAndRotate(data.train.data(), TestUtils::N_TRAIN, D, true, pruner);
+    auto config = MakeConfig();
+    config.is_data_transformed = true;
+    IndexT index(config, pruner);
+    index.BuildIndex(transformed.get(), TestUtils::N_TRAIN);
+
+    std::vector<size_t> row_ids;
+    for (size_t row_id = TestUtils::N_TRAIN; row_id-- > 0;) {
+        if (row_id % 3 == 0) {
+            row_ids.push_back(row_id);
+        }
+    }
+    std::vector<float> embeddings(row_ids.size() * D);
+    index.GetEmbeddingsFromIndexByRowIds(row_ids, embeddings.data());
+    float max_error = 0.0f;
+    for (size_t i = 0; i < row_ids.size(); i++) {
+        for (size_t j = 0; j < D; j++) {
+            max_error = std::max(
+                max_error, std::abs(embeddings[i * D + j] - transformed[row_ids[i] * D + j])
+            );
+        }
+    }
+    EXPECT_LE(max_error, tolerance);
+}
+
+TEST(EmbeddingsFromIndexByRowIds, PDXIndexF32) {
+    RunEmbeddingsFromIndexByRowIdsComeBack<PDX::PDXIndexF32>(0.0f);
+}
+
+TEST(EmbeddingsFromIndexByRowIds, PDXIndexU8) {
+    RunEmbeddingsFromIndexByRowIdsComeBack<PDX::PDXIndexU8>(0.01f);
+}
+
+TEST(EmbeddingsFromIndexByRowIds, PDXTreeIndexF32) {
+    RunEmbeddingsFromIndexByRowIdsComeBack<PDX::PDXTreeIndexF32>(0.0f);
+}
+
+TEST(EmbeddingsFromIndexByRowIds, FlatIndex) {
+    RunEmbeddingsFromIndexByRowIdsComeBack<PDX::FlatIndex>(0.0f);
 }
 
 TEST(RowIdMapping, GrowsAndReusesIds) {

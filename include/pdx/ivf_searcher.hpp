@@ -836,6 +836,27 @@ class PDXearch {
         return search_cursor;
     }
 
+    // As above, over an evaluator the caller keeps alive while the cursor lives (the searches of
+    // many queries can share it).
+    [[nodiscard]] IterativeSearch<true> BeginFilteredIterativeSearch(
+        const float* PDX_RESTRICT raw_query,
+        uint32_t k,
+        const PredicateEvaluator& evaluator,
+        TopKHeap& top_k_heap,
+        bool is_query_transformed = false,
+        const uint32_t* clusters_access_order = nullptr
+    ) {
+        IterativeSearch<true> search_cursor(*this, k, top_k_heap, &evaluator);
+        InitializeSearchCursor(
+            search_cursor,
+            raw_query,
+            is_query_transformed,
+            pdx_data.num_clusters,
+            clusters_access_order
+        );
+        return search_cursor;
+    }
+
     // All clusters, nearest centroid to the query first. Searches of the same query can share it.
     [[nodiscard]] std::vector<uint32_t> GetClustersAccessOrder(
         const float* PDX_RESTRICT raw_query,
@@ -848,6 +869,24 @@ class PDXearch {
             query.get(), pdx_data, pdx_data.num_clusters, clusters_access_order.data()
         );
         return clusters_access_order;
+    }
+
+    // The query's distance to every centroid, unsorted (out holds num_clusters floats): to rank
+    // the clusters of several indexes together.
+    void GetDistancesToCentroids(
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed,
+        float* PDX_RESTRICT out
+    ) {
+        std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
+        TransformQuery(raw_query, is_query_transformed, query.get());
+        for (size_t cluster_idx = 0; cluster_idx < pdx_data.num_clusters; cluster_idx++) {
+            out[cluster_idx] = DistanceComputer<DistanceMetric::L2SQ, F32>::Horizontal(
+                query.get(),
+                pdx_data.centroids.data() + cluster_idx * pdx_data.num_dimensions,
+                pdx_data.num_dimensions
+            );
+        }
     }
 
   protected:

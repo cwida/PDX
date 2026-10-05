@@ -193,6 +193,47 @@ class PDXTreeIndex : public IPDXIndex {
         );
     }
 
+    std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
+        const std::vector<size_t>& passing_row_ids
+    ) const override {
+        return std::make_unique<PredicateEvaluator>(CreatePredicateEvaluator(passing_row_ids));
+    }
+
+    std::unique_ptr<IIterativeSearch> BeginIterativeSearchWithSharedEvaluator(
+        const float* query_embedding,
+        uint32_t knn,
+        TopKHeap& top_k_heap,
+        const PredicateEvaluator& evaluator,
+        bool is_query_transformed = false,
+        const std::vector<uint32_t>* clusters_access_order = nullptr
+    ) const override {
+        return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
+            searcher->BeginFilteredIterativeSearch(
+                query_embedding,
+                knn,
+                evaluator,
+                top_k_heap,
+                is_query_transformed,
+                clusters_access_order ? clusters_access_order->data() : nullptr
+            )
+        );
+    }
+
+    void GetEmbeddingsFromIndexByRowIds(const std::vector<size_t>& row_ids, float* out)
+        const override {
+        GetEmbeddingsFromIndexByRowIdsImpl<Q>(
+            index, searcher->quantizer, row_id_cluster_mapping, row_ids, out
+        );
+    }
+
+    void GetDistancesToCentroids(
+        const float* query_embedding,
+        bool is_query_transformed,
+        float* out
+    ) const override {
+        searcher->GetDistancesToCentroids(query_embedding, is_query_transformed, out);
+    }
+
     std::vector<uint32_t> GetClustersAccessOrder(
         const float* query_embedding,
         bool is_query_transformed = false

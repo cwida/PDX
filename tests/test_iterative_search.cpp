@@ -129,6 +129,44 @@ TEST_P(IterativeSearchTest, SharedClustersAccessOrderMatchesOwnRanking) {
     }
 }
 
+// A cursor over a shared evaluator returns what a cursor filtered by the passing row ids returns,
+// for every query that shares the evaluator.
+TEST_P(IterativeSearchTest, SharedEvaluatorMatchesPassingRowIds) {
+    auto data = TestUtils::LoadTestData(D);
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    const auto passing = EveryThirdId();
+    const auto evaluator = index->CreateSharedPredicateEvaluator(passing);
+    for (size_t q = 0; q < N_QUERIES; ++q) {
+        const float* query = data.queries.data() + q * D;
+        PDX::TopKHeap own_top_k_heap;
+        auto own_cursor =
+            index->BeginIterativeSearch(query, TestUtils::KNN, own_top_k_heap, &passing);
+        PDX::TopKHeap shared_top_k_heap;
+        auto shared_cursor = index->BeginIterativeSearchWithSharedEvaluator(
+            query, TestUtils::KNN, shared_top_k_heap, *evaluator
+        );
+        ExpectSameResults(
+            Drain(*own_cursor, own_top_k_heap, TestUtils::KNN, 5),
+            Drain(*shared_cursor, shared_top_k_heap, TestUtils::KNN, 5)
+        );
+    }
+}
+
+// GetClustersAccessOrder is GetDistancesToCentroids sorted.
+TEST_P(IterativeSearchTest, DistancesToCentroidsSortToTheAccessOrder) {
+    auto data = TestUtils::LoadTestData(D);
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    std::vector<float> distances(index->GetNumClusters());
+    for (size_t q = 0; q < N_QUERIES; ++q) {
+        const float* query = data.queries.data() + q * D;
+        index->GetDistancesToCentroids(query, false, distances.data());
+        const auto clusters_access_order = index->GetClustersAccessOrder(query);
+        for (size_t i = 1; i < clusters_access_order.size(); i++) {
+            EXPECT_LE(distances[clusters_access_order[i - 1]], distances[clusters_access_order[i]]);
+        }
+    }
+}
+
 TEST_P(IterativeSearchTest, NextAccountsForEveryNonEmptyCluster) {
     auto data = TestUtils::LoadTestData(D);
     auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);

@@ -142,6 +142,69 @@ class FlatIndex : public IPDXIndex {
         );
     }
 
+    // One cluster: the selection vector is indexed by position.
+    std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
+        const std::vector<size_t>& passing_row_ids
+    ) const override {
+        auto evaluator = std::make_unique<PredicateEvaluator>(1, index.UsedCapacity());
+        const auto positions = PassingPositions(passing_row_ids);
+        for (const uint32_t position : *positions) {
+            evaluator->selection_vector[position] = 1;
+            evaluator->n_passing_tuples[0]++;
+            evaluator->total_passing_tuples++;
+        }
+        return evaluator;
+    }
+
+    // The positions are rebuilt from the selection vector per search (a Flat index is small).
+    std::unique_ptr<IIterativeSearch> BeginIterativeSearchWithSharedEvaluator(
+        const float* query_embedding,
+        uint32_t knn,
+        TopKHeap& top_k_heap,
+        const PredicateEvaluator& evaluator,
+        bool is_query_transformed = false,
+        const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr
+    ) const override {
+        auto positions = std::make_unique<std::vector<uint32_t>>();
+        positions->reserve(evaluator.total_passing_tuples);
+        for (uint32_t position = 0; position < index.UsedCapacity(); position++) {
+            if (evaluator.selection_vector[position]) {
+                positions->push_back(position);
+            }
+        }
+        return std::make_unique<FlatSearcher::IterativeSearch>(
+            searcher->BeginFilteredIterativeSearch(
+                query_embedding, knn, std::move(positions), top_k_heap, is_query_transformed
+            )
+        );
+    }
+
+    void GetEmbeddingsFromIndexByRowIds(const std::vector<size_t>& row_ids, float* out)
+        const override {
+        const size_t d = config.num_dimensions;
+        for (size_t i = 0; i < row_ids.size(); i++) {
+            const auto [cluster_id, position] = GetRowIdMapping(row_ids[i]);
+            if (cluster_id == DELETED_MARKER) {
+                throw std::invalid_argument(
+                    "GetEmbeddingsFromIndexByRowIds: a row id is not in the index"
+                );
+            }
+            std::copy(
+                index.GetEmbeddingPtrAtPosition(position),
+                index.GetEmbeddingPtrAtPosition(position) + d,
+                out + i * d
+            );
+        }
+    }
+
+    void GetDistancesToCentroids(
+        const float* query_embedding,
+        bool is_query_transformed,
+        float* out
+    ) const override {
+        searcher->GetDistancesToCentroids(query_embedding, is_query_transformed, out);
+    }
+
     // Its one cluster.
     std::vector<uint32_t> GetClustersAccessOrder(const float*, bool = false) const override {
         return {0};
@@ -222,8 +285,8 @@ class FlatIndex : public IPDXIndex {
         for (uint32_t position = 0; position < index.UsedCapacity(); position++) {
             if (!index.HasTombstone(position)) {
                 std::copy(
-                    index.GetEmbedding(position),
-                    index.GetEmbedding(position) + d,
+                    index.GetEmbeddingPtrAtPosition(position),
+                    index.GetEmbeddingPtrAtPosition(position) + d,
                     embeddings.get() + n_copied * d
                 );
                 n_copied++;

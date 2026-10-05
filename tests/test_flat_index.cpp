@@ -107,6 +107,33 @@ TEST(FlatIndex, FilteredSearchOnlyReturnsPassingRowIds) {
     EXPECT_GE(total_recall / static_cast<float>(TestUtils::N_QUERIES), 0.999f);
 }
 
+// A cursor over a shared evaluator returns what a cursor filtered by the passing row ids returns.
+TEST(FlatIndex, SharedEvaluatorMatchesPassingRowIds) {
+    auto data = TestUtils::LoadTestData(D);
+    PDX::FlatIndex index(MakeConfig());
+    index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    std::vector<size_t> passing;
+    for (size_t i = 0; i < TestUtils::N_TRAIN; i += 3) {
+        passing.push_back(i);
+    }
+    const auto evaluator = index.CreateSharedPredicateEvaluator(passing);
+    for (size_t q = 0; q < 20; q++) {
+        const float* query = data.queries.data() + q * D;
+        PDX::TopKHeap own_top_k_heap;
+        index.BeginIterativeSearch(query, TestUtils::KNN, own_top_k_heap, &passing)->Next(1);
+        PDX::TopKHeap shared_top_k_heap;
+        index
+            .BeginIterativeSearchWithSharedEvaluator(
+                query, TestUtils::KNN, shared_top_k_heap, *evaluator
+            )
+            ->Next(1);
+        EXPECT_EQ(
+            Ids(PDX::BuildResultSetFromHeap(TestUtils::KNN, own_top_k_heap.heap)),
+            Ids(PDX::BuildResultSetFromHeap(TestUtils::KNN, shared_top_k_heap.heap))
+        );
+    }
+}
+
 TEST(FlatIndex, AppendDeleteAndReappend) {
     auto data = TestUtils::LoadTestData(D);
     const size_t last = TestUtils::N_TRAIN - 1;
