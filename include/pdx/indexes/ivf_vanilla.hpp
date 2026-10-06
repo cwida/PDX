@@ -83,7 +83,8 @@ class IPDXIndex {
     virtual void GetEmbeddingsFromIndexByRowIds(const std::vector<size_t>& row_ids, float* out)
         const = 0;
     // The query's distance to each centroid, unsorted (out holds GetNumClusters() floats), to rank
-    // the clusters of several indexes together. Flat: one cluster at distance 0.
+    // the clusters of several indexes together. Flat: its one centroid is the mean of its live
+    // embeddings.
     virtual void GetDistancesToCentroids(
         const float* query_embedding,
         bool is_query_transformed,
