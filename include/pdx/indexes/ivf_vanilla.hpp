@@ -314,8 +314,8 @@ class PDXIndex : public IPDXIndex {
         size_t size = sizeof(*this);
         // IVF heap allocations (sizeof(IVF<Q>) is inline in sizeof(*this))
         size += index.GetInMemorySizeInBytes() - sizeof(index);
-        // Pruner: rotation matrix or flip_masks (DCT mode) + ratios vector
-        if (pruner) {
+        // Pruner: rotation matrix or flip_masks (DCT mode) + ratios vector (only if owned)
+        if (owned_pruner) {
             size += sizeof(*pruner);
             const auto& m = pruner->GetMatrix();
             // matrix heap data (1 x D for DCT sign vector, D x D for full rotation)

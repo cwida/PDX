@@ -155,8 +155,10 @@ struct Cluster {
     }
 
     size_t GetInMemorySizeInBytes() const {
-        return sizeof(*this) + num_embeddings * sizeof(*indices) +
-               num_embeddings * static_cast<uint64_t>(num_dimensions) * sizeof(*data);
+        return sizeof(*this) + max_capacity * sizeof(*indices) +
+               max_capacity * static_cast<uint64_t>(num_dimensions) * sizeof(*data) +
+               tombstones.size() * (sizeof(uint32_t) + 2 * sizeof(void*)) +
+               tombstones.bucket_count() * sizeof(void*);
     }
 
     // Gather all embeddings from the PDX layout into a contiguous row-major buffer.

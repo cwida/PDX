@@ -183,4 +183,23 @@ TEST(RowIdMapping, BaseRowIdKeepsTheMappingLocal) {
     EXPECT_EQ(index.Search(data.train.data(), 1)[0].index, base_row_id);
 }
 
+// An index on a shared pruner does not count the rotation matrix it does not own
+TEST(InMemorySize, SharedPrunerIsNotCounted) {
+    auto data = TestUtils::LoadTestData(D);
+    PDX::PDXIndexF32 owned(MakeConfig());
+    owned.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+
+    PDX::ADSamplingPruner pruner(D, TestUtils::SEED);
+    auto transformed =
+        PDX::NormalizeAndRotate(data.train.data(), TestUtils::N_TRAIN, D, true, pruner);
+    auto config = MakeConfig();
+    config.is_data_transformed = true;
+    PDX::PDXIndexF32 shared(config, pruner);
+    shared.BuildIndex(transformed.get(), TestUtils::N_TRAIN);
+
+    EXPECT_GE(
+        owned.GetInMemorySizeInBytes() - shared.GetInMemorySizeInBytes(), D * D * sizeof(float)
+    );
+}
+
 } // namespace
