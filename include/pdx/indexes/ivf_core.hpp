@@ -226,7 +226,9 @@ class IVF {
         for (uint32_t i = 0; i < num_clusters; ++i) {
             const auto num_embeddings = ReadValue<uint32_t>(reader);
             const auto max_capacity = ReadValue<uint32_t>(reader);
-            clusters.emplace_back(num_embeddings, max_capacity, num_dimensions, allocate_cluster_data);
+            clusters.emplace_back(
+                num_embeddings, max_capacity, num_dimensions, allocate_cluster_data
+            );
             clusters[i].id = i;
             cluster_data_offsets[i] = ReadValue<uint64_t>(reader);
         }
@@ -263,8 +265,8 @@ class IVF {
             auto& cluster = clusters[cluster_id];
             reader.Read(cluster.indices, sizeof(uint32_t) * cluster.num_embeddings);
             cluster.LoadPDXData(reader);
-            position =
-                cluster_data_offsets[cluster_id] + GetClusterDataSizeInBytes(cluster.num_embeddings);
+            position = cluster_data_offsets[cluster_id] +
+                       GetClusterDataSizeInBytes(cluster.num_embeddings);
         }
     }
 

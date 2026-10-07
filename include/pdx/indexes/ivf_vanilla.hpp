@@ -41,7 +41,8 @@ class IPDXIndex {
     virtual void SaveToStream(std::ostream& out) = 0;
     virtual void LoadFromStream(std::istream& in) = 0;
     // LoadFromStream without the clusters' data, which searches then get from cluster_source (it
-    // must outlive the index). Indexes that cannot page their clusters (Flat, tree) load everything.
+    // must outlive the index). Indexes that cannot page their clusters (Flat, tree) load
+    // everything.
     virtual void LoadResidentDataFromStream(std::istream& in, IClusterSource& /*cluster_source*/) {
         LoadFromStream(in);
     }

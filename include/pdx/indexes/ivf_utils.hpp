@@ -180,7 +180,8 @@ struct RowIdClusterMapping {
         }
     }
 
-    // Without the trailing deleted entries that Set's doubling leaves. base_row_id is in the config.
+    // Without the trailing deleted entries that Set's doubling leaves. base_row_id is in the
+    // config.
     void Save(std::ostream& out) const {
         size_t num_entries = entries.size();
         while (num_entries > 0 && entries[num_entries - 1] == DELETED) {
