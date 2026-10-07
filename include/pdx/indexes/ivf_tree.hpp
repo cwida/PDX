@@ -222,7 +222,12 @@ class PDXTreeIndex : public IPDXIndex {
     void GetEmbeddingsFromIndexByRowIds(const std::vector<size_t>& row_ids, float* out)
         const override {
         GetEmbeddingsFromIndexByRowIdsImpl<Q>(
-            index, searcher->quantizer, row_id_cluster_mapping, row_ids, out
+            index,
+            searcher->quantizer,
+            row_id_cluster_mapping,
+            row_ids,
+            out,
+            /*cluster_source=*/nullptr
         );
     }
 

@@ -408,36 +408,65 @@ inline std::unique_ptr<float[]> DequantizeClusterEmbeddings(
 }
 
 // The body of GetEmbeddingsFromIndexByRowIds shared by PDXIndex and PDXTreeIndex: each row read
-// from its cluster's slot (u8 dequantized), in the order of row_ids.
+// from its cluster's slot (u8 dequantized), in the order of row_ids. The rows are read cluster by
+// cluster, so that a cluster without data is acquired from cluster_source once.
 template <Quantization Q>
 inline void GetEmbeddingsFromIndexByRowIdsImpl(
     const IVF<Q>& index,
     [[maybe_unused]] ScalarQuantizer<Q>& quantizer,
     const RowIdClusterMapping& row_id_cluster_mapping,
     const std::vector<size_t>& row_ids,
-    float* out
+    float* out,
+    IClusterSource* cluster_source
 ) {
+    using data_t = pdx_data_t<Q>;
     const size_t d = index.num_dimensions;
+    std::vector<RowIdClusterMapping::entry_t> locations(row_ids.size());
     for (size_t i = 0; i < row_ids.size(); i++) {
-        const auto [cluster_id, position] = row_id_cluster_mapping.Get(row_ids[i]);
-        if (cluster_id == DELETED_MARKER) {
+        locations[i] = row_id_cluster_mapping.Get(row_ids[i]);
+        if (locations[i].first == DELETED_MARKER) {
             throw std::invalid_argument(
                 "GetEmbeddingsFromIndexByRowIds: a row id is not in the index"
             );
         }
-        if (!index.clusters[cluster_id].data) {
-            throw std::logic_error(
-                "GetEmbeddingsFromIndexByRowIds: the index was loaded without its clusters' data"
+    }
+    std::vector<size_t> rows_by_cluster(row_ids.size());
+    std::iota(rows_by_cluster.begin(), rows_by_cluster.end(), 0);
+    std::sort(rows_by_cluster.begin(), rows_by_cluster.end(), [&](size_t a, size_t b) {
+        return locations[a].first < locations[b].first;
+    });
+    std::unique_ptr<data_t[]> embedding(new data_t[d]);
+    size_t next = 0;
+    while (next < rows_by_cluster.size()) {
+        const uint32_t cluster_id = locations[rows_by_cluster[next]].first;
+        const auto& cluster = index.clusters[cluster_id];
+        const bool from_cluster_source = !cluster.data;
+        const data_t* data = cluster.data;
+        size_t stride = cluster.max_capacity;
+        if (from_cluster_source) {
+            const char* cluster_bytes = cluster_source->Acquire(cluster_id);
+            data = reinterpret_cast<const data_t*>(
+                cluster_bytes + sizeof(uint32_t) * cluster.used_capacity
             );
+            stride = cluster.used_capacity;
         }
-        const auto embedding =
-            index.clusters[cluster_id].GetHorizontalEmbeddingFromPDXBuffer(position);
-        if constexpr (Q == U8) {
-            quantizer.DequantizeEmbedding(
-                embedding.get(), index.quantization_base, index.quantization_scale, out + i * d
+        for (;
+             next < rows_by_cluster.size() && locations[rows_by_cluster[next]].first == cluster_id;
+             next++) {
+            const size_t i = rows_by_cluster[next];
+            Cluster<Q>::ReadEmbeddingFromPDXBuffer(
+                data, stride, index.num_dimensions, locations[i].second, embedding.get()
             );
-        } else {
-            std::copy(embedding.get(), embedding.get() + d, out + i * d);
+            if constexpr (Q == U8) {
+                quantizer.DequantizeEmbedding(
+                    embedding.get(), index.quantization_base, index.quantization_scale, out + i * d
+                );
+            } else {
+                std::copy(embedding.get(), embedding.get() + d, out + i * d);
+            }
+        }
+        if (from_cluster_source) {
+            cluster_source->Release(cluster_id);
         }
     }
 }

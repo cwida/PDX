@@ -15,6 +15,16 @@
 
 namespace PDX {
 
+// Gives searches the bytes of the clusters an index holds no data for (LoadResidentDataFromStream):
+// Acquire returns them as SaveClusterData wrote them, valid until the matching Release. Called
+// concurrently by the searches.
+class IClusterSource {
+  public:
+    virtual ~IClusterSource() = default;
+    virtual const char* Acquire(uint32_t cluster_id) = 0;
+    virtual void Release(uint32_t cluster_id) = 0;
+};
+
 template <Quantization Q>
 class IVF {
   public:

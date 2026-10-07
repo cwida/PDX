@@ -57,7 +57,7 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
   a cluster's bytes from the caller's `IClusterSource` (`Acquire`/`Release`, concurrent; row ids, then PDX data with
   stride `used_capacity`), which locates them with `GetClusterDataRange`. Such an index is read-only but for `Delete`,
   which only tombstones (no `CheckClusterHealth`): the caller replays its deletes on a full load before rewriting it.
-  `Append` and `GetEmbeddingsFromIndexByRowIds` throw.
+  `Append` throws; `GetEmbeddingsFromIndexByRowIds` acquires each cluster it reads once.
 - Every format is implemented once: the `Load` functions are templates over a reader (`BufferReader` for buffers,
   `StreamReader` for streams, in `utils.hpp`); `IVF::LoadClusters` reads a level's clusters of the file format for
   `IVF` and `IVFTree`.

@@ -306,14 +306,18 @@ struct Cluster {
         return moves;
     }
 
-  private:
-    // Gather-reads one embedding from the transposed PDX buffer into a horizontal (row-major)
-    // output. Reverse of InsertEmbedding.
-    void ReadEmbeddingFromPDXBuffer(uint32_t idx_in_cluster, data_t* out) const {
+    // Gather-reads one embedding from a transposed PDX buffer of the given stride into a horizontal
+    // (row-major) output. Reverse of InsertEmbedding.
+    static void ReadEmbeddingFromPDXBuffer(
+        const data_t* data,
+        size_t stride,
+        uint32_t num_dimensions,
+        uint32_t idx_in_cluster,
+        data_t* out
+    ) {
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
-        const size_t stride = max_capacity;
 
         if constexpr (Q == Quantization::F32) {
             for (uint32_t d = 0; d < vertical_d; d++) {
@@ -347,6 +351,11 @@ struct Cluster {
             );
             h_base += stride * H_DIM_SIZE;
         }
+    }
+
+  private:
+    void ReadEmbeddingFromPDXBuffer(uint32_t idx_in_cluster, data_t* out) const {
+        ReadEmbeddingFromPDXBuffer(data, max_capacity, num_dimensions, idx_in_cluster, out);
     }
 
     // Scatter-writes a horizontal (row-major) embedding into the transposed PDX buffer layout.

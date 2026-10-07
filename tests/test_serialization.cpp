@@ -308,6 +308,13 @@ TEST_P(StreamSerializationTest, ResidentDataLoadSearchesThroughTheClusterSource)
     }
     ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
 
+    // The gather reads the same embeddings through the cluster source.
+    std::vector<float> expected_embeddings(passing_ids.size() * d);
+    std::vector<float> actual_embeddings(passing_ids.size() * d);
+    index->GetEmbeddingsFromIndexByRowIds(passing_ids, expected_embeddings.data());
+    loaded->GetEmbeddingsFromIndexByRowIds(passing_ids, actual_embeddings.data());
+    EXPECT_EQ(expected_embeddings, actual_embeddings);
+
     for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; row_id += 500) {
         index->Delete(row_id);
         loaded->Delete(row_id);
