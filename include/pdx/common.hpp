@@ -131,7 +131,7 @@ enum class PDXIndexType : uint8_t {
     PDX_FLAT = 4
 };
 
-static constexpr uint8_t PDX_SERIALIZATION_VERSION = 2;
+static constexpr uint8_t PDX_SERIALIZATION_VERSION = 3;
 
 template <Quantization Q>
 struct DistanceType {

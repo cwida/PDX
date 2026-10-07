@@ -180,6 +180,25 @@ struct RowIdClusterMapping {
         }
     }
 
+    // Without the trailing deleted entries that Set's doubling leaves. base_row_id is in the config.
+    void Save(std::ostream& out) const {
+        size_t num_entries = entries.size();
+        while (num_entries > 0 && entries[num_entries - 1] == DELETED) {
+            num_entries--;
+        }
+        WriteValue(out, static_cast<uint64_t>(num_entries));
+        out.write(
+            reinterpret_cast<const char*>(entries.data()),
+            static_cast<std::streamsize>(num_entries * sizeof(entry_t))
+        );
+    }
+
+    template <class Reader>
+    void Load(Reader& reader) {
+        entries.resize(static_cast<size_t>(ReadValue<uint64_t>(reader)));
+        reader.Read(entries.data(), entries.size() * sizeof(entry_t));
+    }
+
     [[nodiscard]] size_t SizeInBytes() const { return entries.size() * sizeof(entry_t); }
 
     size_t base_row_id = 0;

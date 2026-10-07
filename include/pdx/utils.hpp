@@ -45,6 +45,8 @@ struct BufferReader {
         std::memcpy(dst, ptr, num_bytes);
         ptr += num_bytes;
     }
+
+    void Skip(size_t num_bytes) { ptr += num_bytes; }
 };
 
 struct StreamReader {
@@ -52,6 +54,13 @@ struct StreamReader {
 
     void Read(void* dst, size_t num_bytes) {
         in.read(static_cast<char*>(dst), static_cast<std::streamsize>(num_bytes));
+        if (!in) {
+            throw std::runtime_error("Unexpected end of a PDX index stream");
+        }
+    }
+
+    void Skip(size_t num_bytes) {
+        in.ignore(static_cast<std::streamsize>(num_bytes));
         if (!in) {
             throw std::runtime_error("Unexpected end of a PDX index stream");
         }

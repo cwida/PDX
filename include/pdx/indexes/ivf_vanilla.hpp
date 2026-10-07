@@ -165,14 +165,17 @@ class PDXIndex : public IPDXIndex {
     void SaveToStream(std::ostream& out) override {
         CompactClusters();
         WriteStreamHeader(out, GetIndexType(), config);
-        index.Save(out);
+        index.SaveResidentData(out);
+        row_id_cluster_mapping.Save(out);
+        index.SaveClusterData(out);
     }
 
     void LoadFromStream(std::istream& in) override {
         StreamReader reader{in};
-        index.Load(reader);
+        index.LoadResidentData(reader);
+        row_id_cluster_mapping.Load(reader);
+        index.LoadClusterData(reader);
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
-        BuildRowIdClusterMapping();
     }
 
     std::vector<PDX::KNNCandidate> Search(const float* query_embedding, size_t knn) const override {

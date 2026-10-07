@@ -3,11 +3,14 @@
 #include "pdx/common.hpp"
 #include "pdx/indexes/cluster.hpp"
 #include "pdx/utils.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <numeric>
 #include <ostream>
+#include <stdexcept>
 #include <vector>
 
 namespace PDX {
@@ -27,6 +30,7 @@ class IVF {
     size_t max_cluster_capacity{0};
     size_t total_capacity{0};
     std::unique_ptr<size_t[]> cluster_offsets;
+    std::vector<uint64_t> cluster_data_offsets;
     bool is_normalized{};
     std::vector<float> centroids;
 
@@ -170,6 +174,100 @@ class IVF {
         }
     }
 
+    [[nodiscard]] uint64_t GetClusterDataSizeInBytes(const uint32_t num_embeddings) const {
+        return static_cast<uint64_t>(num_embeddings) *
+               (num_dimensions * sizeof(data_t) + sizeof(uint32_t));
+    }
+
+    // The first half of the stream format (SaveToStream): what a search keeps in memory, with the
+    // offset of each cluster in the cluster data that follows (SaveClusterData).
+    void SaveResidentData(std::ostream& out) const {
+        WriteValue(out, num_dimensions);
+        WriteValue(out, num_vertical_dimensions);
+        WriteValue(out, num_horizontal_dimensions);
+        WriteValue(out, num_clusters);
+        uint64_t cluster_data_offset = 0;
+        for (size_t i = 0; i < num_clusters; ++i) {
+            WriteValue(out, clusters[i].num_embeddings);
+            WriteValue(out, clusters[i].max_capacity);
+            WriteValue(out, cluster_data_offset);
+            cluster_data_offset += GetClusterDataSizeInBytes(clusters[i].num_embeddings);
+        }
+        WriteValue(out, static_cast<char>(is_normalized));
+        out.write(
+            reinterpret_cast<const char*>(centroids.data()),
+            static_cast<std::streamsize>(sizeof(float) * num_clusters * num_dimensions)
+        );
+        if constexpr (Q == U8) {
+            WriteValue(out, quantization_base);
+            WriteValue(out, quantization_scale);
+        }
+    }
+
+    // Each cluster's compact PDX data, then its row ids, in cluster order.
+    void SaveClusterData(std::ostream& out) const {
+        for (size_t i = 0; i < num_clusters; ++i) {
+            clusters[i].SavePDXData(out);
+            out.write(
+                reinterpret_cast<const char*>(clusters[i].indices),
+                static_cast<std::streamsize>(sizeof(uint32_t) * clusters[i].num_embeddings)
+            );
+        }
+    }
+
+    template <class Reader>
+    void LoadResidentData(Reader& reader) {
+        num_dimensions = ReadValue<uint32_t>(reader);
+        num_vertical_dimensions = ReadValue<uint32_t>(reader);
+        num_horizontal_dimensions = ReadValue<uint32_t>(reader);
+        num_clusters = ReadValue<uint32_t>(reader);
+        clusters.reserve(num_clusters);
+        cluster_data_offsets.resize(num_clusters);
+        for (uint32_t i = 0; i < num_clusters; ++i) {
+            const auto num_embeddings = ReadValue<uint32_t>(reader);
+            const auto max_capacity = ReadValue<uint32_t>(reader);
+            clusters.emplace_back(num_embeddings, max_capacity, num_dimensions);
+            clusters[i].id = i;
+            cluster_data_offsets[i] = ReadValue<uint64_t>(reader);
+        }
+        is_normalized = ReadValue<char>(reader) != 0;
+        centroids.resize(static_cast<size_t>(num_clusters) * num_dimensions);
+        reader.Read(centroids.data(), sizeof(float) * centroids.size());
+        if constexpr (Q == U8) {
+            quantization_base = ReadValue<float>(reader);
+            quantization_scale = ReadValue<float>(reader);
+            quantization_scale_squared = quantization_scale * quantization_scale;
+            inverse_quantization_scale_squared = 1.0f / quantization_scale_squared;
+        }
+        ComputeClusterOffsets();
+    }
+
+    // Reads the clusters in the order of their offsets, skipping the bytes between them.
+    template <class Reader>
+    void LoadClusterData(Reader& reader) {
+        std::vector<uint32_t> clusters_in_stream_order(num_clusters);
+        std::iota(clusters_in_stream_order.begin(), clusters_in_stream_order.end(), 0);
+        std::sort(
+            clusters_in_stream_order.begin(),
+            clusters_in_stream_order.end(),
+            [&](uint32_t a, uint32_t b) {
+                return cluster_data_offsets[a] < cluster_data_offsets[b];
+            }
+        );
+        uint64_t position = 0;
+        for (const uint32_t cluster_id : clusters_in_stream_order) {
+            if (cluster_data_offsets[cluster_id] < position) {
+                throw std::runtime_error("Overlapping clusters in a PDX index stream");
+            }
+            reader.Skip(cluster_data_offsets[cluster_id] - position);
+            auto& cluster = clusters[cluster_id];
+            cluster.LoadPDXData(reader);
+            reader.Read(cluster.indices, sizeof(uint32_t) * cluster.num_embeddings);
+            position =
+                cluster_data_offsets[cluster_id] + GetClusterDataSizeInBytes(cluster.num_embeddings);
+        }
+    }
+
     size_t GetInMemorySizeInBytes() const {
         size_t in_memory_size_in_bytes = 0;
         in_memory_size_in_bytes += sizeof(*this);
@@ -180,6 +278,7 @@ class IVF {
             (clusters.capacity() - clusters.size()) * sizeof(*clusters.data());
         in_memory_size_in_bytes += centroids.capacity() * sizeof(*centroids.data());
         in_memory_size_in_bytes += num_clusters * sizeof(size_t); // cluster_offsets
+        in_memory_size_in_bytes += cluster_data_offsets.capacity() * sizeof(uint64_t);
         return in_memory_size_in_bytes;
     }
 };

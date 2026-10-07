@@ -47,8 +47,14 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
   `[PDX_SERIALIZATION_VERSION][type][PDXIndexConfig]` (`WriteStreamHeader`) and the payload, no rotation, tombstones
   compacted; `LoadPDXIndexFromStream(in, pruner)` constructs the index on `pruner` (which must hold the saving
   rotation) and calls `LoadFromStream`. A version mismatch throws `std::runtime_error`.
+- `PDXIndex`'s stream payload puts first what a search keeps in memory, so a reader can fetch one cluster alone:
+  `IVF::SaveResidentData` (cluster sizes and capacities, each cluster's offset in the cluster data, the centroids),
+  then the row-id mapping (`RowIdClusterMapping::Save`), then `IVF::SaveClusterData` (per cluster: compact PDX
+  data, then row ids). `LoadClusterData` reads by offset and skips gaps, so the writer may reorder or pad clusters.
+  `IVFTree` and `FlatIndex` stream the file format's payload.
 - Every format is implemented once: the `Load` functions are templates over a reader (`BufferReader` for buffers,
-  `StreamReader` for streams, in `utils.hpp`); `IVF::LoadClusters` reads a level's clusters for `IVF` and `IVFTree`.
+  `StreamReader` for streams, in `utils.hpp`); `IVF::LoadClusters` reads a level's clusters of the file format for
+  `IVF` and `IVFTree`.
 
 ## Resumable search (cursor)
 
