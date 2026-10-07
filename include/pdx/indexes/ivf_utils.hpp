@@ -424,6 +424,11 @@ inline void GetEmbeddingsFromIndexByRowIdsImpl(
                 "GetEmbeddingsFromIndexByRowIds: a row id is not in the index"
             );
         }
+        if (!index.clusters[cluster_id].data) {
+            throw std::logic_error(
+                "GetEmbeddingsFromIndexByRowIds: the index was loaded without its clusters' data"
+            );
+        }
         const auto embedding =
             index.clusters[cluster_id].GetHorizontalEmbeddingFromPDXBuffer(position);
         if constexpr (Q == U8) {

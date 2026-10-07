@@ -2,9 +2,11 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "pdx/indexes/ivf_tree.hpp"
@@ -238,6 +240,87 @@ TEST_P(StreamSerializationTest, LoadsTheSameIndexOnTheSamePruner) {
     loaded->Append(TestUtils::N_TRAIN, data.queries.data());
     passing_ids.push_back(TestUtils::N_TRAIN);
     ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
+}
+
+// Serves the clusters of a saved stream, each copied into a buffer of its own as a cache would.
+class SavedStreamClusterSource : public PDX::IClusterSource {
+  public:
+    explicit SavedStreamClusterSource(std::string saved_stream)
+        : saved_stream(std::move(saved_stream)) {}
+
+    // The cluster data starts where loading the resident data stopped.
+    void Attach(const PDX::IPDXIndex& loaded_index, size_t loaded_cluster_data_start) {
+        index = &loaded_index;
+        cluster_data_start = loaded_cluster_data_start;
+    }
+
+    const char* Acquire(uint32_t cluster_id) override {
+        const auto [offset, size] = index->GetClusterDataRange(cluster_id);
+        auto& buffer = acquired_clusters[cluster_id];
+        buffer.resize((size + sizeof(uint32_t) - 1) / sizeof(uint32_t));
+        std::memcpy(buffer.data(), saved_stream.data() + cluster_data_start + offset, size);
+        num_acquired++;
+        return reinterpret_cast<const char*>(buffer.data());
+    }
+
+    void Release(uint32_t cluster_id) override {
+        EXPECT_EQ(acquired_clusters.erase(cluster_id), 1u);
+    }
+
+    size_t num_acquired = 0;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> acquired_clusters;
+
+  private:
+    std::string saved_stream;
+    const PDX::IPDXIndex* index = nullptr;
+    size_t cluster_data_start = 0;
+};
+
+// Without its clusters' data, the index searches them through the cluster source, also after
+// deletes
+TEST_P(StreamSerializationTest, ResidentDataLoadSearchesThroughTheClusterSource) {
+    const std::string& index_type = GetParam();
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+    };
+    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
+    auto index = BuildOnPruner(index_type, config, pruner);
+    index->BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    index->SetNProbe(16);
+
+    std::stringstream stream;
+    index->SaveToStream(stream);
+    SavedStreamClusterSource source(stream.str());
+    auto loaded = PDX::LoadPDXIndexFromStream(stream, pruner, &source);
+    source.Attach(*loaded, static_cast<size_t>(stream.tellg()));
+    loaded->SetNProbe(16);
+
+    std::vector<size_t> passing_ids;
+    for (size_t i = 0; i < TestUtils::N_TRAIN; i += 3) {
+        passing_ids.push_back(i);
+    }
+    ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
+
+    for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; row_id += 500) {
+        index->Delete(row_id);
+        loaded->Delete(row_id);
+    }
+    ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
+
+    // Flat and the tree load everything.
+    const bool pages_clusters = index_type == "pdx_f32" || index_type == "pdx_u8";
+    EXPECT_EQ(source.num_acquired > 0, pages_clusters);
+    EXPECT_TRUE(source.acquired_clusters.empty());
+    if (pages_clusters) {
+        EXPECT_LT(loaded->GetInMemorySizeInBytes(), index->GetInMemorySizeInBytes() / 2);
+    }
 }
 
 INSTANTIATE_TEST_SUITE_P(

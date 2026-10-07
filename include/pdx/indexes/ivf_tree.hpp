@@ -1223,9 +1223,11 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(const std::string& path) {
 
 // Loads what SaveToStream wrote into an index on `pruner`, which must hold the rotation the index
 // was saved with. Throws std::runtime_error for a stream of another PDX_SERIALIZATION_VERSION.
+// With a cluster_source, the index holds no data for its clusters (LoadResidentDataFromStream).
 inline std::unique_ptr<IPDXIndex> LoadPDXIndexFromStream(
     std::istream& in,
-    ADSamplingPruner& pruner
+    ADSamplingPruner& pruner,
+    IClusterSource* cluster_source = nullptr
 ) {
     StreamReader reader{in};
     const auto version = ReadValue<uint8_t>(reader);
@@ -1267,7 +1269,11 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndexFromStream(
         );
     }
     // NOLINTEND(bugprone-branch-clone)
-    idx->LoadFromStream(in);
+    if (cluster_source) {
+        idx->LoadResidentDataFromStream(in, *cluster_source);
+    } else {
+        idx->LoadFromStream(in);
+    }
     return idx;
 }
 

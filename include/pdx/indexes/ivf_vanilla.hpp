@@ -40,6 +40,16 @@ class IPDXIndex {
     // reads what follows the header.
     virtual void SaveToStream(std::ostream& out) = 0;
     virtual void LoadFromStream(std::istream& in) = 0;
+    // LoadFromStream without the clusters' data, which searches then get from cluster_source (it
+    // must outlive the index). Indexes that cannot page their clusters (Flat, tree) load everything.
+    virtual void LoadResidentDataFromStream(std::istream& in, IClusterSource& /*cluster_source*/) {
+        LoadFromStream(in);
+    }
+    // The offset and size in bytes of a cluster in the cluster data of the stream the index was
+    // loaded from (LoadResidentDataFromStream).
+    virtual std::pair<uint64_t, uint64_t> GetClusterDataRange(uint32_t /*cluster_id*/) const {
+        throw std::logic_error("GetClusterDataRange: the index does not page its clusters");
+    }
     virtual uint32_t GetNumDimensions() const = 0;
     virtual uint32_t GetNumClusters() const = 0;
     virtual uint32_t GetClusterSize(uint32_t cluster_id) const = 0;
@@ -176,6 +186,21 @@ class PDXIndex : public IPDXIndex {
         row_id_cluster_mapping.Load(reader);
         index.LoadClusterData(reader);
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
+    }
+
+    void LoadResidentDataFromStream(std::istream& in, IClusterSource& cluster_source) override {
+        StreamReader reader{in};
+        index.LoadResidentData(reader, /*allocate_cluster_data=*/false);
+        row_id_cluster_mapping.Load(reader);
+        searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
+        searcher->cluster_source = &cluster_source;
+    }
+
+    std::pair<uint64_t, uint64_t> GetClusterDataRange(uint32_t cluster_id) const override {
+        return {
+            index.cluster_data_offsets.at(cluster_id),
+            index.GetClusterDataSizeInBytes(index.clusters[cluster_id].used_capacity)
+        };
     }
 
     std::vector<PDX::KNNCandidate> Search(const float* query_embedding, size_t knn) const override {
@@ -446,6 +471,9 @@ class PDXIndex : public IPDXIndex {
         }
 
         auto& cluster = index.clusters[closest_centroid_idx];
+        if (!cluster.data) {
+            throw std::logic_error("Append: the index was loaded without its clusters' data");
+        }
 
         uint32_t new_index_in_cluster = QuantizeAndAppend<Q>(
             index, searcher->quantizer, cluster, static_cast<uint32_t>(row_id), preprocessed
@@ -467,7 +495,9 @@ class PDXIndex : public IPDXIndex {
         cluster.DeleteEmbedding(index_in_cluster);
         DeleteRowIdMapping(row_id);
         index.total_num_embeddings--;
-        CheckClusterHealth(cluster);
+        if (cluster.data) {
+            CheckClusterHealth(cluster);
+        }
         return true;
     }
 

@@ -49,9 +49,15 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
   rotation) and calls `LoadFromStream`. A version mismatch throws `std::runtime_error`.
 - `PDXIndex`'s stream payload puts first what a search keeps in memory, so a reader can fetch one cluster alone:
   `IVF::SaveResidentData` (cluster sizes and capacities, each cluster's offset in the cluster data, the centroids),
-  then the row-id mapping (`RowIdClusterMapping::Save`), then `IVF::SaveClusterData` (per cluster: compact PDX
-  data, then row ids). `LoadClusterData` reads by offset and skips gaps, so the writer may reorder or pad clusters.
+  then the row-id mapping (`RowIdClusterMapping::Save`), then `IVF::SaveClusterData` (per cluster: row ids, then
+  compact PDX data). `LoadClusterData` reads by offset and skips gaps, so the writer may reorder or pad clusters.
   `IVFTree` and `FlatIndex` stream the file format's payload.
+- Paging: `LoadPDXIndexFromStream(in, pruner, &cluster_source)` (`LoadResidentDataFromStream`) loads a `PDXIndex`
+  without its clusters' arrays (`data`/`indices` null; Flat and the tree load everything). `ProbeCluster` then gets
+  a cluster's bytes from the caller's `IClusterSource` (`Acquire`/`Release`, concurrent; row ids, then PDX data with
+  stride `used_capacity`), which locates them with `GetClusterDataRange`. Such an index is read-only but for `Delete`,
+  which only tombstones (no `CheckClusterHealth`): the caller replays its deletes on a full load before rewriting it.
+  `Append` and `GetEmbeddingsFromIndexByRowIds` throw.
 - Every format is implemented once: the `Load` functions are templates over a reader (`BufferReader` for buffers,
   `StreamReader` for streams, in `utils.hpp`); `IVF::LoadClusters` reads a level's clusters of the file format for
   `IVF` and `IVFTree`.

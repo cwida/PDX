@@ -33,11 +33,18 @@ struct Cluster {
           num_dimensions(num_dimensions), indices(new uint32_t[max_capacity]),
           data(new data_t[static_cast<uint64_t>(max_capacity) * num_dimensions]) {}
 
-    Cluster(uint32_t num_embeddings, uint32_t max_capacity, uint32_t num_dimensions)
+    Cluster(
+        uint32_t num_embeddings,
+        uint32_t max_capacity,
+        uint32_t num_dimensions,
+        bool allocate_data = true
+    )
         : num_embeddings(num_embeddings), used_capacity(num_embeddings), max_capacity(max_capacity),
           min_capacity(static_cast<uint32_t>(num_embeddings * MIN_CAPACITY_THRESHOLD)),
-          num_dimensions(num_dimensions), indices(new uint32_t[max_capacity]),
-          data(new data_t[static_cast<uint64_t>(max_capacity) * num_dimensions]) {}
+          num_dimensions(num_dimensions),
+          indices(allocate_data ? new uint32_t[max_capacity] : nullptr),
+          data(allocate_data ? new data_t[static_cast<uint64_t>(max_capacity) * num_dimensions]
+                             : nullptr) {}
 
     Cluster(Cluster&& other) noexcept
         : num_embeddings(other.num_embeddings), used_capacity(other.used_capacity),
@@ -155,8 +162,10 @@ struct Cluster {
     }
 
     size_t GetInMemorySizeInBytes() const {
-        return sizeof(*this) + max_capacity * sizeof(*indices) +
-               max_capacity * static_cast<uint64_t>(num_dimensions) * sizeof(*data) +
+        const size_t data_size =
+            data ? max_capacity * static_cast<uint64_t>(num_dimensions) * sizeof(*data) : 0;
+        const size_t indices_size = indices ? max_capacity * sizeof(*indices) : 0;
+        return sizeof(*this) + data_size + indices_size +
                tombstones.size() * (sizeof(uint32_t) + 2 * sizeof(void*)) +
                tombstones.bucket_count() * sizeof(void*);
     }

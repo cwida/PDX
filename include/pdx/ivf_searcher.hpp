@@ -41,6 +41,16 @@ class IIterativeSearch {
     [[nodiscard]] virtual size_t ClustersRemaining() const = 0;
 };
 
+// Gives searches the bytes of the clusters an index holds no data for (LoadResidentDataFromStream):
+// Acquire returns them as SaveClusterData wrote them, valid until the matching Release. Called
+// concurrently by the searches.
+class IClusterSource {
+  public:
+    virtual ~IClusterSource() = default;
+    virtual const char* Acquire(uint32_t cluster_id) = 0;
+    virtual void Release(uint32_t cluster_id) = 0;
+};
+
 struct TopKHeap {
     explicit TopKHeap(bool thread_safe = false) : thread_safe(thread_safe) {}
 
@@ -72,6 +82,7 @@ class PDXearch {
     Quantizer quantizer;
     Pruner& pruner;
     index_t& pdx_data;
+    IClusterSource* cluster_source = nullptr;
 
     PDXearch(index_t& data_index, Pruner& pruner)
         : quantizer(data_index.num_dimensions), pruner(pruner), pdx_data(data_index) {}
@@ -681,7 +692,30 @@ class PDXearch {
         )
             : searcher(&searcher), top_k_heap(&top_k_heap), k(k), evaluator(evaluator) {}
 
+        // A cluster without data (LoadResidentDataFromStream) comes from the cluster source: its
+        // row ids, then its PDX data with the stride of the embeddings it was saved with.
         void ProbeCluster(uint32_t cluster_id) {
+            PDXearch& s = *searcher;
+            const cluster_t& cluster = s.pdx_data.clusters[cluster_id];
+            if (cluster.data) {
+                ProbeClusterData(cluster_id, cluster.data, cluster.indices, cluster.max_capacity);
+                return;
+            }
+            const char* cluster_bytes = s.cluster_source->Acquire(cluster_id);
+            const auto* indices = reinterpret_cast<const uint32_t*>(cluster_bytes);
+            const auto* data = reinterpret_cast<const data_t*>(
+                cluster_bytes + sizeof(uint32_t) * cluster.used_capacity
+            );
+            ProbeClusterData(cluster_id, data, indices, cluster.used_capacity);
+            s.cluster_source->Release(cluster_id);
+        }
+
+        void ProbeClusterData(
+            uint32_t cluster_id,
+            const data_t* data,
+            const uint32_t* indices,
+            size_t stride
+        ) {
             PDXearch& s = *searcher;
             cluster_t& cluster = s.pdx_data.clusters[cluster_id];
             cluster.n_accessed.fetch_add(1, std::memory_order_relaxed);
@@ -702,11 +736,11 @@ class PDXearch {
                     if constexpr (FILTERED) {
                         s.FilteredStart(
                             prepared_query,
-                            cluster.data,
+                            data,
                             cluster.used_capacity,
-                            cluster.max_capacity,
+                            stride,
                             k,
-                            cluster.indices,
+                            indices,
                             pruning_positions.get(),
                             pruning_distances.get(),
                             *top_k_heap,
@@ -717,11 +751,11 @@ class PDXearch {
                     } else {
                         s.Start(
                             prepared_query,
-                            cluster.data,
+                            data,
                             cluster.used_capacity,
-                            cluster.max_capacity,
+                            stride,
                             k,
-                            cluster.indices,
+                            indices,
                             pruning_positions.get(),
                             pruning_distances.get(),
                             *top_k_heap,
@@ -736,9 +770,9 @@ class PDXearch {
             size_t n_vectors_not_pruned = 0;
             s.template Warmup<FILTERED>(
                 prepared_query,
-                cluster.data,
+                data,
                 cluster.used_capacity,
-                cluster.max_capacity,
+                stride,
                 k,
                 s.selectivity_threshold,
                 pruning_positions.get(),
@@ -753,9 +787,9 @@ class PDXearch {
             );
             s.template Prune<FILTERED>(
                 prepared_query,
-                cluster.data,
+                data,
                 cluster.used_capacity,
-                cluster.max_capacity,
+                stride,
                 k,
                 pruning_positions.get(),
                 pruning_distances.get(),
@@ -769,7 +803,7 @@ class PDXearch {
             if (n_vectors_not_pruned) {
                 auto lock = top_k_heap->GetLock();
                 s.MergeIntoHeap(
-                    cluster.indices,
+                    indices,
                     n_vectors_not_pruned,
                     k,
                     pruning_positions.get(),

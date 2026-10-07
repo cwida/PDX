@@ -204,19 +204,19 @@ class IVF {
         }
     }
 
-    // Each cluster's compact PDX data, then its row ids, in cluster order.
+    // Each cluster's row ids, then its compact PDX data, in cluster order.
     void SaveClusterData(std::ostream& out) const {
         for (size_t i = 0; i < num_clusters; ++i) {
-            clusters[i].SavePDXData(out);
             out.write(
                 reinterpret_cast<const char*>(clusters[i].indices),
                 static_cast<std::streamsize>(sizeof(uint32_t) * clusters[i].num_embeddings)
             );
+            clusters[i].SavePDXData(out);
         }
     }
 
     template <class Reader>
-    void LoadResidentData(Reader& reader) {
+    void LoadResidentData(Reader& reader, const bool allocate_cluster_data = true) {
         num_dimensions = ReadValue<uint32_t>(reader);
         num_vertical_dimensions = ReadValue<uint32_t>(reader);
         num_horizontal_dimensions = ReadValue<uint32_t>(reader);
@@ -226,7 +226,7 @@ class IVF {
         for (uint32_t i = 0; i < num_clusters; ++i) {
             const auto num_embeddings = ReadValue<uint32_t>(reader);
             const auto max_capacity = ReadValue<uint32_t>(reader);
-            clusters.emplace_back(num_embeddings, max_capacity, num_dimensions);
+            clusters.emplace_back(num_embeddings, max_capacity, num_dimensions, allocate_cluster_data);
             clusters[i].id = i;
             cluster_data_offsets[i] = ReadValue<uint64_t>(reader);
         }
@@ -261,8 +261,8 @@ class IVF {
             }
             reader.Skip(cluster_data_offsets[cluster_id] - position);
             auto& cluster = clusters[cluster_id];
-            cluster.LoadPDXData(reader);
             reader.Read(cluster.indices, sizeof(uint32_t) * cluster.num_embeddings);
+            cluster.LoadPDXData(reader);
             position =
                 cluster_data_offsets[cluster_id] + GetClusterDataSizeInBytes(cluster.num_embeddings);
         }
