@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <numeric>
 #include <queue>
@@ -28,6 +29,10 @@ struct TestData {
     std::vector<float> train;
     std::vector<float> queries;
 };
+
+inline std::string TempPath(const std::string& name) {
+    return (std::filesystem::temp_directory_path() / name).string();
+}
 
 inline TestData LoadTestData(size_t d = MAX_D) {
     static std::vector<float> full_data;

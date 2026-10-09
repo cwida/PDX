@@ -269,7 +269,7 @@ void RunMaintenanceAfterRestore(const std::string& index_type) {
     const size_t kept_row_id = n_build;
     const size_t deleted_row_id = n_build + 1;
 
-    std::string path = "/tmp/pdx_test_maintenance_" + index_type;
+    std::string path = TestUtils::TempPath("pdx_test_maintenance_" + index_type);
     {
         IndexT index(MakeConfig(D));
         index.BuildIndex(data.train.data(), n_build);

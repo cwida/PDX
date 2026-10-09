@@ -36,7 +36,7 @@ TEST_P(SerializationTest, SaveLoadProducesSameSearchResults) {
     }
 
     // Save and reload
-    std::string path = "/tmp/pdx_test_" + index_type;
+    std::string path = TestUtils::TempPath("pdx_test_" + index_type);
     index->Save(path);
     auto loaded = PDX::LoadPDXIndex(path);
     ASSERT_NE(loaded, nullptr);
@@ -84,7 +84,7 @@ TEST_P(SerializationTest, SaveLoadProducesSameFilteredSearchResults) {
         );
     }
 
-    std::string path = "/tmp/pdx_test_filtered_" + index_type;
+    std::string path = TestUtils::TempPath("pdx_test_filtered_" + index_type);
     index->Save(path);
     auto loaded = PDX::LoadPDXIndex(path);
     ASSERT_NE(loaded, nullptr);
@@ -114,7 +114,7 @@ TEST_P(SerializationTest, LoadedIndexProperties) {
     uint32_t orig_clusters = index->GetNumClusters();
     size_t orig_mem = index->GetInMemorySizeInBytes();
 
-    std::string path = "/tmp/pdx_test_props_" + index_type;
+    std::string path = TestUtils::TempPath("pdx_test_props_" + index_type);
     index->Save(path);
     auto loaded = PDX::LoadPDXIndex(path);
 
@@ -135,7 +135,7 @@ TEST_P(SerializationTest, LoadAutoDetectsType) {
     auto data = TestUtils::LoadTestData(d);
 
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
-    std::string path = "/tmp/pdx_test_autodetect_" + index_type;
+    std::string path = TestUtils::TempPath("pdx_test_autodetect_" + index_type);
     index->Save(path);
 
     // LoadPDXIndex should auto-detect the type from the header byte
@@ -351,7 +351,7 @@ TEST(FileSerialization, FlatSaveLoadProducesSameResults) {
         index.Delete(row_id);
     }
 
-    const std::string path = "/tmp/pdx_test_flat";
+    const std::string path = TestUtils::TempPath("pdx_test_flat");
     index.Save(path);
     auto loaded = PDX::LoadPDXIndex(path);
     ASSERT_NE(loaded, nullptr);
