@@ -261,7 +261,8 @@ TEST_P(IterativeSearchTest, ChunkSizeDoesNotChangeResults) {
         index->BeginIterativeSearch(query, TestUtils::KNN, baseline_top_k_heap, nullptr);
     auto baseline = Drain(*baseline_search_cursor, baseline_top_k_heap, TestUtils::KNN, 1);
 
-    for (size_t chunk : {2ul, 5ul, 64ul, static_cast<size_t>(index->GetNumClusters())}) {
+    for (size_t chunk :
+         {size_t{2}, size_t{5}, size_t{64}, static_cast<size_t>(index->GetNumClusters())}) {
         PDX::TopKHeap top_k_heap;
         auto search_cursor =
             index->BeginIterativeSearch(query, TestUtils::KNN, top_k_heap, nullptr);
