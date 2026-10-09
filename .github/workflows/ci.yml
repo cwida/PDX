@@ -163,7 +163,12 @@ jobs:
         run: python -c "import pdxearch; print('pdxearch imported successfully')"
 
   sanitizers-asan-ubsan:
-    runs-on: ubuntu-24.04
+    name: sanitizers-asan-ubsan (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
     env:
       CC: clang-18
       CXX: clang++-18
@@ -179,7 +184,9 @@ jobs:
         run: |
           cmake -B build_asan -DPDX_COMPILE_TESTS=ON \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_C_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -D_GLIBCXX_SANITIZE_VECTOR=1" \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
 
       - name: Build tests
@@ -187,6 +194,40 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build_asan --output-on-failure
+
+  sanitizers-tsan:
+    name: sanitizers-tsan (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    env:
+      CC: clang-18
+      CXX: clang++-18
+      TSAN_OPTIONS: ignore_noninstrumented_modules=1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 cmake
+
+      - name: Configure with TSan
+        run: |
+          cmake -B build_tsan -DPDX_COMPILE_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_C_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+
+      - name: Build tests
+        run: cmake --build build_tsan -j$(nproc) --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build_tsan --output-on-failure
 
   ci-pass:
     runs-on: ubuntu-latest
@@ -200,6 +241,7 @@ jobs:
       - wasm
       - python
       - sanitizers-asan-ubsan
+      - sanitizers-tsan
     steps:
       - name: Check all jobs passed
         run: |

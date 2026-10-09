@@ -622,7 +622,8 @@ class PDXTreeIndex : public IPDXIndex {
             } else {
                 SplitL0Cluster(l0_cluster);
             }
-        } else if (allow_merges && l0_cluster.num_embeddings <= l0_cluster.min_capacity) {
+        } else if (allow_merges && index.l0.num_clusters > 1 &&
+                   l0_cluster.num_embeddings <= l0_cluster.min_capacity) {
             DestroyAndMergeL0Cluster(l0_cluster);
         }
     }
@@ -870,7 +871,8 @@ class PDXTreeIndex : public IPDXIndex {
             } else {
                 SplitCluster(cluster);
             }
-        } else if (allow_merges && cluster.num_embeddings <= cluster.min_capacity) {
+        } else if (allow_merges && index.num_clusters > 1 &&
+                   cluster.num_embeddings <= cluster.min_capacity) {
             DestroyAndMergeCluster(cluster);
         }
     }
@@ -1095,8 +1097,8 @@ class PDXTreeIndex : public IPDXIndex {
             index.l0.clusters[mesocluster_id].DeleteEmbedding(pos);
             index.l0.clusters[mesocluster_id].CompactCluster();
             index.l0.clusters[mesocluster_id].AppendEmbedding(cluster_id, true_centroid_a.get());
-            // CheckL0ClusterHealth may reallocate index.l0.clusters
-            CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
+            // CheckL0ClusterHealth may reallocate index.l0.clusters; no merges, B goes in next
+            CheckL0ClusterHealth(index.l0.clusters[mesocluster_id], false);
             index.l0.clusters[mesocluster_id].AppendEmbedding(
                 new_cluster_b_id, true_centroid_b.get()
             );
@@ -1117,7 +1119,8 @@ class PDXTreeIndex : public IPDXIndex {
         index.ComputeClusterOffsets();
         index.l0.ComputeClusterOffsets();
 
-        CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
+        // A split never shrinks the mesocluster, and a merge here would move the callers' ids
+        CheckL0ClusterHealth(index.l0.clusters[mesocluster_id], false);
     }
 
     // Reassign dequantized (float) embeddings to their closest centroid
@@ -1144,6 +1147,11 @@ class PDXTreeIndex : public IPDXIndex {
             if (!meso.HasTombstone(p)) {
                 candidate_ids.push_back(meso.indices[p]);
             }
+        }
+        // A merge can empty the mesocluster: reassign over all clusters then
+        if (candidate_ids.empty()) {
+            candidate_ids.resize(index.num_clusters);
+            std::iota(candidate_ids.begin(), candidate_ids.end(), 0);
         }
         const uint32_t n_candidates = static_cast<uint32_t>(candidate_ids.size());
 
