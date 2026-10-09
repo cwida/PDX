@@ -197,7 +197,7 @@ class ADSamplingPruner : public skmeans::ExecutorHolder {
         fftw_r2r_kind kind = FFTW_REDFT10;
         const unsigned flag =
             (IsPowerOf2(num_dimensions) ? FFTW_ESTIMATE : FFTW_MEASURE) | FFTW_UNALIGNED;
-        const size_t block_rows = std::min(skmeans::MINI_BATCH_SIZE, n);
+        const size_t block_rows = std::min(skmeans::ROTATION_BLOCK_SIZE, n);
         const size_t tail_rows = n % block_rows;
         std::unique_ptr<float[]> scratch(new float[block_rows * num_dimensions]);
         auto make_plan = [&](size_t rows) {
@@ -257,13 +257,15 @@ class ADSamplingPruner : public skmeans::ExecutorHolder {
             return;
         }
 #endif
-        // Single-threaded GEMMs over blocks of MINI_BATCH_SIZE rows, run in parallel
+        // Single-threaded GEMMs over blocks of ROTATION_BLOCK_SIZE rows, run in parallel
         const int dim = static_cast<int>(num_dimensions);
-        const size_t n_blocks = (n + skmeans::MINI_BATCH_SIZE - 1) / skmeans::MINI_BATCH_SIZE;
+        const size_t n_blocks =
+            (n + skmeans::ROTATION_BLOCK_SIZE - 1) / skmeans::ROTATION_BLOCK_SIZE;
         executor.ParallelFor(n_blocks, [&](size_t block_begin, size_t block_end, size_t) {
             for (size_t block = block_begin; block < block_end; ++block) {
-                const size_t row = block * skmeans::MINI_BATCH_SIZE;
-                const int n_rows = static_cast<int>(std::min(skmeans::MINI_BATCH_SIZE, n - row));
+                const size_t row = block * skmeans::ROTATION_BLOCK_SIZE;
+                const int n_rows =
+                    static_cast<int>(std::min(skmeans::ROTATION_BLOCK_SIZE, n - row));
                 skmeans::Sgemm(
                     'N',
                     'N',

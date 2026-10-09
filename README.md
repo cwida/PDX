@@ -23,6 +23,8 @@
 - 🔍 Efficient [**filtered search**](https://github.com/cwida/PDX/issues/7).
 - ⚙️ Fast and reliable [**index maintenance**](https://github.com/cwida/PDX/pull/13).
 - Query latency competitive with HNSW, with the ease of use of IVF.
+- **Lightweight**: no external dependencies.
+- **Portable**: Linux (x86, ARM), macOS, Windows (x86, ARM), Wasm.
 
 
 ## Our secret sauce

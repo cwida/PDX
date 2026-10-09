@@ -44,7 +44,7 @@ set(SKMEANS_SKIP_FFTW ${PDX_SKIP_FFTW} CACHE BOOL "" FORCE)
 set(SKMEANS_COMPILE_PYTHON OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(superkmeans
     GIT_REPOSITORY https://github.com/lkuffo/SuperKMeans.git
-    GIT_TAG a0524d0c6f97e7e526b3fd1a232c77f67655d2f2
+    GIT_TAG 244b5e10f8709aaddac70176526dd21fe473e63a
 )
 FetchContent_MakeAvailable(superkmeans)
 
