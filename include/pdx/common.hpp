@@ -9,6 +9,8 @@
 #include <queue>
 #include <random>
 
+#include "superkmeans/executor.h"
+
 #define PDX_ENSURE_POSITIVE(x)                                                                     \
     if ((x) <= 0) {                                                                                \
         throw std::invalid_argument("Value must be positive: " #x);                                \
@@ -39,7 +41,13 @@
 #endif
 
 #ifndef PDX_NO_INLINE
+#if defined(__GNUC__) || defined(__clang__)
 #define PDX_NO_INLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define PDX_NO_INLINE __declspec(noinline)
+#else
+#define PDX_NO_INLINE
+#endif
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -52,6 +60,9 @@
 
 #if defined(__GNUC__) || defined(__clang__)
 #define PDX_PREFETCH(addr, rw, locality) __builtin_prefetch((addr), (rw), (locality))
+#elif defined(_MSC_VER) && defined(_M_ARM64)
+#include <intrin.h>
+#define PDX_PREFETCH(addr, rw, locality) __prefetch(addr)
 #elif defined(_MSC_VER)
 #include <xmmintrin.h>
 #define PDX_PREFETCH(addr, rw, locality)                                                           \
@@ -70,10 +81,8 @@
 
 namespace PDX {
 
-// Global thread count for OpenMP parallel regions and FFTW.
-// Set by PDXIndex/PDXTreeIndex constructors. Needed for functions (adsampling, clustering)
-// that can't access class members.
-inline uint32_t g_n_threads = 1;
+// Runs PDX's parallel loops; the index holds one (see IPDXIndex) and passes it down.
+using ParallelExecutor = skmeans::ParallelExecutor;
 
 static constexpr float PROPORTION_HORIZONTAL_DIM = 0.75f;
 static constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;

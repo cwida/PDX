@@ -164,8 +164,10 @@ TEST(FlatIndex, AppendDeleteAndReappend) {
 TEST(FlatIndex, TransformedInputAndPromotionToIVF) {
     auto data = TestUtils::LoadTestData(D);
     PDX::ADSamplingPruner pruner(D, TestUtils::SEED);
-    auto transformed =
-        PDX::NormalizeAndRotate(data.train.data(), TestUtils::N_TRAIN, D, false, pruner);
+    skmeans::SerialExecutor executor;
+    auto transformed = PDX::IVFUtils(executor).NormalizeAndRotate(
+        data.train.data(), TestUtils::N_TRAIN, D, false, pruner
+    );
 
     PDX::FlatIndex reference(MakeConfig());
     reference.BuildIndex(data.train.data(), TestUtils::N_TRAIN);

@@ -22,7 +22,7 @@
 
 namespace PDX {
 
-class IPDXIndex {
+class IPDXIndex : public skmeans::ExecutorHolder {
   public:
     virtual ~IPDXIndex() = default;
     virtual std::vector<KNNCandidate> Search(const float* query_embedding, size_t knn) const = 0;
@@ -106,6 +106,19 @@ class IPDXIndex {
         const float* query_embedding,
         bool is_query_transformed = false
     ) const = 0;
+
+  protected:
+    void BindExecutor(const PDXIndexConfig& config) {
+        if (config.executor != nullptr) {
+            SetExecutor(config.executor);
+        } else {
+            owned_executor = skmeans::MakeDefaultExecutor(config.n_threads);
+            SetExecutor(owned_executor.get());
+        }
+    }
+
+  private:
+    std::unique_ptr<ParallelExecutor> owned_executor;
 };
 
 template <PDX::Quantization Q>
@@ -132,7 +145,7 @@ class PDXIndex : public IPDXIndex {
 
     explicit PDXIndex(PDXIndexConfig config) : config(config) {
         config.Validate();
-        PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
+        BindExecutor(config);
         owned_pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
         pruner = owned_pruner.get();
         row_id_cluster_mapping.base_row_id = config.base_row_id;
@@ -141,7 +154,7 @@ class PDXIndex : public IPDXIndex {
     PDXIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
         : config(config), pruner(&external_pruner) {
         config.Validate();
-        PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
+        BindExecutor(config);
         row_id_cluster_mapping.base_row_id = config.base_row_id;
     }
 
@@ -378,6 +391,8 @@ class PDXIndex : public IPDXIndex {
         const size_t num_embeddings
     ) {
         config.ValidateNumEmbeddings(num_embeddings);
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        const IVFUtils ivf_utils(GetExecutor());
 
         const auto num_dimensions = config.num_dimensions;
         auto num_clusters = config.num_clusters;
@@ -392,15 +407,17 @@ class PDXIndex : public IPDXIndex {
 
         std::unique_ptr<float[]> transformed;
         if (!config.is_data_transformed) {
-            transformed =
-                NormalizeAndRotate(embeddings, num_embeddings, num_dimensions, normalize, *pruner);
+            transformed = ivf_utils.NormalizeAndRotate(
+                embeddings, num_embeddings, num_dimensions, normalize, *pruner
+            );
         }
         const float* preprocessed = config.is_data_transformed ? embeddings : transformed.get();
 
         float quantization_base = 0.0f;
         float quantization_scale = 1.0f;
         if constexpr (Q == PDX::U8) {
-            const auto params = PDX::ScalarQuantizer<Q>::ComputeQuantizationParams(
+            const PDX::ScalarQuantizer<Q> quantizer(num_dimensions, &GetExecutor());
+            const auto params = quantizer.ComputeQuantizationParams(
                 preprocessed, static_cast<size_t>(num_embeddings) * num_dimensions
             );
             quantization_base = params.quantization_base;
@@ -417,7 +434,7 @@ class PDXIndex : public IPDXIndex {
             index = PDX::IVF<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
         }
 
-        KMeansResult kmeans_result = ComputeKMeans(
+        KMeansResult kmeans_result = ivf_utils.ComputeKMeans(
             preprocessed,
             num_embeddings,
             num_dimensions,
@@ -431,7 +448,7 @@ class PDXIndex : public IPDXIndex {
         );
         index.centroids = std::move(kmeans_result.centroids);
 
-        PopulateIVFClusters<Q>(
+        ivf_utils.PopulateIVFClusters<Q>(
             index,
             kmeans_result,
             preprocessed,
@@ -460,12 +477,14 @@ class PDXIndex : public IPDXIndex {
             );
         }
         ReserveClusterSlotIfNeeded();
+        skmeans::ParallelSection parallel_section(GetExecutor());
 
         std::unique_ptr<float[]> transformed;
         if (!config.is_data_transformed) {
-            transformed = NormalizeAndRotate(
-                embedding, 1, index.num_dimensions, index.is_normalized, *pruner
-            );
+            transformed = IVFUtils(GetExecutor())
+                              .NormalizeAndRotate(
+                                  embedding, 1, index.num_dimensions, index.is_normalized, *pruner
+                              );
         }
         const float* preprocessed = config.is_data_transformed ? embedding : transformed.get();
 
@@ -497,6 +516,7 @@ class PDXIndex : public IPDXIndex {
             return false;
         }
         ReserveClusterSlotIfNeeded();
+        skmeans::ParallelSection parallel_section(GetExecutor());
         auto& cluster = index.clusters[cluster_id];
         cluster.DeleteEmbedding(index_in_cluster);
         DeleteRowIdMapping(row_id);
@@ -866,7 +886,7 @@ class PDXIndex : public IPDXIndex {
         std::unique_ptr<uint32_t[]> assignments(new uint32_t[num_embeddings]);
         std::unique_ptr<float[]> result_distances(new float[num_embeddings]);
         std::unique_ptr<float[]> tmp_distances_buf(
-            new float[skmeans::X_BATCH_SIZE * skmeans::Y_BATCH_SIZE]
+            new float[batch_computer::ScratchSize(GetExecutor())]
         );
 
         std::vector<float> embeddings_norms(num_embeddings);
@@ -880,6 +900,7 @@ class PDXIndex : public IPDXIndex {
         c_norms.noalias() = centroids_matrix.rowwise().squaredNorm();
 
         batch_computer::FindNearestNeighbor(
+            GetExecutor(),
             embeddings,
             index.centroids.data(),
             num_embeddings,

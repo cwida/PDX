@@ -539,7 +539,7 @@ class PDXearch {
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
-                __builtin_prefetch(data + data_pos, 0, 3);
+                PDX_PREFETCH(data + data_pos, 0, 3);
             }
             size_t offset_query = pdx_data.num_vertical_dimensions + current_horizontal_dimension;
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {

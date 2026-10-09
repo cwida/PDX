@@ -31,9 +31,6 @@
 
 Pruning means avoiding checking *all* the dimensions of a vector to determine if it is a neighbour of a query, accelerating index construction and similarity search by factors.
 
-## Use Cases and Benchmarking
-Check [./BENCHMARKING.md](./BENCHMARKING.md).
-
 ## Usage
 
 ```py
@@ -62,17 +59,14 @@ index.delete(row_id_to_delete)
 Check our [examples](./examples/) for fully working examples in Python and our [benchmarks](./benchmarks) for fully working examples in C++. We support Flat (`float32`) and Quantized (`8-bit`) indexes, as well as the most common distance metrics. 
 
 ## Installation
-We provide Python bindings for ease of use. Soon, we will be available on PyPI.
 
 ### Prerequisites
-- Clang 17, CMake 3.26
-- OpenMP
-- A BLAS implementation
+- Clang 17 (MSVC 2022 on Windows), CMake 3.26
 - Python 3 (only for Python bindings)
 
 ### Installation Steps
 ```sh
-git clone --recurse-submodules https://github.com/cwida/PDX
+git clone https://github.com/cwida/PDX
 cd PDX
 
 pip install .
@@ -85,8 +79,6 @@ python ./examples/pdx_simple.py
 
 For a more comprehensive installation and compilation guide, check [INSTALL.md](./INSTALL.md).
 
-## Getting the Best Performance
-Check [INSTALL.md](./INSTALL.md).
 
 ## Roadmap
 We are actively developing Super K-Means and accepting contributions! Check [CONTRIBUTING.md](./CONTRIBUTING.md)
@@ -114,6 +106,8 @@ Smaller data types are not friendly to PDX, as we must accumulate distances on w
 <!-- ### `binary`
 For Hamming/Jaccard kernels, we use a layout decomposed every 8 dimensions (naturally grouped into bytes). The population count accumulation can be done in `bytes`. If d > 256, we flush the popcounts into a wider type every 32 words (corresponding to 256 dimensions). This has not been implemented in this repository yet, but you can find some promising benchmarks [here](https://github.com/lkuffo/binary-index).  -->
 
+## Use Cases and Benchmarks
+Check [./BENCHMARKING.md](./BENCHMARKING.md).
 
 ## Citation
 If you use PDX for your research, consider citing us:

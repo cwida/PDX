@@ -270,6 +270,9 @@ TEST_P(IterativeSearchTest, ChunkSizeDoesNotChangeResults) {
 }
 
 TEST_P(IterativeSearchTest, ConcurrentCursorsOnOneIndex) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+    GTEST_SKIP() << "Wasm without pthreads cannot start threads";
+#endif
     auto data = TestUtils::LoadTestData(D);
     auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
     index->SetNProbe(0);
@@ -381,6 +384,9 @@ void RunSharedHeapAcrossPartitions() {
 }
 
 TEST_P(IterativeSearchTest, SharedHeapAcrossPartitionsMatchesBruteForce) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+    GTEST_SKIP() << "Wasm without pthreads cannot start threads";
+#endif
     ForIndexType(GetParam(), [](auto tag) {
         RunSharedHeapAcrossPartitions<typename decltype(tag)::type>();
     });

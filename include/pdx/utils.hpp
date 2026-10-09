@@ -2,34 +2,23 @@
 
 #include <cstdint>
 #include <cstring>
-#include <fcntl.h>
 #include <fstream>
 #include <istream>
 #include <memory>
 #include <ostream>
 #include <stdexcept>
 #include <string>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-
-#ifdef linux
-#include <linux/mman.h>
-#endif
 
 inline std::unique_ptr<char[]> MmapFile(const std::string& filename) {
-    struct stat file_stats {};
-    int fd = ::open(filename.c_str(), O_RDONLY);
-    if (fd == -1)
+    std::ifstream input(filename, std::ios::binary | std::ios::ate);
+    if (!input)
         throw std::runtime_error("Failed to open file");
 
-    fstat(fd, &file_stats);
-    size_t file_size = file_stats.st_size;
+    const auto file_size = static_cast<size_t>(input.tellg());
+    input.seekg(0);
 
     std::unique_ptr<char[]> data(new char[file_size]);
-    std::ifstream input(filename, std::ios::binary);
-    input.read(data.get(), file_size);
+    input.read(data.get(), static_cast<std::streamsize>(file_size));
 
     return data;
 }

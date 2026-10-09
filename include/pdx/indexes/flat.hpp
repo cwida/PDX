@@ -35,7 +35,7 @@ class FlatIndex : public IPDXIndex {
     explicit FlatIndex(PDXIndexConfig config)
         : config(config), index(config.num_dimensions, Normalize(config)) {
         config.Validate();
-        PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
+        BindExecutor(config);
         owned_pruner = std::make_unique<ADSamplingPruner>(config.num_dimensions, config.seed);
         pruner = owned_pruner.get();
         searcher = std::make_unique<FlatSearcher>(index, *pruner);
@@ -46,7 +46,7 @@ class FlatIndex : public IPDXIndex {
         : config(config), index(config.num_dimensions, Normalize(config)),
           pruner(&external_pruner) {
         config.Validate();
-        PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
+        BindExecutor(config);
         searcher = std::make_unique<FlatSearcher>(index, *pruner);
         row_id_cluster_mapping.base_row_id = config.base_row_id;
     }
@@ -58,11 +58,17 @@ class FlatIndex : public IPDXIndex {
     }
 
     void BuildIndex(const size_t* row_ids, const float* embeddings, size_t num_embeddings) {
+        skmeans::ParallelSection parallel_section(GetExecutor());
         std::unique_ptr<float[]> transformed;
         if (!config.is_data_transformed) {
-            transformed = NormalizeAndRotate(
-                embeddings, num_embeddings, index.num_dimensions, index.is_normalized, *pruner
-            );
+            transformed = IVFUtils(GetExecutor())
+                              .NormalizeAndRotate(
+                                  embeddings,
+                                  num_embeddings,
+                                  index.num_dimensions,
+                                  index.is_normalized,
+                                  *pruner
+                              );
         }
         const float* preprocessed = config.is_data_transformed ? embeddings : transformed.get();
         index.Clear();
@@ -83,9 +89,10 @@ class FlatIndex : public IPDXIndex {
         }
         std::unique_ptr<float[]> transformed;
         if (!config.is_data_transformed) {
-            transformed = NormalizeAndRotate(
-                embedding, 1, index.num_dimensions, index.is_normalized, *pruner
-            );
+            transformed = IVFUtils(GetExecutor())
+                              .NormalizeAndRotate(
+                                  embedding, 1, index.num_dimensions, index.is_normalized, *pruner
+                              );
         }
         const float* preprocessed = config.is_data_transformed ? embedding : transformed.get();
         const auto position = index.AppendEmbedding(static_cast<uint32_t>(row_id), preprocessed);

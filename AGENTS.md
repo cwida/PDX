@@ -102,7 +102,7 @@ New feature ⇒ ship a unit test with it (C++ in `tests/`, Python in `python/tes
 
 ## Build & run (beyond the gate)
 
-Header-only; consumers link the `PDX` INTERFACE target (alias `PDX::PDX`), which carries the include dirs (`include/`, bundled `extern/Eigen` exposed as `Eigen3::Eigen`), the `superkmeans::superkmeans` target from `add_subdirectory(extern/SuperKMeans)`, BLAS/OpenMP/FFTW links, compile definitions and the `-march` flags. Benchmark binaries have **no** `.out` suffix.
+Header-only, no submodules; consumers link the `PDX` INTERFACE target (alias `PDX::PDX`), which carries `include/` and links `superkmeans::superkmeans`. SuperKMeans comes from FetchContent, pinned by `GIT_TAG` in `CMakeLists.txt` (`-DFETCHCONTENT_SOURCE_DIR_SUPERKMEANS=<checkout>` builds against a local one); its target brings Eigen, FFTW (optional), the executor and GEMM backends, compile definitions and the `-march`/MSVC/Emscripten flags. Benchmark binaries have **no** `.out` suffix.
 ```bash
 cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 # Index building + search (index_type defaults to pdx_f32; nprobe 0/omitted sweeps a preset list)
@@ -111,7 +111,7 @@ cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 ```
 Add a benchmark with `pdx_add_benchmark(<Name> <source>)` in `benchmarks/CMakeLists.txt`; a test with `pdx_add_test(<name>.out <source>)` in `tests/CMakeLists.txt` (+ the `tests` custom target list).
 
-Knobs: `-DPDX_MARCH` (default `native`, empty disables `-march`), `-DPDX_PORTABLE` (`-mavx2 -mfma` on x86_64 / plain `-O3` elsewhere, for wheels; also via the `PDX_PORTABLE` env var in `pip install .`), `-DPDX_SKIP_FFTW`, `-DPDX_COMPILE_PYTHON` (bindings; defaults to ON only when PDX is the top-level project), `-DBLAS_LIBRARIES` (a good BLAS is critical — distro/apt OpenBLAS is slow, build from source). See INSTALL.md.
+Knobs: `-DPDX_MARCH` (default `native`, empty disables `-march`), `-DPDX_PORTABLE` (`-mavx2 -mfma` on x86_64 / plain `-O3` elsewhere, for wheels; also via the `PDX_PORTABLE` env var in `pip install .`), `-DPDX_SKIP_FFTW` (these three are forwarded to SuperKMeans' `SKMEANS_*`), `-DPDX_COMPILE_PYTHON` (bindings; defaults to ON only when PDX is the top-level project), and SuperKMeans' `-DSKMEANS_EXECUTOR` (`forkunion` default / `openmp` / `serial`) and `-DSKMEANS_GEMM` (`auto` default: Accelerate on macOS, Eigen elsewhere / `eigen` / `accelerate` / `blas`). See INSTALL.md.
 
 
 ## Code style
@@ -143,5 +143,13 @@ Performance-critical — weigh every copy/allocation.
 - **`PDX_VECTORIZE_LOOP`** (`common.hpp`) forces loop autovectorization (esp. FP reductions) — put it
   on its own line right above the `for`, never a raw `#pragma clang loop`. Other macros there: `PDX_RESTRICT`, `PDX_ALWAYS_INLINE`, `PDX_NO_INLINE`,
   `PDX_LIKELY`/`PDX_UNLIKELY`, `PDX_PREFETCH`, `PDX_ENSURE_POSITIVE`.
+- **Parallelism: no OpenMP.** Every parallel loop runs on SuperKMeans' `ParallelExecutor` (aliased in
+  `common.hpp`). `IPDXIndex` is a `skmeans::ExecutorHolder`: it binds `PDXIndexConfig::executor` or owns a
+  default sized by `n_threads`, and `BuildIndex`/`Append`/`Delete` open a `skmeans::ParallelSection`. It
+  hands the executor down: `IVFUtils(executor)` (normalize+rotate, k-means, cluster population),
+  `ScalarQuantizer(d, &executor)`, `ADSamplingPruner::PreprocessEmbeddings(..., &executor)` (pruners are
+  shared across indexes, so they never hold an index's executor) and `BatchComputer` calls (scratch of
+  `ScratchSize(executor)` floats). The k=2 split k-means runs on a `skmeans::SerialExecutor`. A
+  `ParallelFor` body must not call `ParallelFor`; FFTW plans only on the calling thread.
 - **Profiling**: `PDX_PROFILE_SCOPE("name")` (`profiler.hpp`); most benchmarks call
   `Profiler::Get().Print()` at the end (e.g. `BenchmarkEndToEnd`).

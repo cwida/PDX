@@ -21,120 +21,32 @@ set(PDX_COMPILE_PYTHON ${PROJECT_IS_TOP_LEVEL} CACHE BOOL "Whether to compile th
 
 # ── Compiler flags (top-level only) ──
 if(PROJECT_IS_TOP_LEVEL)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
+    if(MSVC)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W3")
+    else()
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
+    endif()
 endif()
 
 message(STATUS "C++ compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "CXX flags: ${CMAKE_CXX_FLAGS}")
 message(STATUS "CXX flags (Release): ${CMAKE_CXX_FLAGS_RELEASE}")
 
-# ── CMake modules ──
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/extern/findFFTW")
 include(FetchContent)
-include(CheckCXXCompilerFlag)
-include(CMakePrintHelpers)
 include(CTest)
 
-# ── Accumulator variables for the INTERFACE target ──
-set(_PDX_LINK_LIBS "")
-set(_PDX_COMPILE_DEFS "")
-set(_PDX_INCLUDE_DIRS "")
-
-# ── OpenMP ──
-find_package(OpenMP QUIET)
-if(NOT OpenMP_CXX_FOUND)
-    if(APPLE)
-        message(FATAL_ERROR
-            "OpenMP not found. On macOS, install it with: brew install libomp\n"
-            "Then re-run CMake.")
-    else()
-        message(FATAL_ERROR "OpenMP not found.")
-    endif()
-endif()
-list(APPEND _PDX_LINK_LIBS OpenMP::OpenMP_CXX)
-
-# ── BLAS / MKL ──
-list(PREPEND CMAKE_PREFIX_PATH /usr/local)
-
-set(MKL_INTERFACE_FULL "intel_lp64")
-find_package(MKL CONFIG QUIET)
-if(MKL_FOUND)
-    message(STATUS "MKL library found")
-    message(STATUS "MKL targets: ${MKL_IMPORTED_TARGETS}")
-    get_target_property(mkl_includes MKL::MKL INTERFACE_INCLUDE_DIRECTORIES)
-    message(STATUS "MKL includes: ${mkl_includes}")
-    list(APPEND _PDX_LINK_LIBS MKL::MKL m dl)
-    list(APPEND _PDX_COMPILE_DEFS EIGEN_USE_MKL_ALL)
-else()
-    message(STATUS "MKL not found. Trying to find a BLAS implementation")
-
-    # On macOS, prefer Apple's Accelerate framework over other BLAS implementations
-    if(APPLE)
-        set(BLA_VENDOR Apple)
-        message(STATUS "macOS detected: prioritizing Apple Accelerate framework")
-    endif()
-
-    find_package(BLAS QUIET)
-    if(NOT BLAS_FOUND)
-        if(APPLE)
-            message(FATAL_ERROR "BLAS not found. Apple Accelerate should always be available on macOS.")
-        else()
-            message(STATUS "System BLAS not found. Building OpenBLAS from source via FetchContent...")
-            FetchContent_Declare(openblas
-                URL https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.31/OpenBLAS-0.3.31.tar.gz
-            )
-            set(BUILD_WITHOUT_LAPACK ON CACHE BOOL "" FORCE)
-            set(C_LAPACK OFF CACHE BOOL "" FORCE)
-            set(USE_OPENMP ON CACHE BOOL "" FORCE)
-            set(DYNAMIC_ARCH ON CACHE BOOL "" FORCE)
-            set(NUM_THREADS 384 CACHE STRING "" FORCE)
-            set(NOFORTRAN ON CACHE BOOL "" FORCE)
-            FetchContent_MakeAvailable(openblas)
-            list(APPEND _PDX_LINK_LIBS openblas)
-        endif()
-    else()
-        message(STATUS "BLAS library found: ${BLAS_LIBRARIES}")
-        list(APPEND _PDX_LINK_LIBS ${BLAS_LIBRARIES})
-    endif()
-endif()
-
-# ── FFTW (optional) ──
-if(NOT PDX_SKIP_FFTW)
-    find_package(FFTW QUIET)
-    if(FFTW_FLOAT_LIB_FOUND)
-        message(STATUS "FFTW (+float capabilities) found: ${FFTW_INCLUDE_DIRS}")
-        list(APPEND _PDX_COMPILE_DEFS HAS_FFTW)
-        list(APPEND _PDX_LINK_LIBS ${FFTW_FLOAT_LIB} ${FFTW_FLOAT_OPENMP_LIB})
-        list(APPEND _PDX_INCLUDE_DIRS ${FFTW_INCLUDE_DIRS})
-    else()
-        message(STATUS "FFTW (+float capabilities) not found, we recommend you install them for increased performance")
-    endif()
-else()
-    message(STATUS "FFTW skipped (PDX_SKIP_FFTW=ON)")
-endif()
-
-# ── Eigen ──
-# Use a consumer-provided Eigen3::Eigen target when available to avoid leaking our
-# bundled headers into the consumer's include path. Otherwise, use bundled extern/Eigen.
-if(TARGET Eigen3::Eigen)
-    message(STATUS "Eigen: using existing Eigen3::Eigen target")
-    list(APPEND _PDX_LINK_LIBS Eigen3::Eigen)
-else()
-    message(STATUS "Eigen: using bundled extern/Eigen")
-    # Exposed as Eigen3::Eigen so SuperKMeans below shares this copy instead of its own
-    add_library(pdx_bundled_eigen INTERFACE)
-    add_library(Eigen3::Eigen ALIAS pdx_bundled_eigen)
-    target_include_directories(pdx_bundled_eigen INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/extern/Eigen)
-    list(APPEND _PDX_LINK_LIBS Eigen3::Eigen)
-endif()
-
-# ── SuperKMeans (index construction; brings cpuinfo, numkong and ruy through its own CMake) ──
+# ── SuperKMeans ──
+# Index construction. Its target also brings Eigen, FFTW (optional), the executor and GEMM backends
+# (SKMEANS_EXECUTOR, SKMEANS_GEMM) and the architecture flags (-march, MSVC, Emscripten).
 set(SKMEANS_PORTABLE ${PDX_PORTABLE} CACHE BOOL "" FORCE)
 set(SKMEANS_MARCH "${PDX_MARCH}" CACHE STRING "" FORCE)
-# FFTW is found, linked and HAS_FFTW-defined by PDX above; FindFFTW cannot run a second time
-set(SKMEANS_SKIP_FFTW ON CACHE BOOL "" FORCE)
-add_subdirectory(extern/SuperKMeans)
-list(APPEND _PDX_LINK_LIBS superkmeans::superkmeans)
+set(SKMEANS_SKIP_FFTW ${PDX_SKIP_FFTW} CACHE BOOL "" FORCE)
+set(SKMEANS_COMPILE_PYTHON OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(superkmeans
+    GIT_REPOSITORY https://github.com/lkuffo/SuperKMeans.git
+    GIT_TAG a0524d0c6f97e7e526b3fd1a232c77f67655d2f2
+)
+FetchContent_MakeAvailable(superkmeans)
 
 # ── INTERFACE library target ──
 add_library(PDX INTERFACE)
@@ -145,31 +57,9 @@ if(NOT PROJECT_IS_TOP_LEVEL)
     set(_PDX_SYSTEM SYSTEM)
 endif()
 
-target_include_directories(PDX ${_PDX_SYSTEM} INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${_PDX_INCLUDE_DIRS}
-)
-
-target_link_libraries(PDX INTERFACE ${_PDX_LINK_LIBS})
-target_compile_definitions(PDX INTERFACE ${_PDX_COMPILE_DEFS})
+target_include_directories(PDX ${_PDX_SYSTEM} INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(PDX INTERFACE superkmeans::superkmeans)
 target_compile_features(PDX INTERFACE cxx_std_17)
-
-# Architecture flags on the target (propagated to consumers)
-if(PDX_PORTABLE)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")
-        target_compile_options(PDX INTERFACE $<$<CONFIG:Release>:-O3 -mavx2 -mfma>)
-        message(STATUS "Portable mode: x86_64, using -mavx2 -mfma")
-    else()
-        target_compile_options(PDX INTERFACE $<$<CONFIG:Release>:-O3>)
-        message(STATUS "Portable mode: ${CMAKE_SYSTEM_PROCESSOR}, using generic -O3")
-    endif()
-elseif(PDX_MARCH)
-    target_compile_options(PDX INTERFACE $<$<CONFIG:Release>:-O3 -march=${PDX_MARCH}>)
-    message(STATUS "Architecture: -march=${PDX_MARCH}")
-else()
-    target_compile_options(PDX INTERFACE $<$<CONFIG:Release>:-O3>)
-    message(STATUS "Architecture: no -march flag")
-endif()
 
 # ── Subdirectories ──
 if(PDX_COMPILE_TESTS)
@@ -202,7 +92,9 @@ if(PDX_COMPILE_PYTHON AND Python_FOUND AND pybind11_FOUND)
 
     pybind11_add_module(compiled python/lib.cpp)
     target_link_libraries(compiled PRIVATE PDX)
-    target_compile_options(compiled PRIVATE -Wall -Wno-unknown-pragmas)
+    if(NOT MSVC)
+        target_compile_options(compiled PRIVATE -Wall -Wno-unknown-pragmas)
+    endif()
 
     install(TARGETS compiled
         LIBRARY DESTINATION pdxearch

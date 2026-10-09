@@ -45,7 +45,9 @@ void RunTransformedBuildMatchesRawBuild() {
     raw_index.BuildIndex(data.train.data(), n_build);
 
     PDX::ADSamplingPruner pruner(D, TestUtils::SEED);
-    auto transformed = PDX::NormalizeAndRotate(data.train.data(), n_build, D, true, pruner);
+    skmeans::SerialExecutor executor;
+    const PDX::IVFUtils ivf_utils(executor);
+    auto transformed = ivf_utils.NormalizeAndRotate(data.train.data(), n_build, D, true, pruner);
     auto config = MakeConfig();
     config.is_data_transformed = true;
     IndexT transformed_index(config, pruner);
@@ -60,7 +62,7 @@ void RunTransformedBuildMatchesRawBuild() {
     }
 
     auto transformed_last =
-        PDX::NormalizeAndRotate(data.train.data() + last * D, 1, D, true, pruner);
+        ivf_utils.NormalizeAndRotate(data.train.data() + last * D, 1, D, true, pruner);
     raw_index.Append(last, data.train.data() + last * D);
     transformed_index.Append(last, transformed_last.get());
     const float* query = data.train.data() + last * D;
@@ -86,8 +88,10 @@ template <typename IndexT>
 void RunEmbeddingsFromIndexByRowIdsComeBack(const float tolerance) {
     auto data = TestUtils::LoadTestData(D);
     PDX::ADSamplingPruner pruner(D, TestUtils::SEED);
-    auto transformed =
-        PDX::NormalizeAndRotate(data.train.data(), TestUtils::N_TRAIN, D, true, pruner);
+    skmeans::SerialExecutor executor;
+    auto transformed = PDX::IVFUtils(executor).NormalizeAndRotate(
+        data.train.data(), TestUtils::N_TRAIN, D, true, pruner
+    );
     auto config = MakeConfig();
     config.is_data_transformed = true;
     IndexT index(config, pruner);
@@ -190,8 +194,10 @@ TEST(InMemorySize, SharedPrunerIsNotCounted) {
     owned.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
 
     PDX::ADSamplingPruner pruner(D, TestUtils::SEED);
-    auto transformed =
-        PDX::NormalizeAndRotate(data.train.data(), TestUtils::N_TRAIN, D, true, pruner);
+    skmeans::SerialExecutor executor;
+    auto transformed = PDX::IVFUtils(executor).NormalizeAndRotate(
+        data.train.data(), TestUtils::N_TRAIN, D, true, pruner
+    );
     auto config = MakeConfig();
     config.is_data_transformed = true;
     PDX::PDXIndexF32 shared(config, pruner);
