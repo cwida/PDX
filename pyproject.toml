@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pdxearch"
-version = "0.4"
+version = "0.5"
 description = "PDX: A Library for Fast Vector Search and Indexing"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -38,6 +38,8 @@ cmake.source-dir = "."
 wheel.packages = ["python/pdxearch"]
 cmake.build-type = "Release"
 install.components = ["python"]
+# Test and benchmark data are not needed to build the package
+sdist.exclude = ["tests/test_data.bin", "benchmarks/datasets/", "benchmarks/gt/", "benchmarks/results/"]
 
 cmake.args = [
     "-DPDX_COMPILE_TESTS=OFF",

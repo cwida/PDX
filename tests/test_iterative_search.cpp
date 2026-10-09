@@ -95,6 +95,78 @@ TEST_P(IterativeSearchTest, ChunkedExhaustiveMatchesSingleShot) {
     }
 }
 
+// A cursor started from GetClustersAccessOrder probes the same clusters, in the same order, as one
+// that ranks them.
+TEST_P(IterativeSearchTest, SharedClustersAccessOrderMatchesOwnRanking) {
+    auto data = TestUtils::LoadTestData(D);
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    const auto passing = EveryThirdId();
+    for (size_t q = 0; q < N_QUERIES; ++q) {
+        const float* query = data.queries.data() + q * D;
+        const auto clusters_access_order = index->GetClustersAccessOrder(query);
+        ASSERT_EQ(clusters_access_order.size(), index->GetNumClusters());
+        for (const std::vector<size_t>* filter :
+             {static_cast<const std::vector<size_t>*>(nullptr), &passing}) {
+            PDX::TopKHeap own_top_k_heap;
+            auto own_cursor =
+                index->BeginIterativeSearch(query, TestUtils::KNN, own_top_k_heap, filter);
+            PDX::TopKHeap shared_top_k_heap;
+            auto shared_cursor = index->BeginIterativeSearch(
+                query, TestUtils::KNN, shared_top_k_heap, filter, false, &clusters_access_order
+            );
+            own_cursor->Next(3);
+            shared_cursor->Next(3);
+            EXPECT_EQ(own_cursor->ClustersRemaining(), shared_cursor->ClustersRemaining());
+            ExpectSameResults(
+                PDX::BuildResultSetFromHeap(TestUtils::KNN, own_top_k_heap.heap),
+                PDX::BuildResultSetFromHeap(TestUtils::KNN, shared_top_k_heap.heap)
+            );
+            ExpectSameResults(
+                Drain(*own_cursor, own_top_k_heap, TestUtils::KNN, 5),
+                Drain(*shared_cursor, shared_top_k_heap, TestUtils::KNN, 5)
+            );
+        }
+    }
+}
+
+// A cursor over a shared evaluator returns what a cursor filtered by the passing row ids returns,
+// for every query that shares the evaluator.
+TEST_P(IterativeSearchTest, SharedEvaluatorMatchesPassingRowIds) {
+    auto data = TestUtils::LoadTestData(D);
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    const auto passing = EveryThirdId();
+    const auto evaluator = index->CreateSharedPredicateEvaluator(passing);
+    for (size_t q = 0; q < N_QUERIES; ++q) {
+        const float* query = data.queries.data() + q * D;
+        PDX::TopKHeap own_top_k_heap;
+        auto own_cursor =
+            index->BeginIterativeSearch(query, TestUtils::KNN, own_top_k_heap, &passing);
+        PDX::TopKHeap shared_top_k_heap;
+        auto shared_cursor = index->BeginIterativeSearchWithSharedEvaluator(
+            query, TestUtils::KNN, shared_top_k_heap, *evaluator
+        );
+        ExpectSameResults(
+            Drain(*own_cursor, own_top_k_heap, TestUtils::KNN, 5),
+            Drain(*shared_cursor, shared_top_k_heap, TestUtils::KNN, 5)
+        );
+    }
+}
+
+// GetClustersAccessOrder is GetDistancesToCentroids sorted.
+TEST_P(IterativeSearchTest, DistancesToCentroidsSortToTheAccessOrder) {
+    auto data = TestUtils::LoadTestData(D);
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    std::vector<float> distances(index->GetNumClusters());
+    for (size_t q = 0; q < N_QUERIES; ++q) {
+        const float* query = data.queries.data() + q * D;
+        index->GetDistancesToCentroids(query, false, distances.data());
+        const auto clusters_access_order = index->GetClustersAccessOrder(query);
+        for (size_t i = 1; i < clusters_access_order.size(); i++) {
+            EXPECT_LE(distances[clusters_access_order[i - 1]], distances[clusters_access_order[i]]);
+        }
+    }
+}
+
 TEST_P(IterativeSearchTest, NextAccountsForEveryNonEmptyCluster) {
     auto data = TestUtils::LoadTestData(D);
     auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
@@ -189,7 +261,8 @@ TEST_P(IterativeSearchTest, ChunkSizeDoesNotChangeResults) {
         index->BeginIterativeSearch(query, TestUtils::KNN, baseline_top_k_heap, nullptr);
     auto baseline = Drain(*baseline_search_cursor, baseline_top_k_heap, TestUtils::KNN, 1);
 
-    for (size_t chunk : {2ul, 5ul, 64ul, static_cast<size_t>(index->GetNumClusters())}) {
+    for (size_t chunk :
+         {size_t{2}, size_t{5}, size_t{64}, static_cast<size_t>(index->GetNumClusters())}) {
         PDX::TopKHeap top_k_heap;
         auto search_cursor =
             index->BeginIterativeSearch(query, TestUtils::KNN, top_k_heap, nullptr);
@@ -198,6 +271,9 @@ TEST_P(IterativeSearchTest, ChunkSizeDoesNotChangeResults) {
 }
 
 TEST_P(IterativeSearchTest, ConcurrentCursorsOnOneIndex) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+    GTEST_SKIP() << "Wasm without pthreads cannot start threads";
+#endif
     auto data = TestUtils::LoadTestData(D);
     auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
     index->SetNProbe(0);
@@ -309,6 +385,9 @@ void RunSharedHeapAcrossPartitions() {
 }
 
 TEST_P(IterativeSearchTest, SharedHeapAcrossPartitionsMatchesBruteForce) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+    GTEST_SKIP() << "Wasm without pthreads cannot start threads";
+#endif
     ForIndexType(GetParam(), [](auto tag) {
         RunSharedHeapAcrossPartitions<typename decltype(tag)::type>();
     });

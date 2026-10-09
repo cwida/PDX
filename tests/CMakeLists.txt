@@ -1,5 +1,14 @@
 # Test suite for PDX
 
+# The tests use designated initializers (C++20); the library stays C++17
+set(CMAKE_CXX_STANDARD 20)
+
+# Wasm: the tests catch exceptions, read tests/test_data.bin from the host and need more memory
+if(EMSCRIPTEN)
+    add_compile_options(-fexceptions)
+    add_link_options(-fexceptions -sALLOW_MEMORY_GROWTH=1 -sNODERAWFS=1)
+endif()
+
 # Fetch GoogleTest
 include(FetchContent)
 FetchContent_Declare(
@@ -42,6 +51,9 @@ pdx_add_test(test_filtered_search.out test_filtered_search.cpp)
 pdx_add_test(test_index_properties.out test_index_properties.cpp)
 pdx_add_test(test_maintenance.out test_maintenance.cpp)
 pdx_add_test(test_iterative_search.out test_iterative_search.cpp)
+pdx_add_test(test_flat_index.out test_flat_index.cpp)
+pdx_add_test(test_transformed_input.out test_transformed_input.cpp)
+pdx_add_test(test_executor.out test_executor.cpp)
 
 add_custom_target(tests
     DEPENDS
@@ -52,4 +64,7 @@ add_custom_target(tests
         test_index_properties.out
         test_maintenance.out
         test_iterative_search.out
+        test_flat_index.out
+        test_transformed_input.out
+        test_executor.out
 )

@@ -9,20 +9,19 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 #include "pdx/clustering.hpp"
 #include "pdx/common.hpp"
+#include "pdx/indexes/flat.hpp"
 #include "pdx/indexes/ivf_core.hpp"
 #include "pdx/indexes/ivf_utils.hpp"
 #include "pdx/indexes/ivf_vanilla.hpp"
+#include "pdx/ivf_searcher.hpp"
 #include "pdx/profiler.hpp"
 #include "pdx/pruners/adsampling.hpp"
 #include "pdx/quantizers/scalar.hpp"
-#include "pdx/searcher.hpp"
 #include "pdx/utils.hpp"
-#include <omp.h>
 
 namespace PDX {
 
@@ -39,8 +38,6 @@ class PDXTreeIndex : public IPDXIndex {
     using VectorR = Eigen::VectorXf;
 
   private:
-    static constexpr uint32_t DELETED_MARKER = std::numeric_limits<uint32_t>::max();
-
     PDXIndexConfig config{};
     uint32_t d = 0;
     PDX::IVFTree<Q> index;
@@ -51,84 +48,66 @@ class PDXTreeIndex : public IPDXIndex {
     PDX::ADSamplingPruner* pruner = nullptr;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
     std::unique_ptr<PDX::PDXearch<F32>> top_level_searcher;
-    std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> row_id_cluster_mapping;
+    RowIdClusterMapping row_id_cluster_mapping;
 
   public:
     PDXTreeIndex() = default;
 
     explicit PDXTreeIndex(PDXIndexConfig config) : config(config), d(config.num_dimensions) {
         config.Validate();
-        PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
+        BindExecutor(config);
         owned_pruner = std::make_unique<PDX::ADSamplingPruner>(config.num_dimensions, config.seed);
         pruner = owned_pruner.get();
+        row_id_cluster_mapping.base_row_id = config.base_row_id;
     }
 
     PDXTreeIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
         : config(config), d(config.num_dimensions), pruner(&external_pruner) {
         config.Validate();
-        PDX::g_n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
+        BindExecutor(config);
+        row_id_cluster_mapping.base_row_id = config.base_row_id;
     }
 
     void Save(const std::string& path) override {
-        // Compact L1 clusters before saving (update row_id_cluster_mapping from moves)
-        for (uint32_t c = 0; c < index.num_clusters; c++) {
-            auto moves = index.clusters[c].CompactCluster();
-            for (const auto& [row_id, new_idx] : moves) {
-                SetRowIdMapping(row_id, c, new_idx);
-            }
-        }
-        // Compact L0 clusters (no mapping to update for meso-clusters)
-        for (uint32_t c = 0; c < index.l0.num_clusters; c++) {
-            index.l0.clusters[c].CompactCluster();
-        }
+        CompactClusters();
 
         std::ofstream out(path, std::ios::binary);
-
-        // Index type flag
-        uint8_t type_flag = static_cast<uint8_t>(GetIndexType());
-        out.write(reinterpret_cast<const char*>(&type_flag), sizeof(uint8_t));
-
-        // Rotation matrix
-        const auto& matrix = pruner->GetMatrix();
-        uint32_t matrix_rows = static_cast<uint32_t>(matrix.rows());
-        uint32_t matrix_cols = static_cast<uint32_t>(matrix.cols());
-        out.write(reinterpret_cast<const char*>(&matrix_rows), sizeof(uint32_t));
-        out.write(reinterpret_cast<const char*>(&matrix_cols), sizeof(uint32_t));
-        out.write(
-            reinterpret_cast<const char*>(matrix.data()), sizeof(float) * matrix_rows * matrix_cols
-        );
-
-        // IVFTree data
+        WriteValue(out, static_cast<uint8_t>(GetIndexType()));
+        WriteRotationMatrix(out, *pruner);
         index.Save(out);
     }
 
     void Restore(const std::string& path) override {
         auto buffer = MmapFile(path);
         char* ptr = buffer.get();
+        BufferReader reader{ptr};
 
         // Index type flag
-        ptr += sizeof(uint8_t);
-
-        // Rotation matrix (ptr may be misaligned after the uint8_t type flag)
-        uint32_t matrix_rows, matrix_cols;
-        std::memcpy(&matrix_rows, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        std::memcpy(&matrix_cols, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        const size_t matrix_floats = static_cast<size_t>(matrix_rows) * matrix_cols;
-        auto aligned_matrix = std::unique_ptr<float[]>(new float[matrix_floats]);
-        std::memcpy(aligned_matrix.get(), ptr, sizeof(float) * matrix_floats);
-        ptr += sizeof(float) * matrix_floats;
-
-        // Load IVFTree data
-        index.Load(ptr);
+        ReadValue<uint8_t>(reader);
+        const auto matrix = ReadRotationMatrix(reader);
+        index.Load(reader);
         d = index.num_dimensions;
         config.num_dimensions = d;
         config.normalize = index.is_normalized;
 
         // Create pruner and searchers
-        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(d, aligned_matrix.get());
+        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(d, matrix.get());
         pruner = owned_pruner.get();
+        searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
+        top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
+        BuildRowIdClusterMapping();
+    }
+
+    void SaveToStream(std::ostream& out) override {
+        CompactClusters();
+        WriteStreamHeader(out, GetIndexType(), config);
+        index.Save(out);
+    }
+
+    void LoadFromStream(std::istream& in) override {
+        StreamReader reader{in};
+        index.Load(reader);
+        d = index.num_dimensions;
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
         BuildRowIdClusterMapping();
@@ -182,34 +161,111 @@ class PDXTreeIndex : public IPDXIndex {
         const float* query_embedding,
         uint32_t knn,
         TopKHeap& top_k_heap,
-        const std::vector<size_t>* passing_row_ids
+        const std::vector<size_t>* passing_row_ids,
+        bool is_query_transformed = false,
+        const std::vector<uint32_t>* clusters_access_order = nullptr
     ) const override {
+        const uint32_t* preset_clusters_access_order =
+            clusters_access_order ? clusters_access_order->data() : nullptr;
         if (!passing_row_ids) {
             return std::make_unique<typename PDXearch<Q>::template IterativeSearch<false>>(
-                searcher->BeginIterativeSearch(query_embedding, knn, top_k_heap)
+                searcher->BeginIterativeSearch(
+                    query_embedding,
+                    knn,
+                    top_k_heap,
+                    is_query_transformed,
+                    preset_clusters_access_order
+                )
             );
         }
         auto evaluator =
             std::make_unique<PredicateEvaluator>(CreatePredicateEvaluator(*passing_row_ids));
         return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
             searcher->BeginFilteredIterativeSearch(
-                query_embedding, knn, std::move(evaluator), top_k_heap
+                query_embedding,
+                knn,
+                std::move(evaluator),
+                top_k_heap,
+                is_query_transformed,
+                preset_clusters_access_order
             )
         );
+    }
+
+    std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
+        const std::vector<size_t>& passing_row_ids
+    ) const override {
+        return std::make_unique<PredicateEvaluator>(CreatePredicateEvaluator(passing_row_ids));
+    }
+
+    std::unique_ptr<IIterativeSearch> BeginIterativeSearchWithSharedEvaluator(
+        const float* query_embedding,
+        uint32_t knn,
+        TopKHeap& top_k_heap,
+        const PredicateEvaluator& evaluator,
+        bool is_query_transformed = false,
+        const std::vector<uint32_t>* clusters_access_order = nullptr
+    ) const override {
+        return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
+            searcher->BeginFilteredIterativeSearch(
+                query_embedding,
+                knn,
+                evaluator,
+                top_k_heap,
+                is_query_transformed,
+                clusters_access_order ? clusters_access_order->data() : nullptr
+            )
+        );
+    }
+
+    void GetEmbeddingsFromIndexByRowIds(const std::vector<size_t>& row_ids, float* out)
+        const override {
+        GetEmbeddingsFromIndexByRowIdsImpl<Q>(
+            index,
+            searcher->quantizer,
+            row_id_cluster_mapping,
+            row_ids,
+            out,
+            /*cluster_source=*/nullptr
+        );
+    }
+
+    void GetDistancesToCentroids(
+        const float* query_embedding,
+        bool is_query_transformed,
+        float* out
+    ) const override {
+        searcher->GetDistancesToCentroids(query_embedding, is_query_transformed, out);
+    }
+
+    std::vector<uint32_t> GetClustersAccessOrder(
+        const float* query_embedding,
+        bool is_query_transformed = false
+    ) const override {
+        return searcher->GetClustersAccessOrder(query_embedding, is_query_transformed);
+    }
+
+    std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const override {
+        return row_id_cluster_mapping.Get(row_id);
     }
 
     // Concurrent writes must always go through a single writer thread
     void Append(size_t row_id, const float* PDX_RESTRICT embedding) override {
         PDX_PROFILE_SCOPE("Append");
-        const auto [existing_cluster, _] = GetRowIdMapping(row_id);
-        if (existing_cluster != DELETED_MARKER) {
+        if (Contains(row_id)) {
             throw std::invalid_argument(
                 "Append: row_id " + std::to_string(row_id) + " already exists in the index"
             );
         }
         ReserveClusterSlotIfNeeded();
+        skmeans::ParallelSection parallel_section(GetExecutor());
 
-        auto preprocessed = NormalizeAndRotate(embedding, 1, d, index.is_normalized, *pruner);
+        std::unique_ptr<float[]> transformed;
+        if (!config.is_data_transformed) {
+            transformed = IVFUtils(GetExecutor())
+                              .NormalizeAndRotate(embedding, 1, d, index.is_normalized, *pruner);
+        }
+        const float* preprocessed = config.is_data_transformed ? embedding : transformed.get();
 
         // Find nearest centroid for the new embedding
         uint32_t closest_centroid_idx;
@@ -220,14 +276,14 @@ class PDXTreeIndex : public IPDXIndex {
             n_probe_top_level = std::max(1u, n_probe_top_level / 8);
             top_level_searcher->SetNProbe(n_probe_top_level);
             std::vector<KNNCandidate> centroid_candidates =
-                top_level_searcher->Search(preprocessed.get(), 1, true);
+                top_level_searcher->Search(preprocessed, 1, true);
             closest_centroid_idx = centroid_candidates[0].index;
         }
 
         auto& cluster = index.clusters[closest_centroid_idx];
 
         uint32_t new_index_in_cluster = QuantizeAndAppend<Q>(
-            index, searcher->quantizer, cluster, static_cast<uint32_t>(row_id), preprocessed.get()
+            index, searcher->quantizer, cluster, static_cast<uint32_t>(row_id), preprocessed
         );
         SetRowIdMapping(row_id, closest_centroid_idx, new_index_in_cluster);
         index.total_num_embeddings++;
@@ -235,20 +291,20 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     // Concurrent deletes must always go through a single writer thread
-    void Delete(size_t row_id) override {
+    bool Delete(size_t row_id) override {
         PDX_PROFILE_SCOPE("Delete");
         const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
         if (cluster_id == DELETED_MARKER) {
-            throw std::invalid_argument(
-                "Delete: row_id " + std::to_string(row_id) + " is not in the index"
-            );
+            return false;
         }
         ReserveClusterSlotIfNeeded();
+        skmeans::ParallelSection parallel_section(GetExecutor());
         auto& cluster = index.clusters[cluster_id];
         cluster.DeleteEmbedding(index_in_cluster);
         DeleteRowIdMapping(row_id);
         index.total_num_embeddings--;
         CheckClusterHealth(cluster);
+        return true;
     }
 
     void BuildIndex(const float* const embeddings, const size_t num_embeddings) override {
@@ -263,6 +319,8 @@ class PDXTreeIndex : public IPDXIndex {
         const size_t num_embeddings
     ) {
         config.ValidateNumEmbeddings(num_embeddings);
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        const IVFUtils ivf_utils(GetExecutor());
 
         const auto num_dimensions = config.num_dimensions;
         auto num_clusters = config.num_clusters;
@@ -275,14 +333,20 @@ class PDXTreeIndex : public IPDXIndex {
         assert(num_embeddings > 0);
         assert(pruner);
 
-        auto preprocessed =
-            NormalizeAndRotate(embeddings, num_embeddings, num_dimensions, normalize, *pruner);
+        std::unique_ptr<float[]> transformed;
+        if (!config.is_data_transformed) {
+            transformed = ivf_utils.NormalizeAndRotate(
+                embeddings, num_embeddings, num_dimensions, normalize, *pruner
+            );
+        }
+        const float* preprocessed = config.is_data_transformed ? embeddings : transformed.get();
 
         float quantization_base = 0.0f;
         float quantization_scale = 1.0f;
         if constexpr (Q == PDX::U8) {
-            const auto params = PDX::ScalarQuantizer<Q>::ComputeQuantizationParams(
-                preprocessed.get(), static_cast<size_t>(num_embeddings) * num_dimensions
+            const PDX::ScalarQuantizer<Q> quantizer(num_dimensions, &GetExecutor());
+            const auto params = quantizer.ComputeQuantizationParams(
+                preprocessed, static_cast<size_t>(num_embeddings) * num_dimensions
             );
             quantization_base = params.quantization_base;
             quantization_scale = params.quantization_scale;
@@ -298,8 +362,8 @@ class PDXTreeIndex : public IPDXIndex {
             index = PDX::IVFTree<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
         }
 
-        KMeansResult kmeans_result = ComputeKMeans(
-            preprocessed.get(),
+        KMeansResult kmeans_result = ivf_utils.ComputeKMeans(
+            preprocessed,
             num_embeddings,
             num_dimensions,
             num_clusters,
@@ -312,10 +376,10 @@ class PDXTreeIndex : public IPDXIndex {
         );
         index.centroids = std::move(kmeans_result.centroids);
 
-        PopulateIVFClusters<Q>(
+        ivf_utils.PopulateIVFClusters<Q>(
             index,
             kmeans_result,
-            preprocessed.get(),
+            preprocessed,
             row_ids,
             num_dimensions,
             num_clusters,
@@ -332,7 +396,7 @@ class PDXTreeIndex : public IPDXIndex {
         }
 
         index.l0 = PDX::IVF<F32>(num_dimensions, num_clusters, l0_num_clusters, normalize);
-        KMeansResult l0_kmeans_result = ComputeKMeans(
+        KMeansResult l0_kmeans_result = ivf_utils.ComputeKMeans(
             index.centroids.data(),
             num_clusters,
             num_dimensions,
@@ -349,7 +413,7 @@ class PDXTreeIndex : public IPDXIndex {
         // L0 row_ids are identity (centroid indices)
         std::vector<size_t> l0_row_ids(num_clusters);
         std::iota(l0_row_ids.begin(), l0_row_ids.end(), 0);
-        PopulateIVFClusters<F32>(
+        ivf_utils.PopulateIVFClusters<F32>(
             index.l0,
             l0_kmeans_result,
             index.centroids.data(),
@@ -426,9 +490,7 @@ class PDXTreeIndex : public IPDXIndex {
         if (top_level_searcher) {
             size += sizeof(*top_level_searcher);
         }
-        // Row ID to cluster mapping
-        size += row_id_cluster_mapping.size() *
-                (sizeof(uint32_t) + sizeof(std::pair<uint32_t, uint32_t>));
+        size += row_id_cluster_mapping.SizeInBytes();
         return size;
     }
 
@@ -441,32 +503,25 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     void SetRowIdMapping(uint32_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {
-        row_id_cluster_mapping[row_id] = {cluster_id, idx_in_cluster};
+        row_id_cluster_mapping.Set(row_id, cluster_id, idx_in_cluster);
     }
 
-    void DeleteRowIdMapping(uint32_t row_id) {
-        row_id_cluster_mapping[row_id] = {DELETED_MARKER, DELETED_MARKER};
-    }
-
-    std::pair<uint32_t, uint32_t> GetRowIdMapping(uint32_t row_id) const {
-        auto it = row_id_cluster_mapping.find(row_id);
-        if (it == row_id_cluster_mapping.end()) {
-            return {DELETED_MARKER, DELETED_MARKER};
-        }
-        return it->second;
-    }
+    void DeleteRowIdMapping(uint32_t row_id) { row_id_cluster_mapping.Delete(row_id); }
 
     void BuildRowIdClusterMapping() {
-        size_t total = 0;
-        for (size_t c = 0; c < index.num_clusters; c++) {
-            total += index.clusters[c].num_embeddings;
-        }
-        row_id_cluster_mapping.clear();
-        row_id_cluster_mapping.reserve(total);
+        row_id_cluster_mapping.Rebuild(index.clusters, index.num_clusters);
+    }
+
+    void CompactClusters() {
         for (uint32_t c = 0; c < index.num_clusters; c++) {
-            for (uint32_t p = 0; p < index.clusters[c].num_embeddings; p++) {
-                SetRowIdMapping(index.clusters[c].indices[p], c, p);
+            auto moves = index.clusters[c].CompactCluster();
+            for (const auto& [row_id, new_idx] : moves) {
+                SetRowIdMapping(row_id, c, new_idx);
             }
+        }
+        // No mapping to update for meso-clusters
+        for (uint32_t c = 0; c < index.l0.num_clusters; c++) {
+            index.l0.clusters[c].CompactCluster();
         }
     }
 
@@ -567,7 +622,8 @@ class PDXTreeIndex : public IPDXIndex {
             } else {
                 SplitL0Cluster(l0_cluster);
             }
-        } else if (allow_merges && l0_cluster.num_embeddings <= l0_cluster.min_capacity) {
+        } else if (allow_merges && index.l0.num_clusters > 1 &&
+                   l0_cluster.num_embeddings <= l0_cluster.min_capacity) {
             DestroyAndMergeL0Cluster(l0_cluster);
         }
     }
@@ -590,19 +646,21 @@ class PDXTreeIndex : public IPDXIndex {
             );
         }
 
-        KMeansResult split_result = ComputeKMeans(
-            l1_centroids.data(),
-            num_embeddings,
-            d,
-            2,
-            config.distance_metric,
-            config.seed,
-            true,
-            1.0f,
-            SPLIT_KMEANS_ITERS,
-            false,
-            1
-        );
+        // 1 thread because DML operations are assumed single-threaded
+        skmeans::SerialExecutor serial_executor;
+        KMeansResult split_result = IVFUtils(serial_executor)
+                                        .ComputeKMeans(
+                                            l1_centroids.data(),
+                                            num_embeddings,
+                                            d,
+                                            2,
+                                            config.distance_metric,
+                                            config.seed,
+                                            true,
+                                            1.0f,
+                                            SPLIT_KMEANS_ITERS,
+                                            false
+                                        );
         auto& group_a = split_result.assignments[0];
         auto& group_b = split_result.assignments[1];
 
@@ -760,7 +818,7 @@ class PDXTreeIndex : public IPDXIndex {
         std::unique_ptr<uint32_t[]> assignments(new uint32_t[num_embeddings]);
         std::unique_ptr<float[]> result_distances(new float[num_embeddings]);
         std::unique_ptr<float[]> tmp_distances_buf(
-            new float[skmeans::X_BATCH_SIZE * skmeans::Y_BATCH_SIZE]
+            new float[batch_computer::ScratchSize(GetExecutor())]
         );
 
         std::vector<float> entry_norms(num_embeddings);
@@ -774,6 +832,7 @@ class PDXTreeIndex : public IPDXIndex {
         c_norms.noalias() = l0_matrix.rowwise().squaredNorm();
 
         batch_computer::FindNearestNeighbor(
+            GetExecutor(),
             l1_centroids,
             index.l0.centroids.data(),
             num_embeddings,
@@ -812,7 +871,8 @@ class PDXTreeIndex : public IPDXIndex {
             } else {
                 SplitCluster(cluster);
             }
-        } else if (allow_merges && cluster.num_embeddings <= cluster.min_capacity) {
+        } else if (allow_merges && index.num_clusters > 1 &&
+                   cluster.num_embeddings <= cluster.min_capacity) {
             DestroyAndMergeCluster(cluster);
         }
     }
@@ -1037,8 +1097,8 @@ class PDXTreeIndex : public IPDXIndex {
             index.l0.clusters[mesocluster_id].DeleteEmbedding(pos);
             index.l0.clusters[mesocluster_id].CompactCluster();
             index.l0.clusters[mesocluster_id].AppendEmbedding(cluster_id, true_centroid_a.get());
-            // CheckL0ClusterHealth may reallocate index.l0.clusters
-            CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
+            // CheckL0ClusterHealth may reallocate index.l0.clusters; no merges, B goes in next
+            CheckL0ClusterHealth(index.l0.clusters[mesocluster_id], false);
             index.l0.clusters[mesocluster_id].AppendEmbedding(
                 new_cluster_b_id, true_centroid_b.get()
             );
@@ -1051,20 +1111,25 @@ class PDXTreeIndex : public IPDXIndex {
                 ids_rest.get(),
                 float_rest.get(),
                 static_cast<uint32_t>(group_rest_idx.size()),
-                mesocluster_id
+                mesocluster_id,
+                false
             );
         }
 
         index.ComputeClusterOffsets();
         index.l0.ComputeClusterOffsets();
 
-        CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
+        // A split never shrinks the mesocluster, and a merge here would move the callers' ids
+        CheckL0ClusterHealth(index.l0.clusters[mesocluster_id], false);
     }
 
     // Reassign dequantized (float) embeddings to their closest centroid
     // within the given mesocluster.
     // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
     // TODO(@lkuffo, med): We can optimize reassignments by doing GEMM+PRUNING for assignments
+    // TODO(@lkuffo, high): Same stale-assignments problem as PDXIndex::ReassignEmbeddings (see the
+    // TODO there); here a merge also rewrites the meso-cluster's `indices` the candidates came
+    // from.
     void ReassignEmbeddings(
         uint32_t* row_ids,
         const float* embeddings,
@@ -1083,6 +1148,11 @@ class PDXTreeIndex : public IPDXIndex {
                 candidate_ids.push_back(meso.indices[p]);
             }
         }
+        // A merge can empty the mesocluster: reassign over all clusters then
+        if (candidate_ids.empty()) {
+            candidate_ids.resize(index.num_clusters);
+            std::iota(candidate_ids.begin(), candidate_ids.end(), 0);
+        }
         const uint32_t n_candidates = static_cast<uint32_t>(candidate_ids.size());
 
         std::vector<float> candidate_centroids(static_cast<size_t>(n_candidates) * d);
@@ -1097,7 +1167,7 @@ class PDXTreeIndex : public IPDXIndex {
         std::unique_ptr<uint32_t[]> assignments(new uint32_t[num_embeddings]);
         std::unique_ptr<float[]> result_distances(new float[num_embeddings]);
         std::unique_ptr<float[]> tmp_distances_buf(
-            new float[skmeans::X_BATCH_SIZE * skmeans::Y_BATCH_SIZE]
+            new float[batch_computer::ScratchSize(GetExecutor())]
         );
 
         std::vector<float> embeddings_norms(num_embeddings);
@@ -1111,6 +1181,7 @@ class PDXTreeIndex : public IPDXIndex {
         c_norms.noalias() = centroids_matrix.rowwise().squaredNorm();
 
         batch_computer::FindNearestNeighbor(
+            GetExecutor(),
             embeddings,
             candidate_centroids.data(),
             num_embeddings,
@@ -1160,6 +1231,9 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(const std::string& path) {
     case PDXIndexType::PDX_TREE_U8:
         idx = std::make_unique<PDXTreeIndexU8>();
         break;
+    case PDXIndexType::PDX_FLAT:
+        idx = std::make_unique<FlatIndex>();
+        break;
     default:
         throw std::runtime_error(
             "Unknown PDX index type: " + std::to_string(static_cast<int>(type))
@@ -1167,6 +1241,62 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(const std::string& path) {
     }
     // NOLINTEND(bugprone-branch-clone)
     idx->Restore(path);
+    return idx;
+}
+
+// Loads what SaveToStream wrote into an index on `pruner`, which must hold the rotation the index
+// was saved with. Throws std::runtime_error for a stream of another PDX_SERIALIZATION_VERSION.
+// With a cluster_source, the index holds no data for its clusters (LoadResidentDataFromStream).
+inline std::unique_ptr<IPDXIndex> LoadPDXIndexFromStream(
+    std::istream& in,
+    ADSamplingPruner& pruner,
+    IClusterSource* cluster_source = nullptr
+) {
+    StreamReader reader{in};
+    const auto version = ReadValue<uint8_t>(reader);
+    if (version != PDX_SERIALIZATION_VERSION) {
+        throw std::runtime_error(
+            "Unsupported PDX serialization version: " + std::to_string(static_cast<int>(version))
+        );
+    }
+    const auto type = static_cast<PDXIndexType>(ReadValue<uint8_t>(reader));
+    PDXIndexConfig config{};
+    config.Load(reader);
+    if (config.num_dimensions != pruner.num_dimensions) {
+        throw std::invalid_argument(
+            "The pruner has " + std::to_string(pruner.num_dimensions) +
+            " dimensions, the saved index " + std::to_string(config.num_dimensions)
+        );
+    }
+    std::unique_ptr<IPDXIndex> idx;
+    // NOLINTBEGIN(bugprone-branch-clone)
+    switch (type) {
+    case PDXIndexType::PDX_F32:
+        idx = std::make_unique<PDXIndexF32>(config, pruner);
+        break;
+    case PDXIndexType::PDX_U8:
+        idx = std::make_unique<PDXIndexU8>(config, pruner);
+        break;
+    case PDXIndexType::PDX_TREE_F32:
+        idx = std::make_unique<PDXTreeIndexF32>(config, pruner);
+        break;
+    case PDXIndexType::PDX_TREE_U8:
+        idx = std::make_unique<PDXTreeIndexU8>(config, pruner);
+        break;
+    case PDXIndexType::PDX_FLAT:
+        idx = std::make_unique<FlatIndex>(config, pruner);
+        break;
+    default:
+        throw std::runtime_error(
+            "Unknown PDX index type: " + std::to_string(static_cast<int>(type))
+        );
+    }
+    // NOLINTEND(bugprone-branch-clone)
+    if (cluster_source) {
+        idx->LoadResidentDataFromStream(in, *cluster_source);
+    } else {
+        idx->LoadFromStream(in);
+    }
     return idx;
 }
 

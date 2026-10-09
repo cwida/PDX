@@ -67,6 +67,19 @@ TEST_P(IndexPropertiesTest, InMemorySizeIsPositive) {
     EXPECT_GT(index->GetInMemorySizeInBytes(), 0u);
 }
 
+// A cluster counts every slot it allocated, not only the used ones, and its tombstones
+TEST(ClusterTest, InMemorySizeCountsAllocatedSlotsAndTombstones) {
+    const uint32_t d = 128;
+    PDX::Cluster<PDX::F32> cluster(100, d);
+    EXPECT_GE(
+        cluster.GetInMemorySizeInBytes(),
+        static_cast<size_t>(cluster.max_capacity) * (d * sizeof(float) + sizeof(uint32_t))
+    );
+    const size_t size_before_delete = cluster.GetInMemorySizeInBytes();
+    cluster.DeleteEmbedding(0);
+    EXPECT_GT(cluster.GetInMemorySizeInBytes(), size_before_delete);
+}
+
 TEST_P(IndexPropertiesTest, KnnLargerThanDataReturnsAvailable) {
     std::string index_type = GetParam();
     size_t d = 128;

@@ -3,6 +3,7 @@
 #include "arm_neon.h"
 #include "pdx/common.hpp"
 #include <cstdint>
+#include <cstring>
 
 namespace PDX {
 
@@ -125,7 +126,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
         size_t dim_idx = start_dimension;
         for (; dim_idx + 4 <= end_dimension; dim_idx += 4) {
             uint32_t dimension_idx = dim_idx;
-            uint8x8_t vals = vld1_u8(&query[dimension_idx]);
+            uint32_t query_value;
+            std::memcpy(&query_value, &query[dimension_idx], sizeof(query_value));
+            uint8x8_t vals = vreinterpret_u8_u32(vdup_n_u32(query_value));
             size_t offset_to_dimension_start = dimension_idx * total_vectors;
             size_t i = 0;
             if constexpr (!SKIP_PRUNED) {

@@ -33,11 +33,20 @@ struct Cluster {
           num_dimensions(num_dimensions), indices(new uint32_t[max_capacity]),
           data(new data_t[static_cast<uint64_t>(max_capacity) * num_dimensions]) {}
 
-    Cluster(uint32_t num_embeddings, uint32_t max_capacity, uint32_t num_dimensions)
+    Cluster(
+        uint32_t num_embeddings,
+        uint32_t max_capacity,
+        uint32_t num_dimensions,
+        bool allocate_data = true
+    )
         : num_embeddings(num_embeddings), used_capacity(num_embeddings), max_capacity(max_capacity),
           min_capacity(static_cast<uint32_t>(num_embeddings * MIN_CAPACITY_THRESHOLD)),
-          num_dimensions(num_dimensions), indices(new uint32_t[max_capacity]),
-          data(new data_t[static_cast<uint64_t>(max_capacity) * num_dimensions]) {}
+          num_dimensions(num_dimensions),
+          indices(allocate_data ? new uint32_t[max_capacity] : nullptr),
+          data(
+              allocate_data ? new data_t[static_cast<uint64_t>(max_capacity) * num_dimensions]
+                            : nullptr
+          ) {}
 
     Cluster(Cluster&& other) noexcept
         : num_embeddings(other.num_embeddings), used_capacity(other.used_capacity),
@@ -155,8 +164,12 @@ struct Cluster {
     }
 
     size_t GetInMemorySizeInBytes() const {
-        return sizeof(*this) + num_embeddings * sizeof(*indices) +
-               num_embeddings * static_cast<uint64_t>(num_dimensions) * sizeof(*data);
+        const size_t data_size =
+            data ? max_capacity * static_cast<uint64_t>(num_dimensions) * sizeof(*data) : 0;
+        const size_t indices_size = indices ? max_capacity * sizeof(*indices) : 0;
+        return sizeof(*this) + data_size + indices_size +
+               tombstones.size() * (sizeof(uint32_t) + 2 * sizeof(void*)) +
+               tombstones.bucket_count() * sizeof(void*);
     }
 
     // Gather all embeddings from the PDX layout into a contiguous row-major buffer.
@@ -222,9 +235,9 @@ struct Cluster {
         }
     }
 
-    // Reads compact PDX data from ptr and places it into the strided buffer.
-    // Advances ptr past all read data.
-    void LoadPDXData(char*& ptr) {
+    // Reads compact PDX data (as SavePDXData writes it) and places it into the strided buffer.
+    template <class Reader>
+    void LoadPDXData(Reader& reader) {
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
@@ -232,26 +245,24 @@ struct Cluster {
 
         if constexpr (Q == Quantization::F32) {
             for (uint32_t d = 0; d < vertical_d; d++) {
-                memcpy(data + d * stride, ptr, sizeof(data_t) * num_embeddings);
-                ptr += sizeof(data_t) * num_embeddings;
+                reader.Read(data + d * stride, sizeof(data_t) * num_embeddings);
             }
         } else {
             uint32_t d = 0;
             for (; d + U8_INTERLEAVE_SIZE <= vertical_d; d += U8_INTERLEAVE_SIZE) {
-                memcpy(data + d * stride, ptr, num_embeddings * U8_INTERLEAVE_SIZE);
-                ptr += num_embeddings * U8_INTERLEAVE_SIZE;
+                reader.Read(
+                    data + d * stride, static_cast<size_t>(num_embeddings) * U8_INTERLEAVE_SIZE
+                );
             }
             if (d < vertical_d) {
                 uint32_t remaining = vertical_d - d;
-                memcpy(data + d * stride, ptr, num_embeddings * remaining);
-                ptr += static_cast<size_t>(num_embeddings) * remaining;
+                reader.Read(data + d * stride, static_cast<size_t>(num_embeddings) * remaining);
             }
         }
 
         data_t* h_base = data + stride * vertical_d;
         for (uint32_t j = 0; j < horizontal_d; j += H_DIM_SIZE) {
-            memcpy(h_base, ptr, sizeof(data_t) * num_embeddings * H_DIM_SIZE);
-            ptr += sizeof(data_t) * num_embeddings * H_DIM_SIZE;
+            reader.Read(h_base, sizeof(data_t) * num_embeddings * H_DIM_SIZE);
             h_base += stride * H_DIM_SIZE;
         }
     }
@@ -295,14 +306,18 @@ struct Cluster {
         return moves;
     }
 
-  private:
-    // Gather-reads one embedding from the transposed PDX buffer into a horizontal (row-major)
-    // output. Reverse of InsertEmbedding.
-    void ReadEmbeddingFromPDXBuffer(uint32_t idx_in_cluster, data_t* out) const {
+    // Gather-reads one embedding from a transposed PDX buffer of the given stride into a horizontal
+    // (row-major) output. Reverse of InsertEmbedding.
+    static void ReadEmbeddingFromPDXBuffer(
+        const data_t* data,
+        size_t stride,
+        uint32_t num_dimensions,
+        uint32_t idx_in_cluster,
+        data_t* out
+    ) {
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
-        const size_t stride = max_capacity;
 
         if constexpr (Q == Quantization::F32) {
             for (uint32_t d = 0; d < vertical_d; d++) {
@@ -336,6 +351,11 @@ struct Cluster {
             );
             h_base += stride * H_DIM_SIZE;
         }
+    }
+
+  private:
+    void ReadEmbeddingFromPDXBuffer(uint32_t idx_in_cluster, data_t* out) const {
+        ReadEmbeddingFromPDXBuffer(data, max_capacity, num_dimensions, idx_in_cluster, out);
     }
 
     // Scatter-writes a horizontal (row-major) embedding into the transposed PDX buffer layout.

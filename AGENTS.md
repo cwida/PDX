@@ -27,18 +27,46 @@ Smaller data types are not friendly to PDX, as we must accumulate distances on w
 
 ## Index types:
 All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`) and sharing `IPDXIndex`
-(`ivf_vanilla.hpp`); the search loop itself is `PDXearch` in `searcher.hpp`.
+(`ivf_vanilla.hpp`); the search loop itself is `PDXearch` in `ivf_searcher.hpp`.
 - Vanilla IVF: Plain $k$-means partitioned centroids — `PDXIndex` (`ivf_vanilla.hpp`, storage `IVF` in
   `ivf_core.hpp`). Python: `IndexPDXIVF` / `IndexPDXIVFSQ8`.
 - Tree IVF: A layer of mesoclusters is added on top of the plain IVF centroids, where PDX-pruning is also
   applied — `PDXTreeIndex` (`ivf_tree.hpp`, storage `IVFTree`). Python: `IndexPDXIVFTree` /
   `IndexPDXIVFTreeSQ8` (the fastest, README's default).
+- Flat: exact search over one row-major block of transformed `float32` embeddings, for sets too
+  small to cluster — `FlatIndex` (`flat.hpp`, storage `Flat` in `flat_core.hpp`, search
+  `FlatSearcher` in `flat_searcher.hpp`). Same `IPDXIndex` API (one cluster; the cursor is `Done()`
+  after its first `Next`), `PDX_FLAT` in `PDXIndexType`, not in the Python bindings.
+  `GetRowIds()`/`GetEmbeddings()` feed a `PDXIndex::BuildIndex` with `is_data_transformed`.
 
-Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`).
+Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`;
+`PDX_FLAT` is serialization only).
+- File: `Save(path)` / `LoadPDXIndex(path)` write and read the type, the rotation matrix (`WriteRotationMatrix` /
+  `ReadRotationMatrix`) and the payload.
+- Stream (for indexes that share one rotation, e.g. one index per partition of a table): `SaveToStream(out)` writes
+  `[PDX_SERIALIZATION_VERSION][type][PDXIndexConfig]` (`WriteStreamHeader`) and the payload, no rotation, tombstones
+  compacted; `LoadPDXIndexFromStream(in, pruner)` constructs the index on `pruner` (which must hold the saving
+  rotation) and calls `LoadFromStream`. A version mismatch throws `std::runtime_error`.
+- `PDXIndex`'s stream payload puts first what a search keeps in memory, so a reader can fetch one cluster alone:
+  `IVF::SaveResidentData` (cluster sizes and capacities, each cluster's offset in the cluster data, the centroids),
+  then the row-id mapping (`RowIdClusterMapping::Save`), then `IVF::SaveClusterData` (per cluster: row ids, then
+  compact PDX data). `LoadClusterData` reads by offset and skips gaps, so the writer may reorder or pad clusters.
+  `IVFTree` and `FlatIndex` stream the file format's payload.
+- Paging: `LoadPDXIndexFromStream(in, pruner, &cluster_source)` (`LoadResidentDataFromStream`) loads a `PDXIndex`
+  without its clusters' arrays (`data`/`indices` null; Flat and the tree load everything). `ProbeCluster` then gets
+  a cluster's bytes from the caller's `IClusterSource` (`Acquire`/`Release`, concurrent; row ids, then PDX data with
+  stride `used_capacity`), which locates them with `GetClusterDataRange`. Such an index is read-only but for `Delete`,
+  which only tombstones (no `CheckClusterHealth`): the caller replays its deletes on a full load before rewriting it.
+  `Append` throws; `GetEmbeddingsFromIndexByRowIds` acquires each cluster it reads once.
+- Every format is implemented once: the `Load` functions are templates over a reader (`BufferReader` for buffers,
+  `StreamReader` for streams, in `utils.hpp`); `IVF::LoadClusters` reads a level's clusters of the file format for
+  `IVF` and `IVFTree`.
 
 ## Resumable search (cursor)
 
-`PDXearch<Q>::IterativeSearch<FILTERED>` allows for: i) concurrent queries on one index, ii) resume a search. The API of a resumable search is: `Next(n)`: probes the next n clusters ranked once at `Begin`; `Done()`: the clusters are exhausted. 
+`PDXearch<Q>::IterativeSearch<FILTERED>` allows for: i) concurrent queries on one index, ii) resume a search. The API of a resumable search is: `Next(n)`: probes the next n clusters ranked once at `Begin`; `Done()`: the clusters are exhausted. `GetClustersAccessOrder(query)` returns every cluster, nearest first; passing it as `BeginIterativeSearch`'s `clusters_access_order` lets several cursors of one query (e.g. one per batch of passing rows) skip ranking again (Flat returns `{0}`).
+
+For many queries over one filter (e.g. a LATERAL join over a partition): `CreateSharedPredicateEvaluator(passing_row_ids)` builds the filter once and `BeginIterativeSearchWithSharedEvaluator` starts each query's cursor on it (the evaluator must outlive them).
 
 Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopKHeap`, one cursor over the n_probe-clamped ranking. Note: The tree's meso-cluster (L0) layer is not supported by cursors or by `FilteredSearch`. Both rank all leaf centroids flat, so a tree cursor is a vanilla IVF search over the tree's leaves.
 
@@ -46,9 +74,12 @@ Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopK
 
 Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIndex` additionally keeps the meso-cluster layer (L0) in sync. The leaf-level helpers they share live in `indexes/ivf_utils.hpp`. 
 - **Append**: normalize+rotate → nearest centroid (vanilla: exact scan of all centroids; tree: PDX search over L0). Centroids never move on a plain append.
-- **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`, `CheckClusterHealth`. Search masks tombstones; `Save()` compacts them away.
+- **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`, `CheckClusterHealth`. Search masks tombstones and never lets them into the heap, also while the heap is not yet full (`k` above the live count); `Save()` compacts them away.
 - **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM) with merges disabled to avoid cascades.
+- **ReassignEmbeddings** (also used by `SplitCluster` for the "rest" group) always runs with merges disabled: it snapshots the nearest-centroid assignments before its loop, and a merge inside the loop would swap-and-pop cluster ids from under it (see the TODO at its definition for the root fix). Clusters drained by `StealNeighborEmbeddings` therefore merge only when a later Append/Delete touches them.
 - **Invariants**: `ReserveClusterSlotIfNeeded()` before holding a `cluster_t&` (splits `push_back`); every structural change ends with `ComputeClusterOffsets()` (the searcher sizes its buffers from `max_cluster_capacity` on each query); single writer thread.
+- **Row id mapping**: `RowIdClusterMapping` (`ivf_utils.hpp`) is a dense vector indexed by row id holding `(cluster, index_in_cluster)`, `DELETED_MARKER` (`common.hpp`) for absent/deleted ids; exposed as `IPDXIndex::GetRowIdMapping`. Row ids are expected dense (PDX assigns them by position); the vector grows to the largest appended id, counted from `PDXIndexConfig::base_row_id` (for an index that holds one row-id range of a larger table). `Delete` returns whether the id was in the index (an absent id is a no-op), `Contains` whether it is; `Append` of a live id throws.
+- **Transformed input**: `PDXIndexConfig::is_data_transformed` makes `BuildIndex`/`Append` take embeddings that are already normalized and rotated. Pair it with the `(config, ADSamplingPruner&)` constructors of `PDXIndex`/`PDXTreeIndex`/`FlatIndex` to share one rotation matrix across indexes; cursors take `is_query_transformed` for the matching query.
 - Knobs: `indexes/cluster.hpp` (`CAPACITY_THRESHOLD`, `MIN_CAPACITY_THRESHOLD`, `MIN_MAX_CAPACITY = 256`, so small clusters need 256 slots before they split). Split knobs: `common.hpp`.
 
 ## Verification gate (definition of done)
@@ -71,7 +102,7 @@ New feature ⇒ ship a unit test with it (C++ in `tests/`, Python in `python/tes
 
 ## Build & run (beyond the gate)
 
-Header-only; consumers link the `PDX` INTERFACE target (alias `PDX::PDX`), which carries the include dirs (`include/`, bundled `extern/Eigen` exposed as `Eigen3::Eigen`), the `superkmeans::superkmeans` target from `add_subdirectory(extern/SuperKMeans)`, BLAS/OpenMP/FFTW links, compile definitions and the `-march` flags. Benchmark binaries have **no** `.out` suffix.
+Header-only, no submodules; consumers link the `PDX` INTERFACE target (alias `PDX::PDX`), which carries `include/` and links `superkmeans::superkmeans`. SuperKMeans comes from FetchContent, pinned by `GIT_TAG` in `CMakeLists.txt` (`-DFETCHCONTENT_SOURCE_DIR_SUPERKMEANS=<checkout>` builds against a local one); its target brings Eigen, FFTW (optional), the executor and GEMM backends, compile definitions and the `-march`/MSVC/Emscripten flags. Benchmark binaries have **no** `.out` suffix.
 ```bash
 cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 # Index building + search (index_type defaults to pdx_f32; nprobe 0/omitted sweeps a preset list)
@@ -80,7 +111,7 @@ cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 ```
 Add a benchmark with `pdx_add_benchmark(<Name> <source>)` in `benchmarks/CMakeLists.txt`; a test with `pdx_add_test(<name>.out <source>)` in `tests/CMakeLists.txt` (+ the `tests` custom target list).
 
-Knobs: `-DPDX_MARCH` (default `native`, empty disables `-march`), `-DPDX_PORTABLE` (`-mavx2 -mfma` on x86_64 / plain `-O3` elsewhere, for wheels; also via the `PDX_PORTABLE` env var in `pip install .`), `-DPDX_SKIP_FFTW`, `-DPDX_COMPILE_PYTHON` (bindings; defaults to ON only when PDX is the top-level project), `-DBLAS_LIBRARIES` (a good BLAS is critical — distro/apt OpenBLAS is slow, build from source). See INSTALL.md.
+Knobs: `-DPDX_MARCH` (default `native`, empty disables `-march`), `-DPDX_PORTABLE` (`-mavx2 -mfma` on x86_64 / plain `-O3` elsewhere, for wheels; also via the `PDX_PORTABLE` env var in `pip install .`), `-DPDX_SKIP_FFTW` (these three are forwarded to SuperKMeans' `SKMEANS_*`), `-DPDX_COMPILE_PYTHON` (bindings; defaults to ON only when PDX is the top-level project), and SuperKMeans' `-DSKMEANS_EXECUTOR` (`forkunion` default / `openmp` / `serial`) and `-DSKMEANS_GEMM` (`auto` default: Accelerate on macOS, Eigen elsewhere / `eigen` / `accelerate` / `blas`). See INSTALL.md.
 
 
 ## Code style
@@ -112,5 +143,13 @@ Performance-critical — weigh every copy/allocation.
 - **`PDX_VECTORIZE_LOOP`** (`common.hpp`) forces loop autovectorization (esp. FP reductions) — put it
   on its own line right above the `for`, never a raw `#pragma clang loop`. Other macros there: `PDX_RESTRICT`, `PDX_ALWAYS_INLINE`, `PDX_NO_INLINE`,
   `PDX_LIKELY`/`PDX_UNLIKELY`, `PDX_PREFETCH`, `PDX_ENSURE_POSITIVE`.
+- **Parallelism: no OpenMP.** Every parallel loop runs on SuperKMeans' `ParallelExecutor` (aliased in
+  `common.hpp`). `IPDXIndex` is a `skmeans::ExecutorHolder`: it binds `PDXIndexConfig::executor` or owns a
+  default sized by `n_threads`, and `BuildIndex`/`Append`/`Delete` open a `skmeans::ParallelSection`. It
+  hands the executor down: `IVFUtils(executor)` (normalize+rotate, k-means, cluster population),
+  `ScalarQuantizer(d, &executor)`, `ADSamplingPruner::PreprocessEmbeddings(..., &executor)` (pruners are
+  shared across indexes, so they never hold an index's executor) and `BatchComputer` calls (scratch of
+  `ScratchSize(executor)` floats). The k=2 split k-means runs on a `skmeans::SerialExecutor`. A
+  `ParallelFor` body must not call `ParallelFor`; FFTW plans only on the calling thread.
 - **Profiling**: `PDX_PROFILE_SCOPE("name")` (`profiler.hpp`); most benchmarks call
   `Profiler::Get().Print()` at the end (e.g. `BenchmarkEndToEnd`).

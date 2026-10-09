@@ -72,6 +72,7 @@ class PDXearch {
     Quantizer quantizer;
     Pruner& pruner;
     index_t& pdx_data;
+    IClusterSource* cluster_source = nullptr;
 
     PDXearch(index_t& data_index, Pruner& pruner)
         : quantizer(data_index.num_dimensions), pruner(pruner), pdx_data(data_index) {}
@@ -303,28 +304,31 @@ class PDXearch {
             }
         }
         MaskDistancesWithTombstones(tombstones, pruning_distances);
-        size_t max_possible_k = std::min(
-            static_cast<size_t>(k) - heap.size(),
-            n_vectors
-        ); // Note: Start() should not be called if heap.size() >= k
+        // Only live vectors may enter the heap; masked tombstones sort last
+        const size_t n_candidates = n_vectors - tombstones.size();
         std::unique_ptr<size_t[]> indices_sorted(new size_t[n_vectors]);
         std::iota(indices_sorted.get(), indices_sorted.get() + n_vectors, static_cast<size_t>(0));
         std::partial_sort(
             indices_sorted.get(),
-            indices_sorted.get() + static_cast<int64_t>(max_possible_k),
+            indices_sorted.get() + static_cast<int64_t>(n_candidates),
             indices_sorted.get() + n_vectors,
             [pruning_distances](size_t i1, size_t i2) {
                 return pruning_distances[i1] < pruning_distances[i2];
             }
         );
-        // insert first k results into the heap
-        for (size_t idx = 0; idx < max_possible_k; ++idx) {
+        for (size_t idx = 0; idx < n_candidates; ++idx) {
             auto embedding = KNNCandidate{};
             size_t index = indices_sorted[idx];
             embedding.index = vector_indices[index];
             embedding.distance = static_cast<float>(pruning_distances[index]);
             if constexpr (Q == U8) {
                 embedding.distance *= pdx_data.inverse_quantization_scale_squared;
+            }
+            if (heap.size() >= k) {
+                if (embedding.distance >= heap.top().distance) {
+                    break;
+                }
+                heap.pop();
             }
             heap.push(embedding);
         }
@@ -399,28 +403,33 @@ class PDXearch {
             );
         }
         // TODO: Everything down from here is a bottleneck when selection % is ultra low
-        size_t max_possible_k =
-            std::min(static_cast<size_t>(k) - heap.size(), static_cast<size_t>(passing_tuples));
+        // Only passing vectors may enter the heap; masked ones sort last
+        const size_t n_candidates = static_cast<size_t>(passing_tuples);
         MaskDistancesWithSelectionVector(n_vectors, pruning_distances, selection_vector);
         MaskDistancesWithTombstones(tombstones, pruning_distances);
         std::unique_ptr<size_t[]> indices_sorted(new size_t[n_vectors]);
         std::iota(indices_sorted.get(), indices_sorted.get() + n_vectors, static_cast<size_t>(0));
         std::partial_sort(
             indices_sorted.get(),
-            indices_sorted.get() + static_cast<int64_t>(max_possible_k),
+            indices_sorted.get() + static_cast<int64_t>(n_candidates),
             indices_sorted.get() + n_vectors,
             [pruning_distances](size_t i1, size_t i2) {
                 return pruning_distances[i1] < pruning_distances[i2];
             }
         );
-        // insert first k results into the heap
-        for (size_t idx = 0; idx < max_possible_k; ++idx) {
+        for (size_t idx = 0; idx < n_candidates; ++idx) {
             auto embedding = KNNCandidate{};
             size_t index = indices_sorted[idx];
             embedding.index = vector_indices[index];
             embedding.distance = static_cast<float>(pruning_distances[index]);
             if constexpr (Q == U8) {
                 embedding.distance *= pdx_data.inverse_quantization_scale_squared;
+            }
+            if (heap.size() >= k) {
+                if (embedding.distance >= heap.top().distance) {
+                    break;
+                }
+                heap.pop();
             }
             heap.push(embedding);
         }
@@ -530,7 +539,7 @@ class PDXearch {
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
-                __builtin_prefetch(data + data_pos, 0, 3);
+                PDX_PREFETCH(data + data_pos, 0, 3);
             }
             size_t offset_query = pdx_data.num_vertical_dimensions + current_horizontal_dimension;
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
@@ -673,7 +682,30 @@ class PDXearch {
         )
             : searcher(&searcher), top_k_heap(&top_k_heap), k(k), evaluator(evaluator) {}
 
+        // A cluster without data (LoadResidentDataFromStream) comes from the cluster source: its
+        // row ids, then its PDX data with the stride of the embeddings it was saved with.
         void ProbeCluster(uint32_t cluster_id) {
+            PDXearch& s = *searcher;
+            const cluster_t& cluster = s.pdx_data.clusters[cluster_id];
+            if (cluster.data) {
+                ProbeClusterData(cluster_id, cluster.data, cluster.indices, cluster.max_capacity);
+                return;
+            }
+            const char* cluster_bytes = s.cluster_source->Acquire(cluster_id);
+            const auto* indices = reinterpret_cast<const uint32_t*>(cluster_bytes);
+            const auto* data = reinterpret_cast<const data_t*>(
+                cluster_bytes + sizeof(uint32_t) * cluster.used_capacity
+            );
+            ProbeClusterData(cluster_id, data, indices, cluster.used_capacity);
+            s.cluster_source->Release(cluster_id);
+        }
+
+        void ProbeClusterData(
+            uint32_t cluster_id,
+            const data_t* data,
+            const uint32_t* indices,
+            size_t stride
+        ) {
             PDXearch& s = *searcher;
             cluster_t& cluster = s.pdx_data.clusters[cluster_id];
             cluster.n_accessed.fetch_add(1, std::memory_order_relaxed);
@@ -694,11 +726,11 @@ class PDXearch {
                     if constexpr (FILTERED) {
                         s.FilteredStart(
                             prepared_query,
-                            cluster.data,
+                            data,
                             cluster.used_capacity,
-                            cluster.max_capacity,
+                            stride,
                             k,
-                            cluster.indices,
+                            indices,
                             pruning_positions.get(),
                             pruning_distances.get(),
                             *top_k_heap,
@@ -709,11 +741,11 @@ class PDXearch {
                     } else {
                         s.Start(
                             prepared_query,
-                            cluster.data,
+                            data,
                             cluster.used_capacity,
-                            cluster.max_capacity,
+                            stride,
                             k,
-                            cluster.indices,
+                            indices,
                             pruning_positions.get(),
                             pruning_distances.get(),
                             *top_k_heap,
@@ -728,9 +760,9 @@ class PDXearch {
             size_t n_vectors_not_pruned = 0;
             s.template Warmup<FILTERED>(
                 prepared_query,
-                cluster.data,
+                data,
                 cluster.used_capacity,
-                cluster.max_capacity,
+                stride,
                 k,
                 s.selectivity_threshold,
                 pruning_positions.get(),
@@ -745,9 +777,9 @@ class PDXearch {
             );
             s.template Prune<FILTERED>(
                 prepared_query,
-                cluster.data,
+                data,
                 cluster.used_capacity,
-                cluster.max_capacity,
+                stride,
                 k,
                 pruning_positions.get(),
                 pruning_distances.get(),
@@ -761,7 +793,7 @@ class PDXearch {
             if (n_vectors_not_pruned) {
                 auto lock = top_k_heap->GetLock();
                 s.MergeIntoHeap(
-                    cluster.indices,
+                    indices,
                     n_vectors_not_pruned,
                     k,
                     pruning_positions.get(),
@@ -787,15 +819,22 @@ class PDXearch {
         std::unique_ptr<uint32_t[]> pruning_positions;
     };
 
+    // `clusters_access_order`: the query's GetClustersAccessOrder, to skip ranking the clusters
+    // again (nullptr: rank).
     [[nodiscard]] IterativeSearch<false> BeginIterativeSearch(
         const float* PDX_RESTRICT raw_query,
         uint32_t k,
         TopKHeap& top_k_heap,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const uint32_t* clusters_access_order = nullptr
     ) {
         IterativeSearch<false> search_cursor(*this, k, top_k_heap, nullptr);
         InitializeSearchCursor(
-            search_cursor, raw_query, is_query_transformed, pdx_data.num_clusters
+            search_cursor,
+            raw_query,
+            is_query_transformed,
+            pdx_data.num_clusters,
+            clusters_access_order
         );
         return search_cursor;
     }
@@ -805,18 +844,95 @@ class PDXearch {
         uint32_t k,
         std::unique_ptr<PredicateEvaluator> evaluator,
         TopKHeap& top_k_heap,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const uint32_t* clusters_access_order = nullptr
     ) {
         assert(evaluator);
         IterativeSearch<true> search_cursor(*this, k, top_k_heap, evaluator.get());
         search_cursor.owned_evaluator = std::move(evaluator);
         InitializeSearchCursor(
-            search_cursor, raw_query, is_query_transformed, pdx_data.num_clusters
+            search_cursor,
+            raw_query,
+            is_query_transformed,
+            pdx_data.num_clusters,
+            clusters_access_order
         );
         return search_cursor;
     }
 
+    // As above, over an evaluator the caller keeps alive while the cursor lives (the searches of
+    // many queries can share it).
+    [[nodiscard]] IterativeSearch<true> BeginFilteredIterativeSearch(
+        const float* PDX_RESTRICT raw_query,
+        uint32_t k,
+        const PredicateEvaluator& evaluator,
+        TopKHeap& top_k_heap,
+        bool is_query_transformed = false,
+        const uint32_t* clusters_access_order = nullptr
+    ) {
+        IterativeSearch<true> search_cursor(*this, k, top_k_heap, &evaluator);
+        InitializeSearchCursor(
+            search_cursor,
+            raw_query,
+            is_query_transformed,
+            pdx_data.num_clusters,
+            clusters_access_order
+        );
+        return search_cursor;
+    }
+
+    // All clusters, nearest centroid to the query first. Searches of the same query can share it.
+    [[nodiscard]] std::vector<uint32_t> GetClustersAccessOrder(
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed = false
+    ) {
+        std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
+        TransformQuery(raw_query, is_query_transformed, query.get());
+        std::vector<uint32_t> clusters_access_order(pdx_data.num_clusters);
+        GetClustersAccessOrderIVF(
+            query.get(), pdx_data, pdx_data.num_clusters, clusters_access_order.data()
+        );
+        return clusters_access_order;
+    }
+
+    // The query's distance to every centroid, unsorted (out holds num_clusters floats): to rank
+    // the clusters of several indexes together.
+    void GetDistancesToCentroids(
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed,
+        float* PDX_RESTRICT out
+    ) {
+        std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
+        TransformQuery(raw_query, is_query_transformed, query.get());
+        for (size_t cluster_idx = 0; cluster_idx < pdx_data.num_clusters; cluster_idx++) {
+            out[cluster_idx] = DistanceComputer<DistanceMetric::L2SQ, F32>::Horizontal(
+                query.get(),
+                pdx_data.centroids.data() + cluster_idx * pdx_data.num_dimensions,
+                pdx_data.num_dimensions
+            );
+        }
+    }
+
   protected:
+    // Writes the query as the index stores its embeddings (normalized if needed, then rotated) into
+    // `query`, which holds num_dimensions floats.
+    void TransformQuery(
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed,
+        float* PDX_RESTRICT query
+    ) {
+        const size_t d = pdx_data.num_dimensions;
+        if (is_query_transformed) {
+            std::copy(raw_query, raw_query + d, query);
+        } else if (!pdx_data.is_normalized) {
+            pruner.PreprocessQuery(raw_query, query);
+        } else {
+            std::unique_ptr<float[]> normalized_query(new float[d]);
+            quantizer.NormalizeQuery(raw_query, normalized_query.get());
+            pruner.PreprocessQuery(normalized_query.get(), query);
+        }
+    }
+
     template <bool FILTERED>
     void InitializeSearchCursor(
         IterativeSearch<FILTERED>& search_cursor,
@@ -827,15 +943,7 @@ class PDXearch {
     ) {
         const size_t d = pdx_data.num_dimensions;
         search_cursor.query.reset(new float[d]);
-        if (is_query_transformed) {
-            std::copy(raw_query, raw_query + d, search_cursor.query.get());
-        } else if (!pdx_data.is_normalized) {
-            pruner.PreprocessQuery(raw_query, search_cursor.query.get());
-        } else {
-            std::unique_ptr<float[]> normalized_query(new float[d]);
-            quantizer.NormalizeQuery(raw_query, normalized_query.get());
-            pruner.PreprocessQuery(normalized_query.get(), search_cursor.query.get());
-        }
+        TransformQuery(raw_query, is_query_transformed, search_cursor.query.get());
         if constexpr (Q == U8) {
             search_cursor.quantized_query.reset(new quantized_embedding_t[d]);
             quantizer.QuantizeEmbedding(
