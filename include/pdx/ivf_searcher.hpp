@@ -688,7 +688,9 @@ class PDXearch {
             PDXearch& s = *searcher;
             const cluster_t& cluster = s.pdx_data.clusters[cluster_id];
             if (cluster.data) {
-                ProbeClusterData(cluster_id, cluster.data, cluster.indices, cluster.max_capacity);
+                ProbeClusterData(
+                    cluster_id, cluster.data.get(), cluster.indices.get(), cluster.max_capacity
+                );
                 return;
             }
             const char* cluster_bytes = s.cluster_source->Acquire(cluster_id);

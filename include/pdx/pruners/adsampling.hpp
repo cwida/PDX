@@ -14,15 +14,20 @@
 
 namespace PDX {
 
-class ADSamplingPruner : public skmeans::ExecutorHolder {
+class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::AllocatorHolder {
     using matrix_t = eigen_matrix_t;
     using flip_sign_fn = DistanceComputer<DistanceMetric::L2SQ, F32>;
 
   public:
     const uint32_t num_dimensions;
 
-    ADSamplingPruner(const uint32_t num_dimensions, const int32_t seed)
+    ADSamplingPruner(
+        const uint32_t num_dimensions,
+        const int32_t seed,
+        MemoryAllocator* allocator = nullptr
+    )
         : num_dimensions(num_dimensions) {
+        SetAllocator(allocator);
         ratios.resize(num_dimensions);
         for (size_t i = 0; i < num_dimensions; ++i) {
             ratios[i] = GetRatio(i);
@@ -31,10 +36,11 @@ class ADSamplingPruner : public skmeans::ExecutorHolder {
         bool matrix_created = false;
 #ifdef HAS_FFTW
         if (UsesDCTRotation()) {
-            matrix.resize(1, num_dimensions);
+            matrix = skmeans::AllocateBuffer<float>(GetAllocator(), num_dimensions);
+            matrix_rows = 1;
             std::uniform_int_distribution<int> dist(0, 1);
             for (size_t i = 0; i < num_dimensions; ++i) {
-                matrix(i) = dist(gen) ? 1.0f : -1.0f;
+                matrix[i] = dist(gen) ? 1.0f : -1.0f;
             }
             BuildFlipMasks();
             CacheSingleQueryPlan();
@@ -42,37 +48,44 @@ class ADSamplingPruner : public skmeans::ExecutorHolder {
         }
 #endif
         if (!matrix_created) {
-            std::normal_distribution<float> normal_dist;
-            Eigen::MatrixXf random_matrix = Eigen::MatrixXf::Zero(
-                static_cast<Eigen::Index>(num_dimensions), static_cast<Eigen::Index>(num_dimensions)
+            matrix = skmeans::AllocateBuffer<float>(
+                GetAllocator(), static_cast<size_t>(num_dimensions) * num_dimensions
             );
+            matrix_rows = num_dimensions;
+            Eigen::Map<matrix_t> rotation(matrix.get(), num_dimensions, num_dimensions);
+            std::normal_distribution<float> normal_dist;
             for (size_t i = 0; i < num_dimensions; ++i) {
                 for (size_t j = 0; j < num_dimensions; ++j) {
-                    random_matrix(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j)) =
+                    rotation(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j)) =
                         normal_dist(gen);
                 }
             }
-            const Eigen::HouseholderQR<Eigen::MatrixXf> qr(random_matrix);
-            matrix = qr.householderQ() * Eigen::MatrixXf::Identity(num_dimensions, num_dimensions);
+            const Eigen::HouseholderQR<Eigen::MatrixXf> qr(rotation);
+            rotation =
+                qr.householderQ() * Eigen::MatrixXf::Identity(num_dimensions, num_dimensions);
         }
     }
 
-    ADSamplingPruner(const uint32_t num_dimensions, const float* matrix_p)
+    ADSamplingPruner(
+        const uint32_t num_dimensions,
+        const float* matrix_p,
+        MemoryAllocator* allocator = nullptr
+    )
         : num_dimensions(num_dimensions) {
+        SetAllocator(allocator);
         ratios.resize(num_dimensions);
         for (size_t i = 0; i < num_dimensions; ++i) {
             ratios[i] = GetRatio(i);
         }
+        matrix_rows = UsesDCTRotation() ? 1 : num_dimensions;
+        const size_t matrix_size = static_cast<size_t>(matrix_rows) * num_dimensions;
+        matrix = skmeans::AllocateBuffer<float>(GetAllocator(), matrix_size);
+        std::memcpy(matrix.get(), matrix_p, matrix_size * sizeof(float));
 #ifdef HAS_FFTW
         if (UsesDCTRotation()) {
-            matrix = Eigen::Map<const matrix_t>(matrix_p, 1, num_dimensions);
             BuildFlipMasks();
             CacheSingleQueryPlan();
-        } else {
-            matrix = Eigen::Map<const matrix_t>(matrix_p, num_dimensions, num_dimensions);
         }
-#else
-        matrix = Eigen::Map<const matrix_t>(matrix_p, num_dimensions, num_dimensions);
 #endif
     }
 
@@ -83,9 +96,9 @@ class ADSamplingPruner : public skmeans::ExecutorHolder {
         }
     }
 
-    void SetMatrix(const Eigen::MatrixXf& matrix) { ADSamplingPruner::matrix = matrix; }
-
-    const matrix_t& GetMatrix() const { return matrix; }
+    Eigen::Map<const matrix_t> GetMatrix() const {
+        return {matrix.get(), matrix_rows, num_dimensions};
+    }
 
     float GetPruningThreshold(uint32_t, Heap& heap, const uint32_t current_dimension_idx) const {
         float ratio = current_dimension_idx == num_dimensions ? 1 : ratios[current_dimension_idx];
@@ -127,7 +140,8 @@ class ADSamplingPruner : public skmeans::ExecutorHolder {
 
   private:
     float pruning_aggressiveness = ADSAMPLING_PRUNING_AGGRESIVENESS;
-    matrix_t matrix;
+    skmeans::AllocatedBuffer<float> matrix; // Rotation, row-major (or the sign vector for DCT)
+    uint32_t matrix_rows = 0;
     std::vector<float> ratios;
     std::vector<uint32_t> flip_masks;
 #ifdef HAS_FFTW
@@ -163,7 +177,7 @@ class ADSamplingPruner : public skmeans::ExecutorHolder {
     void BuildFlipMasks() {
         flip_masks.resize(num_dimensions);
         for (size_t i = 0; i < num_dimensions; ++i) {
-            flip_masks[i] = (matrix(i) < 0.0f ? 0x80000000u : 0u);
+            flip_masks[i] = (matrix[i] < 0.0f ? 0x80000000u : 0u);
         }
     }
 
@@ -199,7 +213,7 @@ class ADSamplingPruner : public skmeans::ExecutorHolder {
             (IsPowerOf2(num_dimensions) ? FFTW_ESTIMATE : FFTW_MEASURE) | FFTW_UNALIGNED;
         const size_t block_rows = std::min(skmeans::ROTATION_BLOCK_SIZE, n);
         const size_t tail_rows = n % block_rows;
-        std::unique_ptr<float[]> scratch(new float[block_rows * num_dimensions]);
+        auto scratch = skmeans::AllocateBuffer<float>(GetAllocator(), block_rows * num_dimensions);
         auto make_plan = [&](size_t rows) {
             const int howmany = static_cast<int>(rows);
             return fftwf_plan_many_r2r(
@@ -273,7 +287,7 @@ class ADSamplingPruner : public skmeans::ExecutorHolder {
                     n_rows,
                     dim,
                     1.0f,
-                    matrix.data(),
+                    matrix.get(),
                     dim,
                     embeddings + row * num_dimensions,
                     dim,

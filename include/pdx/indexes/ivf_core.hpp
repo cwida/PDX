@@ -26,7 +26,7 @@ class IClusterSource {
 };
 
 template <Quantization Q>
-class IVF {
+class IVF : public skmeans::AllocatorHolder {
   public:
     using cluster_t = Cluster<Q>;
     using data_t = pdx_data_t<Q>;
@@ -118,13 +118,13 @@ class IVF {
         clusters.reserve(num_clusters);
         for (size_t i = 0; i < num_clusters; ++i) {
             clusters.emplace_back(
-                cluster_headers[i * 2], cluster_headers[i * 2 + 1], num_dimensions
+                cluster_headers[i * 2], cluster_headers[i * 2 + 1], num_dimensions, &GetAllocator()
             );
             clusters[i].id = i;
             clusters[i].LoadPDXData(reader);
         }
         for (size_t i = 0; i < num_clusters; ++i) {
-            reader.Read(clusters[i].indices, sizeof(uint32_t) * clusters[i].num_embeddings);
+            reader.Read(clusters[i].indices.get(), sizeof(uint32_t) * clusters[i].num_embeddings);
         }
     }
 
@@ -165,7 +165,7 @@ class IVF {
         }
         for (size_t i = 0; i < num_clusters; ++i) {
             out.write(
-                reinterpret_cast<const char*>(clusters[i].indices),
+                reinterpret_cast<const char*>(clusters[i].indices.get()),
                 sizeof(uint32_t) * clusters[i].num_embeddings
             );
         }
@@ -218,7 +218,7 @@ class IVF {
     void SaveClusterData(std::ostream& out) const {
         for (size_t i = 0; i < num_clusters; ++i) {
             out.write(
-                reinterpret_cast<const char*>(clusters[i].indices),
+                reinterpret_cast<const char*>(clusters[i].indices.get()),
                 static_cast<std::streamsize>(sizeof(uint32_t) * clusters[i].num_embeddings)
             );
             clusters[i].SavePDXData(out);
@@ -237,7 +237,7 @@ class IVF {
             const auto num_embeddings = ReadValue<uint32_t>(reader);
             const auto max_capacity = ReadValue<uint32_t>(reader);
             clusters.emplace_back(
-                num_embeddings, max_capacity, num_dimensions, allocate_cluster_data
+                num_embeddings, max_capacity, num_dimensions, &GetAllocator(), allocate_cluster_data
             );
             clusters[i].id = i;
             cluster_data_offsets[i] = ReadValue<uint64_t>(reader);
@@ -277,7 +277,7 @@ class IVF {
                 throw std::runtime_error("Overlapping clusters in a PDX index stream");
             }
             reader.Skip(cluster_data_offsets[cluster_id] - position);
-            reader.Read(cluster.indices, sizeof(uint32_t) * cluster.num_embeddings);
+            reader.Read(cluster.indices.get(), sizeof(uint32_t) * cluster.num_embeddings);
             cluster.LoadPDXData(reader);
             position = cluster_data_offsets[cluster_id] +
                        GetClusterDataSizeInBytes(cluster.num_embeddings);
@@ -335,6 +335,12 @@ class IVFTree : public IVF<Q> {
               quantization_scale,
               quantization_base
           ) {}
+
+    // Binds L0 too
+    void SetAllocator(MemoryAllocator* allocator) {
+        IVF<Q>::SetAllocator(allocator);
+        l0.SetAllocator(allocator);
+    }
 
     void Load(char* input) {
         BufferReader reader{input};
@@ -423,7 +429,7 @@ class IVFTree : public IVF<Q> {
         }
         for (size_t i = 0; i < n_clusters_l0; ++i) {
             out.write(
-                reinterpret_cast<const char*>(l0.clusters[i].indices),
+                reinterpret_cast<const char*>(l0.clusters[i].indices.get()),
                 sizeof(uint32_t) * l0.clusters[i].num_embeddings
             );
         }
@@ -442,7 +448,7 @@ class IVFTree : public IVF<Q> {
         }
         for (size_t i = 0; i < this->num_clusters; ++i) {
             out.write(
-                reinterpret_cast<const char*>(this->clusters[i].indices),
+                reinterpret_cast<const char*>(this->clusters[i].indices.get()),
                 sizeof(uint32_t) * this->clusters[i].num_embeddings
             );
         }

@@ -9,6 +9,7 @@
 #include <queue>
 #include <random>
 
+#include "superkmeans/allocator.h"
 #include "superkmeans/executor.h"
 
 #define PDX_ENSURE_POSITIVE(x)                                                                     \
@@ -83,6 +84,8 @@ namespace PDX {
 
 // Runs PDX's parallel loops; the index holds one (see IPDXIndex) and passes it down.
 using ParallelExecutor = skmeans::ParallelExecutor;
+// Where PDX's large buffers come from; the index binds one (see IPDXIndex) and passes it down.
+using MemoryAllocator = skmeans::MemoryAllocator;
 
 static constexpr float PROPORTION_HORIZONTAL_DIM = 0.75f;
 static constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;

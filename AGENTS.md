@@ -123,8 +123,10 @@ Knobs: `-DPDX_MARCH` (default `native`, empty disables `-march`), `-DPDX_PORTABL
   `UPPER_SNAKE_CASE` constants; everything lives in `namespace PDX` (the SuperKMeans dependency
   is `skmeans::`).
 - Follow `.clang-format` / `.clang-tidy`.
-- **Memory**: RAII, no raw `new`/`delete`. Buffers that don't need zero-init → `new T[]` in a
-  `unique_ptr`, **not** `std::vector`/`resize()`.
+- **Memory**: RAII, no raw `new`/`delete`. Buffers sized by n, n·d, a cluster's capacity·d, d·d or
+  the worker count → `skmeans::AllocateBuffer`/`AllocateZeroedBuffer` on the bound allocator (see
+  Memory allocator). Other buffers that don't need zero-init → `new T[]` in a `unique_ptr`,
+  **not** `std::vector`/`resize()`.
 - Headers are `.hpp` (all under `include/pdx/`). Constants/magic numbers → `include/pdx/common.hpp`
   as `constexpr`.
 - Keep comments simple. TODOs: `TODO(@<github_user>, <priority>): <summary>`.
@@ -154,5 +156,17 @@ Performance-critical — weigh every copy/allocation.
   shared across indexes, so they never hold an index's executor) and `BatchComputer` calls (scratch of
   `ScratchSize(executor)` floats). The k=2 split k-means runs on a `skmeans::SerialExecutor`. A
   `ParallelFor` body must not call `ParallelFor`; FFTW plans only on the calling thread.
+- **Memory allocator.** Large buffers come from SuperKMeans' `MemoryAllocator` (aliased in
+  `common.hpp`), borrowed: it must outlive the index; unbound means the `VanillaAllocator`.
+  `IPDXIndex` is a `skmeans::AllocatorHolder` bound to `PDXIndexConfig::allocator` (not serialized),
+  and binds its `IVF` storage too (`IVFTree::SetAllocator` also binds L0; `Restore` rebinds it). It
+  hands the allocator to its owned pruner, to `IVFUtils(executor, &allocator)` (which passes it to
+  SuperKMeans' k-means) and to new clusters; each `Cluster` keeps it for `Grow`.
+  `LoadPDXIndex`/`LoadPDXIndexFromStream` take it as a parameter, since loading allocates the clusters.
+  Routed: cluster `data`/`indices`, the pruner's rotation (an `AllocatedBuffer` behind an `Eigen::Map`),
+  `NormalizeAndRotate`, the population gathers, split/merge/reassign scratch, `ReadRotationMatrix`,
+  `FlatIndex::GetEmbeddings`. On the heap: centroids (SuperKMeans' `Train` vector),
+  `RowIdClusterMapping`, tombstones, `Flat` storage, per-query searcher buffers, the single-embedding
+  transform in `Append`, d-sized arrays, `MmapFile` and Eigen's QR internals.
 - **Profiling**: `PDX_PROFILE_SCOPE("name")` (`profiler.hpp`); most benchmarks call
   `Profiler::Get().Print()` at the end (e.g. `BenchmarkEndToEnd`).

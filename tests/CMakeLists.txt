@@ -22,6 +22,7 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
+set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
 include(GoogleTest)
 
 # Helper: add a utility executable (not a test) linked against PDX

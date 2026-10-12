@@ -40,6 +40,9 @@ struct PDXIndexConfig {
     // Runs the parallel loops (not owned, not serialized). nullptr: the index creates a default
     // one.
     ParallelExecutor* executor = nullptr;
+    // Allocates the large buffers (not owned, not serialized; must outlive the index). nullptr: the
+    // VanillaAllocator.
+    MemoryAllocator* allocator = nullptr;
 
     // Field by field with fixed widths, so the bytes do not depend on the struct's layout.
     void Save(std::ostream& out) const {
@@ -139,11 +142,11 @@ inline void WriteRotationMatrix(std::ostream& out, const ADSamplingPruner& prune
 }
 
 template <class Reader>
-std::unique_ptr<float[]> ReadRotationMatrix(Reader& reader) {
+skmeans::AllocatedBuffer<float> ReadRotationMatrix(Reader& reader, MemoryAllocator& allocator) {
     const auto rows = ReadValue<uint32_t>(reader);
     const auto cols = ReadValue<uint32_t>(reader);
     const size_t num_values = static_cast<size_t>(rows) * cols;
-    std::unique_ptr<float[]> matrix(new float[num_values]);
+    auto matrix = skmeans::AllocateBuffer<float>(allocator, num_values);
     reader.Read(matrix.get(), sizeof(float) * num_values);
     return matrix;
 }
@@ -217,12 +220,16 @@ struct RowIdClusterMapping {
     std::vector<entry_t> entries;
 };
 
-// The index build steps that run in parallel, on the executor they are given (borrowed).
-class IVFUtils {
+// The index build steps that run in parallel, on the executor and allocator they are given
+// (borrowed).
+class IVFUtils : public skmeans::AllocatorHolder {
   public:
-    explicit IVFUtils(ParallelExecutor& executor) : executor(executor) {}
+    explicit IVFUtils(ParallelExecutor& executor, MemoryAllocator* allocator = nullptr)
+        : executor(executor) {
+        SetAllocator(allocator);
+    }
 
-    std::unique_ptr<float[]> NormalizeAndRotate(
+    skmeans::AllocatedBuffer<float> NormalizeAndRotate(
         const float* embeddings,
         size_t num_embeddings,
         uint32_t num_dimensions,
@@ -231,10 +238,10 @@ class IVFUtils {
     ) const {
         PDX_PROFILE_SCOPE("Search/NormalizeAndRotate");
         const size_t total_floats = num_embeddings * num_dimensions;
-        std::unique_ptr<float[]> normalized;
+        skmeans::AllocatedBuffer<float> normalized;
         const float* rotation_input = embeddings;
         if (normalize) {
-            normalized.reset(new float[total_floats]);
+            normalized = skmeans::AllocateBuffer<float>(GetAllocator(), total_floats);
             Quantizer quantizer(num_dimensions);
             executor.ParallelFor(num_embeddings, [&](size_t begin, size_t end, size_t) {
                 for (size_t i = begin; i < end; i++) {
@@ -245,7 +252,7 @@ class IVFUtils {
             });
             rotation_input = normalized.get();
         }
-        std::unique_ptr<float[]> preprocessed(new float[total_floats]);
+        auto preprocessed = skmeans::AllocateBuffer<float>(GetAllocator(), total_floats);
         pruner.PreprocessEmbeddings(rotation_input, preprocessed.get(), num_embeddings, &executor);
         return preprocessed;
     }
@@ -303,6 +310,7 @@ class IVFUtils {
             config.seed = seed;
             // config.verbose = true;
             config.executor = &executor;
+            config.allocator = &GetAllocator();
             auto kmeans = skmeans::HierarchicalSuperKMeans(num_clusters, num_dimensions, config);
             result.centroids = kmeans.Train(embeddings, num_embeddings);
             if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
@@ -324,6 +332,7 @@ class IVFUtils {
             config.seed = seed;
             // config.verbose = true;
             config.executor = &executor;
+            config.allocator = &GetAllocator();
             auto kmeans = skmeans::SuperKMeans(num_clusters, num_dimensions, config);
             result.centroids = kmeans.Train(embeddings, num_embeddings);
             if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
@@ -404,17 +413,18 @@ class IVFUtils {
             ivf.clusters.emplace_back(
                 cluster_size,
                 Cluster<Q>::CapacityFor(cluster_size, max_cluster_size),
-                num_dimensions
+                num_dimensions,
+                &GetAllocator()
             );
             ivf.clusters[cluster_idx].id = cluster_idx;
         }
 
         // Per-worker tmp buffers for gather + quantize
         const size_t n_workers = executor.NumWorkers();
-        std::vector<std::unique_ptr<storage_t[]>> tmp_buffers(n_workers);
+        std::vector<skmeans::AllocatedBuffer<storage_t>> tmp_buffers(n_workers);
         for (size_t w = 0; w < n_workers; w++) {
-            tmp_buffers[w].reset(
-                new storage_t[static_cast<uint64_t>(largest_cluster_size) * num_dimensions]
+            tmp_buffers[w] = skmeans::AllocateBuffer<storage_t>(
+                GetAllocator(), static_cast<uint64_t>(largest_cluster_size) * num_dimensions
             );
         }
 
@@ -467,7 +477,8 @@ class IVFUtils {
         const size_t d = num_dimensions;
         const auto& ids = kmeans_result.assignments[cluster_id];
         const size_t num_embeddings = ids.size();
-        std::unique_ptr<float[]> cluster_embeddings(new float[num_embeddings * d]);
+        auto cluster_embeddings =
+            skmeans::AllocateBuffer<float>(GetAllocator(), num_embeddings * d);
         for (size_t i = 0; i < num_embeddings; i++) {
             std::memcpy(
                 cluster_embeddings.get() + i * d, embeddings + ids[i] * d, d * sizeof(float)
@@ -531,15 +542,16 @@ class IVFUtils {
 
 // Dequantize raw (Q-type) embeddings to float. For F32 this is a memcpy.
 template <Quantization Q>
-inline std::unique_ptr<float[]> DequantizeClusterEmbeddings(
+inline skmeans::AllocatedBuffer<float> DequantizeClusterEmbeddings(
     const IVF<Q>& index,
     ScalarQuantizer<Q>& quantizer,
     const pdx_data_t<Q>* raw_embeddings,
-    uint32_t n_emb
+    uint32_t n_emb,
+    MemoryAllocator& allocator
 ) {
     PDX_PROFILE_SCOPE("Dequantize");
     const size_t d = index.num_dimensions;
-    std::unique_ptr<float[]> result(new float[static_cast<size_t>(n_emb) * d]);
+    auto result = skmeans::AllocateBuffer<float>(allocator, static_cast<size_t>(n_emb) * d);
     if constexpr (Q == U8) {
         for (size_t i = 0; i < n_emb; i++) {
             quantizer.DequantizeEmbedding(
@@ -589,7 +601,7 @@ inline void GetEmbeddingsFromIndexByRowIdsImpl(
         const uint32_t cluster_id = locations[rows_by_cluster[next]].first;
         const auto& cluster = index.clusters[cluster_id];
         const bool from_cluster_source = !cluster.data;
-        const data_t* data = cluster.data;
+        const data_t* data = cluster.data.get();
         size_t stride = cluster.max_capacity;
         if (from_cluster_source) {
             const char* cluster_bytes = cluster_source->Acquire(cluster_id);
@@ -711,7 +723,7 @@ inline std::unique_ptr<pdx_distance_t<Q>[]> CalculateDistanceFromEmbeddingToClus
     std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[n_vectors]);
     distance_computer_t::Vertical(
         embedding,
-        cluster.data,
+        cluster.data.get(),
         n_vectors,
         buffer_stride,
         0,
@@ -728,7 +740,7 @@ inline std::unique_ptr<pdx_distance_t<Q>[]> CalculateDistanceFromEmbeddingToClus
                               (vector_idx * H_DIM_SIZE);
             pruning_distances[vector_idx] += distance_computer_t::Horizontal(
                 embedding + index.num_vertical_dimensions + horizontal_dimension,
-                cluster.data + data_pos,
+                cluster.data.get() + data_pos,
                 H_DIM_SIZE
             );
         }
@@ -755,7 +767,8 @@ inline SplitPartition PartitionClusterForSplit(
     const float* centroid_to_split,
     const std::vector<uint32_t>& neighboring_clusters_ids,
     DistanceMetric distance_metric,
-    uint32_t seed
+    uint32_t seed,
+    MemoryAllocator& allocator
 ) {
     using distance_computer_f32_t = DistanceComputer<DistanceMetric::L2SQ, F32>;
     const size_t d = index.num_dimensions;
@@ -766,7 +779,7 @@ inline SplitPartition PartitionClusterForSplit(
         PDX_PROFILE_SCOPE("Split/KMeans");
         // 1 thread because DML operations are assumed single-threaded
         skmeans::SerialExecutor serial_executor;
-        KMeansResult split_result = IVFUtils(serial_executor)
+        KMeansResult split_result = IVFUtils(serial_executor, &allocator)
                                         .ComputeKMeans(
                                             cluster_embeddings,
                                             num_embeddings,

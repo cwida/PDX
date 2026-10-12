@@ -36,7 +36,10 @@ class FlatIndex : public IPDXIndex {
         : config(config), index(config.num_dimensions, Normalize(config)) {
         config.Validate();
         BindExecutor(config);
-        owned_pruner = std::make_unique<ADSamplingPruner>(config.num_dimensions, config.seed);
+        SetAllocator(config.allocator);
+        owned_pruner = std::make_unique<ADSamplingPruner>(
+            config.num_dimensions, config.seed, config.allocator
+        );
         pruner = owned_pruner.get();
         searcher = std::make_unique<FlatSearcher>(index, *pruner);
         row_id_cluster_mapping.base_row_id = config.base_row_id;
@@ -47,6 +50,7 @@ class FlatIndex : public IPDXIndex {
           pruner(&external_pruner) {
         config.Validate();
         BindExecutor(config);
+        SetAllocator(config.allocator);
         searcher = std::make_unique<FlatSearcher>(index, *pruner);
         row_id_cluster_mapping.base_row_id = config.base_row_id;
     }
@@ -59,9 +63,9 @@ class FlatIndex : public IPDXIndex {
 
     void BuildIndex(const size_t* row_ids, const float* embeddings, size_t num_embeddings) {
         skmeans::ParallelSection parallel_section(GetExecutor());
-        std::unique_ptr<float[]> transformed;
+        skmeans::AllocatedBuffer<float> transformed;
         if (!config.is_data_transformed) {
-            transformed = IVFUtils(GetExecutor())
+            transformed = IVFUtils(GetExecutor(), &GetAllocator())
                               .NormalizeAndRotate(
                                   embeddings,
                                   num_embeddings,
@@ -87,7 +91,7 @@ class FlatIndex : public IPDXIndex {
                 "Append: row_id " + std::to_string(row_id) + " already exists in the index"
             );
         }
-        std::unique_ptr<float[]> transformed;
+        skmeans::AllocatedBuffer<float> transformed;
         if (!config.is_data_transformed) {
             transformed = IVFUtils(GetExecutor())
                               .NormalizeAndRotate(
@@ -233,12 +237,13 @@ class FlatIndex : public IPDXIndex {
 
         // Index type flag
         ReadValue<uint8_t>(reader);
-        const auto matrix = ReadRotationMatrix(reader);
+        const auto matrix = ReadRotationMatrix(reader, GetAllocator());
         index.Load(reader);
         config.num_dimensions = index.num_dimensions;
         config.normalize = index.is_normalized;
 
-        owned_pruner = std::make_unique<ADSamplingPruner>(index.num_dimensions, matrix.get());
+        owned_pruner =
+            std::make_unique<ADSamplingPruner>(index.num_dimensions, matrix.get(), &GetAllocator());
         pruner = owned_pruner.get();
         searcher = std::make_unique<FlatSearcher>(index, *pruner);
         BuildRowIdClusterMapping();
@@ -285,9 +290,9 @@ class FlatIndex : public IPDXIndex {
         return row_ids;
     }
 
-    std::unique_ptr<float[]> GetEmbeddings() const {
+    skmeans::AllocatedBuffer<float> GetEmbeddings() const {
         const size_t d = index.num_dimensions;
-        std::unique_ptr<float[]> embeddings(new float[index.num_embeddings * d]);
+        auto embeddings = skmeans::AllocateBuffer<float>(GetAllocator(), index.num_embeddings * d);
         size_t n_copied = 0;
         for (uint32_t position = 0; position < index.UsedCapacity(); position++) {
             if (!index.HasTombstone(position)) {
