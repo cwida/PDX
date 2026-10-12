@@ -254,7 +254,8 @@ class IVF {
         ComputeClusterOffsets();
     }
 
-    // Reads the clusters in the order of their offsets, skipping the bytes between them.
+    // Reads the clusters in the order of their offsets, skipping the bytes between them. An empty
+    // cluster holds no bytes (it shares its offset with the next cluster), so it is not read.
     template <class Reader>
     void LoadClusterData(Reader& reader) {
         std::vector<uint32_t> clusters_in_stream_order(num_clusters);
@@ -268,11 +269,14 @@ class IVF {
         );
         uint64_t position = 0;
         for (const uint32_t cluster_id : clusters_in_stream_order) {
+            auto& cluster = clusters[cluster_id];
+            if (cluster.num_embeddings == 0) {
+                continue;
+            }
             if (cluster_data_offsets[cluster_id] < position) {
                 throw std::runtime_error("Overlapping clusters in a PDX index stream");
             }
             reader.Skip(cluster_data_offsets[cluster_id] - position);
-            auto& cluster = clusters[cluster_id];
             reader.Read(cluster.indices, sizeof(uint32_t) * cluster.num_embeddings);
             cluster.LoadPDXData(reader);
             position = cluster_data_offsets[cluster_id] +

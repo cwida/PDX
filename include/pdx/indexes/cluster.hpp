@@ -267,6 +267,62 @@ struct Cluster {
         }
     }
 
+    // Store row-major embeddings into this cluster's preallocated buffers in the transposed PDX
+    // layout, from slot 0. See the README of the following for a description of the PDX layout:
+    // https://github.com/cwida/pdx
+    void StoreEmbeddings(const data_t* embeddings, const size_t num_rows) {
+        const auto split = GetPDXDimensionSplit(num_dimensions);
+        const uint32_t vertical_d = split.vertical_dimensions;
+        const uint32_t horizontal_d = split.horizontal_dimensions;
+
+        if constexpr (Q == Quantization::F32) {
+            using h_matrix_t = Eigen::Matrix<float, Eigen::Dynamic, H_DIM_SIZE, Eigen::RowMajor>;
+            const auto stride = static_cast<Eigen::Index>(max_capacity);
+
+            Eigen::Map<const eigen_matrix_t> in(embeddings, num_rows, num_dimensions);
+
+            // Vertical block: (vertical_d x num_rows) with row stride = max_capacity
+            Eigen::Map<eigen_matrix_t, 0, Eigen::OuterStride<Eigen::Dynamic>> out(
+                data, vertical_d, num_rows, Eigen::OuterStride<Eigen::Dynamic>(stride)
+            );
+            out.noalias() = in.leftCols(vertical_d).transpose();
+
+            float* horizontal_out = data + stride * vertical_d;
+            for (size_t j = 0; j < horizontal_d; j += H_DIM_SIZE) {
+                Eigen::Map<h_matrix_t> out_h(horizontal_out, num_rows, H_DIM_SIZE);
+                out_h.noalias() = in.block(0, vertical_d + j, num_rows, H_DIM_SIZE);
+                horizontal_out += stride * H_DIM_SIZE;
+            }
+        } else {
+            using u8_matrix_t =
+                Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+            using u8_v_matrix_t =
+                Eigen::Matrix<uint8_t, Eigen::Dynamic, U8_INTERLEAVE_SIZE, Eigen::RowMajor>;
+            using u8_h_matrix_t = Eigen::Matrix<uint8_t, Eigen::Dynamic, H_DIM_SIZE, Eigen::RowMajor>;
+            const auto stride = static_cast<size_t>(max_capacity);
+
+            Eigen::Map<const u8_matrix_t> in(embeddings, num_rows, num_dimensions);
+
+            size_t dim = 0;
+            for (; dim + U8_INTERLEAVE_SIZE <= vertical_d; dim += U8_INTERLEAVE_SIZE) {
+                Eigen::Map<u8_v_matrix_t> out_v(data + dim * stride, num_rows, U8_INTERLEAVE_SIZE);
+                out_v.noalias() = in.block(0, dim, num_rows, U8_INTERLEAVE_SIZE);
+            }
+            if (dim < vertical_d) {
+                auto remaining = static_cast<Eigen::Index>(vertical_d - dim);
+                Eigen::Map<u8_matrix_t> out_v(data + dim * stride, num_rows, remaining);
+                out_v.noalias() = in.block(0, dim, num_rows, remaining);
+            }
+
+            uint8_t* horizontal_out = data + stride * vertical_d;
+            for (size_t j = 0; j < horizontal_d; j += H_DIM_SIZE) {
+                Eigen::Map<u8_h_matrix_t> out_h(horizontal_out, num_rows, H_DIM_SIZE);
+                out_h.noalias() = in.block(0, vertical_d + j, num_rows, H_DIM_SIZE);
+                horizontal_out += stride * H_DIM_SIZE;
+            }
+        }
+    }
+
     // Caller must hold cluster_mutex
     // Returns: vector of (row_id, new_index_in_cluster) for each moved embedding
     // TODO(@lkuffo, med): I dont like this while loops too much. Its confusing (but it works)
@@ -304,6 +360,28 @@ struct Cluster {
 
         assert(num_embeddings == used_capacity);
         return moves;
+    }
+
+    // Re-lays out the rows in CAPACITY_THRESHOLD times as many slots, keeping their slots (so row
+    // ids, centroid and the index's row id mapping stay valid). For a full cluster that a split
+    // cannot separate. Assumes no tombstones; the index must recompute its cluster offsets.
+    void Grow() {
+        PDX_PROFILE_SCOPE("GrowCluster");
+        auto rows = GetHorizontalEmbeddingsFromPDXBuffer();
+        const uint32_t new_max_capacity =
+            std::max(static_cast<uint32_t>(num_embeddings * CAPACITY_THRESHOLD), MIN_MAX_CAPACITY);
+        std::unique_ptr<uint32_t[]> new_indices(new uint32_t[new_max_capacity]);
+        std::unique_ptr<data_t[]> new_data(
+            new data_t[static_cast<uint64_t>(new_max_capacity) * num_dimensions]
+        );
+        std::memcpy(new_indices.get(), indices, num_embeddings * sizeof(uint32_t));
+        delete[] indices;
+        delete[] data;
+        indices = new_indices.release();
+        data = new_data.release();
+        max_capacity = new_max_capacity;
+        min_capacity = static_cast<uint32_t>(num_embeddings * MIN_CAPACITY_THRESHOLD);
+        StoreEmbeddings(rows.get(), num_embeddings);
     }
 
     // Gather-reads one embedding from a transposed PDX buffer of the given stride into a horizontal

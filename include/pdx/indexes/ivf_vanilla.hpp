@@ -139,6 +139,7 @@ class PDXIndex : public IPDXIndex {
     PDX::ADSamplingPruner* pruner = nullptr;
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
     RowIdClusterMapping row_id_cluster_mapping;
+    uint32_t split_depth = 0;
 
   public:
     PDXIndex() = default;
@@ -640,6 +641,9 @@ class PDXIndex : public IPDXIndex {
                 for (const auto& [row_id, new_idx] : moves) {
                     SetRowIdMapping(row_id, cluster.id, new_idx);
                 }
+            } else if (split_depth >= SPLIT_CASCADE_MAX_DEPTH) {
+                cluster.Grow();
+                index.ComputeClusterOffsets();
             } else {
                 SplitCluster(cluster);
             }
@@ -720,6 +724,14 @@ class PDXIndex : public IPDXIndex {
         auto& group_a_idx = partition.group_a_idx;
         auto& group_b_idx = partition.group_b_idx;
         auto& group_rest_idx = partition.group_rest_idx;
+
+        // A side is empty (e.g. identical embeddings): grow the cluster instead of splitting off
+        // an empty one, which would only send the rest back here and split again
+        if (group_a_idx.empty() || group_b_idx.empty()) {
+            cluster.Grow();
+            index.ComputeClusterOffsets();
+            return;
+        }
 
         // Gather embeddings and IDs, accumulate centroid sums
         std::vector<embedding_storage_t> embs_a, embs_b;
@@ -813,18 +825,14 @@ class PDXIndex : public IPDXIndex {
             new_cluster_a.id = cluster_id;
             if (count_a > 0) {
                 std::memcpy(new_cluster_a.indices, ids_a.data(), count_a * sizeof(uint32_t));
-                StoreClusterEmbeddings<Q, embedding_storage_t>(
-                    new_cluster_a, index, embs_a.data(), count_a
-                );
+                new_cluster_a.StoreEmbeddings(embs_a.data(), count_a);
             }
             uint32_t new_cluster_b_id = index.num_clusters;
             cluster_t new_cluster_b(static_cast<uint32_t>(count_b), d);
             new_cluster_b.id = new_cluster_b_id;
             if (count_b > 0) {
                 std::memcpy(new_cluster_b.indices, ids_b.data(), count_b * sizeof(uint32_t));
-                StoreClusterEmbeddings<Q, embedding_storage_t>(
-                    new_cluster_b, index, embs_b.data(), count_b
-                );
+                new_cluster_b.StoreEmbeddings(embs_b.data(), count_b);
             }
             // Replace old cluster with A, append B
             index.clusters[cluster_id] = std::move(new_cluster_a);
@@ -850,6 +858,11 @@ class PDXIndex : public IPDXIndex {
 
         // Reassign rest group (closer to other centroids than A or B)
         if (!group_rest_idx.empty()) {
+            split_depth++;
+            struct DepthGuard {
+                uint32_t& depth;
+                ~DepthGuard() { depth--; }
+            } depth_guard{split_depth};
             ReassignEmbeddings(
                 ids_rest.get(),
                 float_rest.get(),

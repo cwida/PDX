@@ -50,7 +50,7 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 - `PDXIndex`'s stream payload puts first what a search keeps in memory, so a reader can fetch one cluster alone:
   `IVF::SaveResidentData` (cluster sizes and capacities, each cluster's offset in the cluster data, the centroids),
   then the row-id mapping (`RowIdClusterMapping::Save`), then `IVF::SaveClusterData` (per cluster: row ids, then
-  compact PDX data). `LoadClusterData` reads by offset and skips gaps, so the writer may reorder or pad clusters.
+  compact PDX data). `LoadClusterData` reads by offset and skips gaps and empty clusters (which hold no bytes and share the next cluster's offset), so the writer may reorder or pad clusters.
   `IVFTree` and `FlatIndex` stream the file format's payload.
 - Paging: `LoadPDXIndexFromStream(in, pruner, &cluster_source)` (`LoadResidentDataFromStream`) loads a `PDXIndex`
   without its clusters' arrays (`data`/`indices` null; Flat and the tree load everything). `ProbeCluster` then gets
@@ -72,15 +72,16 @@ Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopK
 
 ## Maintenance (SPFresh-like appends/deletes)
 
-Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIndex` additionally keeps the meso-cluster layer (L0) in sync. The leaf-level helpers they share live in `indexes/ivf_utils.hpp`. 
+Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIndex` additionally keeps the meso-cluster layer (L0) in sync. The leaf-level helpers they share live in `indexes/ivf_utils.hpp`; operations on one cluster's own data (`StoreEmbeddings`, `Grow`, `CompactCluster`) are `Cluster` members (`indexes/cluster.hpp`).
 - **Append**: normalize+rotate → nearest centroid (vanilla: exact scan of all centroids; tree: PDX search over L0). Centroids never move on a plain append.
 - **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`, `CheckClusterHealth`. Search masks tombstones and never lets them into the heap, also while the heap is not yet full (`k` above the live count); `Save()` compacts them away.
 - **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM) with merges disabled to avoid cascades.
+- **SplitCluster**: 2-means into A and B; points closer to one of the `SPLIT_MAX_NEIGHBOR_CLUSTERS` nearest centroids go to a "rest" group that is reassigned, and neighbour points closer to A or B are stolen. If the 2-means leaves A or B empty (identical embeddings cannot be separated), the cluster is not split: `Cluster::Grow()` re-lays it out in `CAPACITY_THRESHOLD` times as many slots (same slots, row ids and centroid). The rest group's reassignment can split other clusters recursively; past `SPLIT_CASCADE_MAX_DEPTH` nested levels a full cluster grows instead of splitting.
 - **ReassignEmbeddings** (also used by `SplitCluster` for the "rest" group) always runs with merges disabled: it snapshots the nearest-centroid assignments before its loop, and a merge inside the loop would swap-and-pop cluster ids from under it (see the TODO at its definition for the root fix). Clusters drained by `StealNeighborEmbeddings` therefore merge only when a later Append/Delete touches them.
 - **Invariants**: `ReserveClusterSlotIfNeeded()` before holding a `cluster_t&` (splits `push_back`); every structural change ends with `ComputeClusterOffsets()` (the searcher sizes its buffers from `max_cluster_capacity` on each query); single writer thread.
 - **Row id mapping**: `RowIdClusterMapping` (`ivf_utils.hpp`) is a dense vector indexed by row id holding `(cluster, index_in_cluster)`, `DELETED_MARKER` (`common.hpp`) for absent/deleted ids; exposed as `IPDXIndex::GetRowIdMapping`. Row ids are expected dense (PDX assigns them by position); the vector grows to the largest appended id, counted from `PDXIndexConfig::base_row_id` (for an index that holds one row-id range of a larger table). `Delete` returns whether the id was in the index (an absent id is a no-op), `Contains` whether it is; `Append` of a live id throws.
 - **Transformed input**: `PDXIndexConfig::is_data_transformed` makes `BuildIndex`/`Append` take embeddings that are already normalized and rotated. Pair it with the `(config, ADSamplingPruner&)` constructors of `PDXIndex`/`PDXTreeIndex`/`FlatIndex` to share one rotation matrix across indexes; cursors take `is_query_transformed` for the matching query.
-- Knobs: `indexes/cluster.hpp` (`CAPACITY_THRESHOLD`, `MIN_CAPACITY_THRESHOLD`, `MIN_MAX_CAPACITY = 256`, so small clusters need 256 slots before they split). Split knobs: `common.hpp`.
+- Knobs: `indexes/cluster.hpp` (`CAPACITY_THRESHOLD`, `MIN_CAPACITY_THRESHOLD`, `MIN_MAX_CAPACITY = 256`, so small clusters need 256 slots before they split). Split knobs: `common.hpp` (`SPLIT_MAX_NEIGHBOR_CLUSTERS`, `SPLIT_KMEANS_ITERS`, `SPLIT_CASCADE_MAX_DEPTH`).
 
 ## Verification gate (definition of done)
 

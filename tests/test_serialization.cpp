@@ -330,6 +330,49 @@ TEST_P(StreamSerializationTest, ResidentDataLoadSearchesThroughTheClusterSource)
     }
 }
 
+// An index with empty clusters (more clusters than distinct rows) loads back from its stream
+TEST_P(StreamSerializationTest, LoadsAnIndexWithEmptyClusters) {
+    const std::string& index_type = GetParam();
+    if (index_type != "pdx_f32" && index_type != "pdx_u8") {
+        GTEST_SKIP() << "Only PDXIndex streams place clusters by offset";
+    }
+    const size_t d = 128;
+    const size_t n_distinct = 120;
+    auto data = TestUtils::LoadTestData(d);
+    std::vector<float> rows(TestUtils::N_TRAIN * d);
+    for (size_t i = 0; i < TestUtils::N_TRAIN; ++i) {
+        std::memcpy(
+            rows.data() + i * d, data.train.data() + (i % n_distinct) * d, d * sizeof(float)
+        );
+    }
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .num_clusters = 480,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+    };
+    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
+    auto index = BuildOnPruner(index_type, config, pruner);
+    index->BuildIndex(rows.data(), TestUtils::N_TRAIN);
+    index->SetNProbe(16);
+    ASSERT_GT(TestUtils::CountEmptyClusters(*index), 0u);
+
+    std::stringstream stream;
+    index->SaveToStream(stream);
+    auto loaded = PDX::LoadPDXIndexFromStream(stream, pruner);
+    ASSERT_NE(loaded, nullptr);
+    loaded->SetNProbe(16);
+
+    std::vector<size_t> passing_ids;
+    for (size_t i = 0; i < TestUtils::N_TRAIN; i += 3) {
+        passing_ids.push_back(i);
+    }
+    ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     StreamSerializationTest,

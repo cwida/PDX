@@ -246,4 +246,12 @@ inline std::unique_ptr<PDX::IPDXIndex> BuildIndexWithConfig(
     return index;
 }
 
+inline size_t CountEmptyClusters(const PDX::IPDXIndex& index) {
+    size_t num_empty = 0;
+    for (uint32_t cluster_id = 0; cluster_id < index.GetNumClusters(); cluster_id++) {
+        num_empty += index.GetClusterSize(cluster_id) == 0;
+    }
+    return num_empty;
+}
+
 } // namespace TestUtils

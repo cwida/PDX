@@ -487,6 +487,31 @@ void RunSearchWithKAboveLiveCount() {
     }
 }
 
+// Test 12: Appending exact copies of one row grows their cluster instead of splitting off empty
+// clusters
+template <typename IndexT>
+void RunAppendDuplicatesCreatesNoEmptyCluster() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 2048;
+    constexpr size_t n_copies = 3000;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_build * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+
+    IndexT index(MakeConfig(d));
+    index.BuildIndex(data.data(), n_build);
+    const size_t empty_before = TestUtils::CountEmptyClusters(index);
+    for (size_t i = 0; i < n_copies; i++) {
+        index.Append(n_build + i, data.data());
+        ASSERT_EQ(TestUtils::CountEmptyClusters(index), empty_before)
+            << "after " << i + 1 << " copies";
+    }
+    ExpectIndexHoldsExactly(index, n_build + n_copies);
+}
+
 TEST_P(MaintenanceTest, SearchWithKAboveLiveCount) {
     ForIndexType(GetParam(), [](auto tag) {
         RunSearchWithKAboveLiveCount<typename decltype(tag)::type>();
@@ -502,6 +527,12 @@ TEST_P(MaintenanceTest, BuildThenDeleteHalf) {
 TEST_P(MaintenanceTest, AppendCascadeThenDeleteHalf) {
     ForIndexType(GetParam(), [](auto tag) {
         RunAppendCascadeThenDeleteHalf<typename decltype(tag)::type>();
+    });
+}
+
+TEST_P(MaintenanceTest, AppendDuplicatesCreatesNoEmptyCluster) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunAppendDuplicatesCreatesNoEmptyCluster<typename decltype(tag)::type>();
     });
 }
 
