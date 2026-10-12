@@ -97,7 +97,7 @@ class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::Allocat
     }
 
     Eigen::Map<const matrix_t> GetMatrix() const {
-        return {matrix.get(), matrix_rows, num_dimensions};
+        return Eigen::Map<const matrix_t>(matrix.get(), matrix_rows, num_dimensions);
     }
 
     float GetPruningThreshold(uint32_t, Heap& heap, const uint32_t current_dimension_idx) const {
