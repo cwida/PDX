@@ -294,6 +294,16 @@ TEST(ConfigValidationTest, KmeansIters100OrMoreThrows) {
     EXPECT_THROW(([&]() { auto idx = PDX::PDXIndexF32(config); }()), std::invalid_argument);
 }
 
+TEST(ConfigValidationTest, MaxClusterSizeBelowLowerBoundThrows) {
+    PDX::PDXIndexConfig config{
+        .num_dimensions = 128, .max_cluster_size = PDX::MAX_CLUSTER_SIZE_LOWER_BOUND - 1
+    };
+    EXPECT_THROW(([&]() { auto idx = PDX::PDXIndexF32(config); }()), std::invalid_argument);
+
+    config.max_cluster_size = PDX::MAX_CLUSTER_SIZE_LOWER_BOUND;
+    EXPECT_NO_THROW(([&]() { auto idx = PDX::PDXIndexF32(config); }()));
+}
+
 TEST(ConfigValidationTest, ValidConfigDoesNotThrow) {
     PDX::PDXIndexConfig config{
         .num_dimensions = 128,

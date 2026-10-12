@@ -174,7 +174,8 @@ void RunFilteredSearchExcludesDeleted() {
 }
 
 // Test 5: A dense cloud of near-duplicates lands in one cluster. Small clusters get
-// MIN_MAX_CAPACITY slots, so inserting more than that must trigger at least one split, after
+// DEFAULT_MAX_CAPACITY_LOWER_BOUND slots, so inserting more than that must trigger at least one
+// split, after
 // which every point (inserted or original) must still be stored exactly once and be reachable.
 template <typename IndexT>
 void RunInsertDenseRegionForcesSplit() {
@@ -185,7 +186,7 @@ void RunInsertDenseRegionForcesSplit() {
     index.BuildIndex(data.train.data(), n_build);
     const uint32_t clusters_before = index.GetNumClusters();
 
-    const size_t n_insert = PDX::Cluster<PDX::F32>::MIN_MAX_CAPACITY + 64;
+    const size_t n_insert = PDX::Cluster<PDX::F32>::DEFAULT_MAX_CAPACITY_LOWER_BOUND + 64;
     const float* base = data.train.data();
     std::mt19937 rng(TestUtils::SEED);
     std::normal_distribution<float> noise(0.0f, 1e-3f);
@@ -512,6 +513,80 @@ void RunAppendDuplicatesCreatesNoEmptyCluster() {
     ExpectIndexHoldsExactly(index, n_build + n_copies);
 }
 
+uint32_t LargestClusterSize(const PDX::IPDXIndex& index) {
+    uint32_t largest = 0;
+    for (uint32_t c = 0; c < index.GetNumClusters(); c++) {
+        largest = std::max(largest, index.GetClusterSize(c));
+    }
+    return largest;
+}
+
+// Test 13: With max_cluster_size, appends split every cluster that reaches it
+template <typename IndexT>
+void RunAppendsSplitAtMaxClusterSize() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 2048;
+    constexpr size_t n_total = 10000;
+    constexpr uint32_t max_cluster_size = 64;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+
+    for (const uint32_t limit : {0u, max_cluster_size}) {
+        auto config = MakeConfig(d);
+        config.max_cluster_size = limit;
+        IndexT index(config);
+        index.BuildIndex(data.data(), n_build);
+        for (size_t row_id = n_build; row_id < n_total; row_id++) {
+            index.Append(row_id, data.data() + row_id * d);
+        }
+        ExpectIndexHoldsExactly(index, n_total);
+        if (limit == 0) {
+            EXPECT_GT(LargestClusterSize(index), max_cluster_size);
+        } else {
+            EXPECT_LE(LargestClusterSize(index), max_cluster_size);
+        }
+    }
+}
+
+// Test 14: With max_cluster_size, the build splits the clusters k-means leaves above it, except a
+// group of identical rows, which stays whole
+template <typename IndexT>
+void RunBuildSplitsClustersAboveMaxClusterSize() {
+    constexpr size_t d = 8;
+    constexpr size_t n_uniform = 4000;
+    constexpr size_t n_copies = 500;
+    constexpr size_t n_total = n_uniform + n_copies;
+    constexpr uint32_t num_clusters = 4;
+    constexpr uint32_t max_cluster_size = 256;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (size_t i = 0; i < n_uniform * d; i++) {
+        data[i] = uniform(gen);
+    }
+    for (size_t i = n_uniform; i < n_total; i++) {
+        std::copy(data.begin(), data.begin() + d, data.begin() + static_cast<long>(i * d));
+    }
+
+    for (const uint32_t limit : {0u, max_cluster_size}) {
+        auto config = MakeConfig(d);
+        config.num_clusters = num_clusters;
+        config.max_cluster_size = limit;
+        IndexT index(config);
+        index.BuildIndex(data.data(), n_total);
+        ExpectIndexHoldsExactly(index, n_total);
+        uint32_t num_above = 0;
+        for (uint32_t c = 0; c < index.GetNumClusters(); c++) {
+            num_above += index.GetClusterSize(c) > max_cluster_size;
+        }
+        EXPECT_EQ(num_above, limit == 0 ? num_clusters : 1u);
+    }
+}
+
 TEST_P(MaintenanceTest, SearchWithKAboveLiveCount) {
     ForIndexType(GetParam(), [](auto tag) {
         RunSearchWithKAboveLiveCount<typename decltype(tag)::type>();
@@ -533,6 +608,18 @@ TEST_P(MaintenanceTest, AppendCascadeThenDeleteHalf) {
 TEST_P(MaintenanceTest, AppendDuplicatesCreatesNoEmptyCluster) {
     ForIndexType(GetParam(), [](auto tag) {
         RunAppendDuplicatesCreatesNoEmptyCluster<typename decltype(tag)::type>();
+    });
+}
+
+TEST_P(MaintenanceTest, AppendsSplitAtMaxClusterSize) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunAppendsSplitAtMaxClusterSize<typename decltype(tag)::type>();
+    });
+}
+
+TEST_P(MaintenanceTest, BuildSplitsClustersAboveMaxClusterSize) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBuildSplitsClustersAboveMaxClusterSize<typename decltype(tag)::type>();
     });
 }
 

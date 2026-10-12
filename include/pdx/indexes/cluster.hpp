@@ -22,13 +22,22 @@ struct Cluster {
 
     constexpr static float CAPACITY_THRESHOLD = 1.3f; // 30% more than the current capacity
     constexpr static float MIN_CAPACITY_THRESHOLD = 0.5f;
-    constexpr static uint32_t MIN_MAX_CAPACITY = 256;
+    constexpr static uint32_t DEFAULT_MAX_CAPACITY_LOWER_BOUND = 256;
+
+    static uint32_t CapacityFor(uint32_t num_embeddings, uint32_t max_cluster_size) {
+        if (max_cluster_size == 0) {
+            return std::max(
+                static_cast<uint32_t>(num_embeddings * CAPACITY_THRESHOLD),
+                DEFAULT_MAX_CAPACITY_LOWER_BOUND
+            );
+        }
+        // Guaranteeing a free slot for the next append
+        return std::max(max_cluster_size, num_embeddings + 1);
+    }
 
     Cluster(uint32_t num_embeddings, uint32_t num_dimensions)
         : num_embeddings(num_embeddings), used_capacity(num_embeddings),
-          max_capacity(
-              std::max(static_cast<uint32_t>(num_embeddings * CAPACITY_THRESHOLD), MIN_MAX_CAPACITY)
-          ),
+          max_capacity(CapacityFor(num_embeddings, 0)),
           min_capacity(static_cast<uint32_t>(num_embeddings * MIN_CAPACITY_THRESHOLD)),
           num_dimensions(num_dimensions), indices(new uint32_t[max_capacity]),
           data(new data_t[static_cast<uint64_t>(max_capacity) * num_dimensions]) {}
@@ -298,7 +307,8 @@ struct Cluster {
                 Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
             using u8_v_matrix_t =
                 Eigen::Matrix<uint8_t, Eigen::Dynamic, U8_INTERLEAVE_SIZE, Eigen::RowMajor>;
-            using u8_h_matrix_t = Eigen::Matrix<uint8_t, Eigen::Dynamic, H_DIM_SIZE, Eigen::RowMajor>;
+            using u8_h_matrix_t =
+                Eigen::Matrix<uint8_t, Eigen::Dynamic, H_DIM_SIZE, Eigen::RowMajor>;
             const auto stride = static_cast<size_t>(max_capacity);
 
             Eigen::Map<const u8_matrix_t> in(embeddings, num_rows, num_dimensions);
@@ -368,8 +378,7 @@ struct Cluster {
     void Grow() {
         PDX_PROFILE_SCOPE("GrowCluster");
         auto rows = GetHorizontalEmbeddingsFromPDXBuffer();
-        const uint32_t new_max_capacity =
-            std::max(static_cast<uint32_t>(num_embeddings * CAPACITY_THRESHOLD), MIN_MAX_CAPACITY);
+        const uint32_t new_max_capacity = CapacityFor(num_embeddings, 0);
         std::unique_ptr<uint32_t[]> new_indices(new uint32_t[new_max_capacity]);
         std::unique_ptr<data_t[]> new_data(
             new data_t[static_cast<uint64_t>(new_max_capacity) * num_dimensions]

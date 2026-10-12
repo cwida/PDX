@@ -447,6 +447,19 @@ class PDXIndex : public IPDXIndex {
             config.kmeans_iters,
             config.hierarchical_indexing
         );
+        if (config.max_cluster_size > 0) {
+            ivf_utils.SplitClustersAboveMaxClusterSize(
+                kmeans_result,
+                preprocessed,
+                num_dimensions,
+                config.max_cluster_size,
+                config.distance_metric,
+                config.seed,
+                config.normalize
+            );
+            num_clusters = static_cast<uint32_t>(kmeans_result.assignments.size());
+            index.num_clusters = num_clusters;
+        }
         index.centroids = std::move(kmeans_result.centroids);
 
         ivf_utils.PopulateIVFClusters<Q>(
@@ -457,7 +470,8 @@ class PDXIndex : public IPDXIndex {
             num_dimensions,
             num_clusters,
             quantization_base,
-            quantization_scale
+            quantization_scale,
+            config.max_cluster_size
         );
 
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
@@ -821,14 +835,20 @@ class PDXIndex : public IPDXIndex {
         // Create new clusters and update all data structures
         {
             PDX_PROFILE_SCOPE("Split/ConsolidateNewClusters");
-            cluster_t new_cluster_a(static_cast<uint32_t>(count_a), d);
+            const auto size_a = static_cast<uint32_t>(count_a);
+            cluster_t new_cluster_a(
+                size_a, cluster_t::CapacityFor(size_a, config.max_cluster_size), d
+            );
             new_cluster_a.id = cluster_id;
             if (count_a > 0) {
                 std::memcpy(new_cluster_a.indices, ids_a.data(), count_a * sizeof(uint32_t));
                 new_cluster_a.StoreEmbeddings(embs_a.data(), count_a);
             }
             uint32_t new_cluster_b_id = index.num_clusters;
-            cluster_t new_cluster_b(static_cast<uint32_t>(count_b), d);
+            const auto size_b = static_cast<uint32_t>(count_b);
+            cluster_t new_cluster_b(
+                size_b, cluster_t::CapacityFor(size_b, config.max_cluster_size), d
+            );
             new_cluster_b.id = new_cluster_b_id;
             if (count_b > 0) {
                 std::memcpy(new_cluster_b.indices, ids_b.data(), count_b * sizeof(uint32_t));

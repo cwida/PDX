@@ -36,6 +36,7 @@ struct PDXIndexConfig {
     uint32_t n_threads = 0; // Threads of the default executor (0 = all cores); unused with executor
     bool is_data_transformed = false;
     size_t base_row_id = 0;
+    uint32_t max_cluster_size = 0; // Clusters split at this size (0 = at 1.3x their initial size)
     // Runs the parallel loops (not owned, not serialized). nullptr: the index creates a default
     // one.
     ParallelExecutor* executor = nullptr;
@@ -54,6 +55,7 @@ struct PDXIndexConfig {
         WriteValue(out, n_threads);
         WriteValue(out, static_cast<uint8_t>(is_data_transformed));
         WriteValue(out, static_cast<uint64_t>(base_row_id));
+        WriteValue(out, max_cluster_size);
     }
 
     template <class Reader>
@@ -70,6 +72,7 @@ struct PDXIndexConfig {
         n_threads = ReadValue<uint32_t>(reader);
         is_data_transformed = ReadValue<uint8_t>(reader) != 0;
         base_row_id = static_cast<size_t>(ReadValue<uint64_t>(reader));
+        max_cluster_size = ReadValue<uint32_t>(reader);
     }
 
     void Validate() const {
@@ -94,6 +97,13 @@ struct PDXIndexConfig {
         if (kmeans_iters == 0 || kmeans_iters >= 100) {
             throw std::invalid_argument(
                 "kmeans_iters must be between 1 and 99, got " + std::to_string(kmeans_iters)
+            );
+        }
+        if (max_cluster_size > 0 && max_cluster_size < MAX_CLUSTER_SIZE_LOWER_BOUND) {
+            throw std::invalid_argument(
+                "max_cluster_size must be 0 or at least " +
+                std::to_string(MAX_CLUSTER_SIZE_LOWER_BOUND) + ", got " +
+                std::to_string(max_cluster_size)
             );
         }
     }
@@ -336,6 +346,37 @@ class IVFUtils {
         return result;
     }
 
+    // Splits the clusters of kmeans_result above max_cluster_size by k-means on their own
+    // embeddings, into splits of about half of it, until they fit. A cluster k-means can't
+    // separate (identical embeddings) stays whole.
+    void SplitClustersAboveMaxClusterSize(
+        KMeansResult& kmeans_result,
+        const float* embeddings,
+        const uint32_t num_dimensions,
+        const uint32_t max_cluster_size,
+        const PDX::DistanceMetric distance_metric,
+        const uint32_t seed,
+        const bool normalize
+    ) const {
+        PDX_PROFILE_SCOPE("SplitClustersAboveMaxClusterSize");
+        // The splits appended to kmeans_result are visited later in this loop
+        for (size_t cluster_id = 0; cluster_id < kmeans_result.assignments.size(); cluster_id++) {
+            bool splittable = true;
+            while (splittable && kmeans_result.assignments[cluster_id].size() > max_cluster_size) {
+                splittable = TrySplitClusterWithKMeans(
+                    kmeans_result,
+                    cluster_id,
+                    embeddings,
+                    num_dimensions,
+                    max_cluster_size / 2, // target_size
+                    distance_metric,
+                    seed,
+                    normalize
+                );
+            }
+        }
+    }
+
     template <Quantization Q>
     void PopulateIVFClusters(
         IVF<Q>& ivf,
@@ -345,19 +386,25 @@ class IVFUtils {
         uint32_t num_dimensions,
         uint32_t num_clusters,
         float quantization_base,
-        float quantization_scale
+        float quantization_scale,
+        uint32_t max_cluster_size = 0
     ) const {
         using storage_t = pdx_data_t<Q>;
 
-        size_t max_cluster_size = 0;
+        size_t largest_cluster_size = 0;
         for (size_t i = 0; i < num_clusters; i++) {
-            max_cluster_size = std::max(max_cluster_size, kmeans_result.assignments[i].size());
+            largest_cluster_size =
+                std::max(largest_cluster_size, kmeans_result.assignments[i].size());
         }
 
         // Pre-allocate all clusters sequentially
         for (size_t cluster_idx = 0; cluster_idx < num_clusters; cluster_idx++) {
+            const auto cluster_size =
+                static_cast<uint32_t>(kmeans_result.assignments[cluster_idx].size());
             ivf.clusters.emplace_back(
-                kmeans_result.assignments[cluster_idx].size(), num_dimensions
+                cluster_size,
+                Cluster<Q>::CapacityFor(cluster_size, max_cluster_size),
+                num_dimensions
             );
             ivf.clusters[cluster_idx].id = cluster_idx;
         }
@@ -367,7 +414,7 @@ class IVFUtils {
         std::vector<std::unique_ptr<storage_t[]>> tmp_buffers(n_workers);
         for (size_t w = 0; w < n_workers; w++) {
             tmp_buffers[w].reset(
-                new storage_t[static_cast<uint64_t>(max_cluster_size) * num_dimensions]
+                new storage_t[static_cast<uint64_t>(largest_cluster_size) * num_dimensions]
             );
         }
 
@@ -405,6 +452,76 @@ class IVFUtils {
     }
 
   private:
+    // Splits one cluster of kmeans_result by k-means on its embeddings into non-empty splits of
+    // about target_size. False if k-means leaves it whole.
+    bool TrySplitClusterWithKMeans(
+        KMeansResult& kmeans_result,
+        const size_t cluster_id,
+        const float* embeddings,
+        const uint32_t num_dimensions,
+        const uint32_t target_size,
+        const PDX::DistanceMetric distance_metric,
+        const uint32_t seed,
+        const bool normalize
+    ) const {
+        const size_t d = num_dimensions;
+        const auto& ids = kmeans_result.assignments[cluster_id];
+        const size_t num_embeddings = ids.size();
+        std::unique_ptr<float[]> cluster_embeddings(new float[num_embeddings * d]);
+        for (size_t i = 0; i < num_embeddings; i++) {
+            std::memcpy(
+                cluster_embeddings.get() + i * d, embeddings + ids[i] * d, d * sizeof(float)
+            );
+        }
+        const auto num_splits =
+            static_cast<uint32_t>((num_embeddings + target_size - 1) / target_size);
+        KMeansResult splits = ComputeKMeans(
+            cluster_embeddings.get(),
+            num_embeddings,
+            num_dimensions,
+            num_splits,
+            distance_metric,
+            seed,
+            normalize,
+            1.0f,
+            SPLIT_KMEANS_ITERS,
+            false
+        );
+
+        // From positions in the cluster to positions in embeddings
+        std::vector<uint32_t> non_empty_splits;
+        for (uint32_t split = 0; split < num_splits; split++) {
+            if (splits.assignments[split].empty()) {
+                continue;
+            }
+            non_empty_splits.push_back(split);
+            for (auto& position : splits.assignments[split]) {
+                position = ids[position];
+            }
+        }
+        if (non_empty_splits.size() < 2) {
+            return false;
+        }
+        for (size_t i = 0; i < non_empty_splits.size(); i++) {
+            const uint32_t split = non_empty_splits[i];
+            const float* centroid = splits.centroids.data() + static_cast<size_t>(split) * d;
+            // The first non-empty split replaces the cluster being split in its slot; the others
+            // are appended
+            if (i == 0) {
+                kmeans_result.assignments[cluster_id] = std::move(splits.assignments[split]);
+                std::memcpy(
+                    kmeans_result.centroids.data() + cluster_id * d, centroid, d * sizeof(float)
+                );
+            } else {
+                kmeans_result.assignments.push_back(std::move(splits.assignments[split]));
+                kmeans_result.centroids.insert(
+                    kmeans_result.centroids.end(), centroid, centroid + d
+                );
+            }
+        }
+        return true;
+    }
+
     ParallelExecutor& executor;
 };
 

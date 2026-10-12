@@ -106,6 +106,7 @@ static constexpr size_t SPLIT_MAX_NEIGHBOR_CLUSTERS = 32;
 // The 2-means cluster split runs this many iterations
 static constexpr uint32_t SPLIT_KMEANS_ITERS = 4;
 static constexpr uint32_t SPLIT_CASCADE_MAX_DEPTH = 32;
+static constexpr uint32_t MAX_CLUSTER_SIZE_LOWER_BOUND = 32;
 static constexpr uint32_t DELETED_MARKER = std::numeric_limits<uint32_t>::max();
 
 static constexpr bool AllFetchingSizesMultipleOfU8InterleaveSize() {
@@ -141,7 +142,7 @@ enum class PDXIndexType : uint8_t {
     PDX_FLAT = 4
 };
 
-static constexpr uint8_t PDX_SERIALIZATION_VERSION = 3;
+static constexpr uint8_t PDX_SERIALIZATION_VERSION = 4;
 
 template <Quantization Q>
 struct DistanceType {

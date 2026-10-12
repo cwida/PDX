@@ -373,6 +373,43 @@ TEST_P(StreamSerializationTest, LoadsAnIndexWithEmptyClusters) {
     ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
 }
 
+// The loaded index keeps max_cluster_size, so its appends split the same clusters
+TEST_P(StreamSerializationTest, KeepsMaxClusterSize) {
+    const std::string& index_type = GetParam();
+    if (index_type == "flat") {
+        GTEST_SKIP() << "Flat has no clusters to split";
+    }
+    const size_t d = 128;
+    const size_t n_build = TestUtils::N_TRAIN / 2;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+        .max_cluster_size = 64,
+    };
+    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
+    auto index = BuildOnPruner(index_type, config, pruner);
+    index->BuildIndex(data.train.data(), n_build);
+
+    std::stringstream stream;
+    index->SaveToStream(stream);
+    auto loaded = PDX::LoadPDXIndexFromStream(stream, pruner);
+    ASSERT_NE(loaded, nullptr);
+
+    for (size_t row_id = n_build; row_id < TestUtils::N_TRAIN; ++row_id) {
+        index->Append(row_id, data.train.data() + row_id * d);
+        loaded->Append(row_id, data.train.data() + row_id * d);
+    }
+    ASSERT_EQ(loaded->GetNumClusters(), index->GetNumClusters());
+    for (uint32_t c = 0; c < index->GetNumClusters(); ++c) {
+        EXPECT_EQ(loaded->GetClusterSize(c), index->GetClusterSize(c)) << "cluster " << c;
+    }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     StreamSerializationTest,
