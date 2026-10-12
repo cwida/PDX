@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
@@ -37,7 +38,7 @@ namespace PDX {
 class Profiler {
   public:
     struct TimerData {
-        size_t accum_time_ns = 0; // Accumulated time in nanoseconds
+        uint64_t accum_time_ns = 0; // Accumulated time in nanoseconds
         size_t call_count = 0;
         std::chrono::high_resolution_clock::time_point start;
         bool running = false;
@@ -84,7 +85,7 @@ class Profiler {
     }
 
     // Get accumulated time in nanoseconds for a timer
-    size_t GetTimeNanos(const std::string& name) const {
+    uint64_t GetTimeNanos(const std::string& name) const {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = timers_.find(name);
         if (it != timers_.end()) {
@@ -125,7 +126,7 @@ class Profiler {
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Calculate total time for percentage calculation
-        size_t total_ns = 0;
+        uint64_t total_ns = 0;
         for (const auto& [name, data] : timers_) {
             total_ns += data.accum_time_ns;
         }
@@ -165,7 +166,7 @@ class Profiler {
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Calculate total time from top-level timers only
-        size_t total_ns = 0;
+        uint64_t total_ns = 0;
         for (const auto& [name, data] : timers_) {
             if (name.find('/') == std::string::npos) {
                 total_ns += data.accum_time_ns;

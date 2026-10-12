@@ -21,8 +21,6 @@
 #include "pdx/pruners/adsampling.hpp"
 #include "pdx/quantizers/scalar.hpp"
 
-#include <omp.h>
-
 namespace PDX {
 
 struct PDXIndexConfig {
@@ -35,7 +33,50 @@ struct PDXIndexConfig {
     float sampling_fraction = 0.0f; // 0 = auto (1.0 if small dataset, 0.3 otherwise)
     uint32_t kmeans_iters = 10;
     bool hierarchical_indexing = true;
-    uint32_t n_threads = 0; // 0 = omp_get_max_threads()
+    uint32_t n_threads = 0; // Threads of the default executor (0 = all cores); unused with executor
+    bool is_data_transformed = false;
+    size_t base_row_id = 0;
+    uint32_t max_cluster_size = 0; // Clusters split at this size (0 = at 1.3x their initial size)
+    // Runs the parallel loops (not owned, not serialized). nullptr: the index creates a default
+    // one.
+    ParallelExecutor* executor = nullptr;
+    // Allocates the large buffers (not owned, not serialized; must outlive the index). nullptr: the
+    // VanillaAllocator.
+    MemoryAllocator* allocator = nullptr;
+
+    // Field by field with fixed widths, so the bytes do not depend on the struct's layout.
+    void Save(std::ostream& out) const {
+        WriteValue(out, num_dimensions);
+        WriteValue(out, static_cast<uint8_t>(distance_metric));
+        WriteValue(out, seed);
+        WriteValue(out, num_clusters);
+        WriteValue(out, num_meso_clusters);
+        WriteValue(out, static_cast<uint8_t>(normalize));
+        WriteValue(out, sampling_fraction);
+        WriteValue(out, kmeans_iters);
+        WriteValue(out, static_cast<uint8_t>(hierarchical_indexing));
+        WriteValue(out, n_threads);
+        WriteValue(out, static_cast<uint8_t>(is_data_transformed));
+        WriteValue(out, static_cast<uint64_t>(base_row_id));
+        WriteValue(out, max_cluster_size);
+    }
+
+    template <class Reader>
+    void Load(Reader& reader) {
+        num_dimensions = ReadValue<uint32_t>(reader);
+        distance_metric = static_cast<DistanceMetric>(ReadValue<uint8_t>(reader));
+        seed = ReadValue<uint32_t>(reader);
+        num_clusters = ReadValue<uint32_t>(reader);
+        num_meso_clusters = ReadValue<uint32_t>(reader);
+        normalize = ReadValue<uint8_t>(reader) != 0;
+        sampling_fraction = ReadValue<float>(reader);
+        kmeans_iters = ReadValue<uint32_t>(reader);
+        hierarchical_indexing = ReadValue<uint8_t>(reader) != 0;
+        n_threads = ReadValue<uint32_t>(reader);
+        is_data_transformed = ReadValue<uint8_t>(reader) != 0;
+        base_row_id = static_cast<size_t>(ReadValue<uint64_t>(reader));
+        max_cluster_size = ReadValue<uint32_t>(reader);
+    }
 
     void Validate() const {
         if (num_dimensions == 0 || num_dimensions > PDX_MAX_DIMS) {
@@ -61,6 +102,13 @@ struct PDXIndexConfig {
                 "kmeans_iters must be between 1 and 99, got " + std::to_string(kmeans_iters)
             );
         }
+        if (max_cluster_size > 0 && max_cluster_size < MAX_CLUSTER_SIZE_LOWER_BOUND) {
+            throw std::invalid_argument(
+                "max_cluster_size must be 0 or at least " +
+                std::to_string(MAX_CLUSTER_SIZE_LOWER_BOUND) + ", got " +
+                std::to_string(max_cluster_size)
+            );
+        }
     }
 
     void ValidateNumEmbeddings(size_t num_embeddings) const {
@@ -73,176 +121,420 @@ struct PDXIndexConfig {
     }
 };
 
-inline std::unique_ptr<float[]> NormalizeAndRotate(
-    const float* embeddings,
-    size_t num_embeddings,
-    uint32_t num_dimensions,
-    bool normalize,
-    const ADSamplingPruner& pruner
-) {
-    PDX_PROFILE_SCOPE("Search/NormalizeAndRotate");
-    const size_t total_floats = num_embeddings * num_dimensions;
-    std::unique_ptr<float[]> normalized;
-    const float* rotation_input = embeddings;
-    if (normalize) {
-        normalized.reset(new float[total_floats]);
-        Quantizer quantizer(num_dimensions);
-#pragma omp parallel for if (num_embeddings > 1) num_threads(PDX::g_n_threads)
-        for (size_t i = 0; i < num_embeddings; i++) {
-            quantizer.NormalizeQuery(
-                embeddings + i * num_dimensions, normalized.get() + i * num_dimensions
-            );
-        }
-        rotation_input = normalized.get();
-    }
-    std::unique_ptr<float[]> preprocessed(new float[total_floats]);
-    pruner.PreprocessEmbeddings(rotation_input, preprocessed.get(), num_embeddings);
-    return preprocessed;
+// The start of every SaveToStream stream, which LoadPDXIndexFromStream reads to construct the
+// index.
+inline void WriteStreamHeader(std::ostream& out, PDXIndexType type, const PDXIndexConfig& config) {
+    WriteValue(out, PDX_SERIALIZATION_VERSION);
+    WriteValue(out, static_cast<uint8_t>(type));
+    config.Save(out);
 }
 
-// Store the embeddings into this cluster's preallocated buffers in the transposed PDX layout.
-// See the README of the following for a description of the PDX layout:
-// https://github.com/cwida/pdx
-template <PDX::Quantization q, typename T>
-inline void StoreClusterEmbeddings(
-    typename PDX::IVF<q>::cluster_t& cluster,
-    const PDX::IVF<q>& index,
-    const T* embeddings,
-    const size_t num_embeddings
-);
-
-template <>
-inline void StoreClusterEmbeddings<PDX::Quantization::F32, float>(
-    PDX::IVF<PDX::Quantization::F32>::cluster_t& cluster,
-    const PDX::IVF<PDX::Quantization::F32>& index,
-    const float* const embeddings,
-    const size_t num_embeddings
-) {
-    using matrix_t = PDX::eigen_matrix_t;
-    using h_matrix_t = Eigen::Matrix<float, Eigen::Dynamic, PDX::H_DIM_SIZE, Eigen::RowMajor>;
-
-    const auto vertical_d = index.num_vertical_dimensions;
-    const auto horizontal_d = index.num_horizontal_dimensions;
-    const auto stride = static_cast<Eigen::Index>(cluster.max_capacity);
-
-    Eigen::Map<const matrix_t> in(embeddings, num_embeddings, index.num_dimensions);
-
-    // Vertical block: (vertical_d x num_embeddings) with row stride = max_capacity
-    Eigen::Map<matrix_t, 0, Eigen::OuterStride<Eigen::Dynamic>> out(
-        cluster.data, vertical_d, num_embeddings, Eigen::OuterStride<Eigen::Dynamic>(stride)
+// The rotation of the file format (Save(path) / Restore(path)): its rows, its columns, then its
+// values.
+inline void WriteRotationMatrix(std::ostream& out, const ADSamplingPruner& pruner) {
+    const auto& matrix = pruner.GetMatrix();
+    WriteValue(out, static_cast<uint32_t>(matrix.rows()));
+    WriteValue(out, static_cast<uint32_t>(matrix.cols()));
+    out.write(
+        reinterpret_cast<const char*>(matrix.data()),
+        static_cast<std::streamsize>(sizeof(float) * matrix.rows() * matrix.cols())
     );
-    out.noalias() = in.leftCols(vertical_d).transpose();
-
-    float* horizontal_out = cluster.data + stride * vertical_d;
-    for (size_t j = 0; j < horizontal_d; j += PDX::H_DIM_SIZE) {
-        Eigen::Map<h_matrix_t> out_h(horizontal_out, num_embeddings, PDX::H_DIM_SIZE);
-        out_h.noalias() = in.block(0, vertical_d + j, num_embeddings, PDX::H_DIM_SIZE);
-        horizontal_out += stride * PDX::H_DIM_SIZE;
-    }
 }
 
-template <>
-inline void StoreClusterEmbeddings<PDX::Quantization::U8, uint8_t>(
-    PDX::IVF<PDX::Quantization::U8>::cluster_t& cluster,
-    const PDX::IVF<PDX::Quantization::U8>& index,
-    const uint8_t* const embeddings,
-    const size_t num_embeddings
-) {
-    using u8_matrix_t = Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-    using u8_v_matrix_t =
-        Eigen::Matrix<uint8_t, Eigen::Dynamic, PDX::U8_INTERLEAVE_SIZE, Eigen::RowMajor>;
-    using u8_h_matrix_t = Eigen::Matrix<uint8_t, Eigen::Dynamic, PDX::H_DIM_SIZE, Eigen::RowMajor>;
-
-    const auto vertical_d = index.num_vertical_dimensions;
-    const auto horizontal_d = index.num_horizontal_dimensions;
-    const auto stride = static_cast<size_t>(cluster.max_capacity);
-
-    Eigen::Map<const u8_matrix_t> in(embeddings, num_embeddings, index.num_dimensions);
-
-    size_t dim = 0;
-    for (; dim + PDX::U8_INTERLEAVE_SIZE <= vertical_d; dim += PDX::U8_INTERLEAVE_SIZE) {
-        Eigen::Map<u8_v_matrix_t> out_v(
-            cluster.data + dim * stride, num_embeddings, PDX::U8_INTERLEAVE_SIZE
-        );
-        out_v.noalias() = in.block(0, dim, num_embeddings, PDX::U8_INTERLEAVE_SIZE);
-    }
-    if (dim < vertical_d) {
-        auto remaining = static_cast<Eigen::Index>(vertical_d - dim);
-        Eigen::Map<u8_matrix_t> out_v(cluster.data + dim * stride, num_embeddings, remaining);
-        out_v.noalias() = in.block(0, dim, num_embeddings, remaining);
-    }
-
-    uint8_t* horizontal_out = cluster.data + stride * vertical_d;
-    for (size_t j = 0; j < horizontal_d; j += PDX::H_DIM_SIZE) {
-        Eigen::Map<u8_h_matrix_t> out_h(horizontal_out, num_embeddings, PDX::H_DIM_SIZE);
-        out_h.noalias() = in.block(0, vertical_d + j, num_embeddings, PDX::H_DIM_SIZE);
-        horizontal_out += stride * PDX::H_DIM_SIZE;
-    }
+template <class Reader>
+skmeans::AllocatedBuffer<float> ReadRotationMatrix(Reader& reader, MemoryAllocator& allocator) {
+    const auto rows = ReadValue<uint32_t>(reader);
+    const auto cols = ReadValue<uint32_t>(reader);
+    const size_t num_values = static_cast<size_t>(rows) * cols;
+    auto matrix = skmeans::AllocateBuffer<float>(allocator, num_values);
+    reader.Read(matrix.get(), sizeof(float) * num_values);
+    return matrix;
 }
 
-template <Quantization Q>
-void PopulateIVFClusters(
-    IVF<Q>& ivf,
-    const KMeansResult& kmeans_result,
-    const float* source_data,
-    const size_t* row_ids,
-    uint32_t num_dimensions,
-    uint32_t num_clusters,
-    float quantization_base,
-    float quantization_scale
-) {
-    using storage_t = pdx_data_t<Q>;
+// Dense in row id: PDX assigns row ids by position, so a sparse id space wastes memory here
+struct RowIdClusterMapping {
+    using entry_t = std::pair<uint32_t, uint32_t>;
+    static_assert(sizeof(entry_t) == 2 * sizeof(uint32_t));
+    static constexpr entry_t DELETED{DELETED_MARKER, DELETED_MARKER};
 
-    size_t max_cluster_size = 0;
-    for (size_t i = 0; i < num_clusters; i++) {
-        max_cluster_size = std::max(max_cluster_size, kmeans_result.assignments[i].size());
+    void Set(size_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {
+        assert(row_id >= base_row_id);
+        const size_t position = row_id - base_row_id;
+        if (position >= entries.size()) {
+            entries.resize(std::max(position + 1, entries.size() * 2), DELETED);
+        }
+        entries[position] = {cluster_id, idx_in_cluster};
     }
 
-    // Pre-allocate all clusters sequentially
-    for (size_t cluster_idx = 0; cluster_idx < num_clusters; cluster_idx++) {
-        ivf.clusters.emplace_back(kmeans_result.assignments[cluster_idx].size(), num_dimensions);
-        ivf.clusters[cluster_idx].id = cluster_idx;
+    void Delete(size_t row_id) {
+        if (row_id >= base_row_id && row_id - base_row_id < entries.size()) {
+            entries[row_id - base_row_id] = DELETED;
+        }
     }
 
-    // Per-thread tmp buffers for gather + quantize
-    const uint32_t n_threads = PDX::g_n_threads;
-    std::vector<std::unique_ptr<storage_t[]>> tmp_buffers(n_threads);
-    for (uint32_t t = 0; t < n_threads; t++) {
-        tmp_buffers[t].reset(new storage_t[static_cast<uint64_t>(max_cluster_size) * num_dimensions]
+    [[nodiscard]] entry_t Get(size_t row_id) const {
+        return row_id >= base_row_id && row_id - base_row_id < entries.size()
+                   ? entries[row_id - base_row_id]
+                   : DELETED;
+    }
+
+    template <class Clusters>
+    void Rebuild(const Clusters& clusters, uint32_t num_clusters) {
+        size_t size = 0;
+        for (uint32_t c = 0; c < num_clusters; c++) {
+            for (uint32_t p = 0; p < clusters[c].num_embeddings; p++) {
+                size = std::max(size, clusters[c].indices[p] - base_row_id + 1);
+            }
+        }
+        entries.assign(size, DELETED);
+        for (uint32_t c = 0; c < num_clusters; c++) {
+            for (uint32_t p = 0; p < clusters[c].num_embeddings; p++) {
+                entries[clusters[c].indices[p] - base_row_id] = {c, p};
+            }
+        }
+    }
+
+    // Without the trailing deleted entries that Set's doubling leaves. base_row_id is in the
+    // config.
+    void Save(std::ostream& out) const {
+        size_t num_entries = entries.size();
+        while (num_entries > 0 && entries[num_entries - 1] == DELETED) {
+            num_entries--;
+        }
+        WriteValue(out, static_cast<uint64_t>(num_entries));
+        out.write(
+            reinterpret_cast<const char*>(entries.data()),
+            static_cast<std::streamsize>(num_entries * sizeof(entry_t))
         );
     }
 
-#pragma omp parallel for num_threads(n_threads)
-    for (size_t cluster_idx = 0; cluster_idx < num_clusters; cluster_idx++) {
-        const auto cluster_size = kmeans_result.assignments[cluster_idx].size();
-        auto& cluster = ivf.clusters[cluster_idx];
-        auto* tmp = tmp_buffers[omp_get_thread_num()].get();
+    template <class Reader>
+    void Load(Reader& reader) {
+        entries.resize(static_cast<size_t>(ReadValue<uint64_t>(reader)));
+        reader.Read(entries.data(), entries.size() * sizeof(entry_t));
+    }
 
-        for (size_t pos = 0; pos < cluster_size; pos++) {
-            const auto emb_idx = kmeans_result.assignments[cluster_idx][pos];
-            cluster.indices[pos] = row_ids[emb_idx];
+    [[nodiscard]] size_t SizeInBytes() const { return entries.size() * sizeof(entry_t); }
 
-            if constexpr (Q == U8) {
-                ScalarQuantizer<Q> quantizer(num_dimensions);
-                quantizer.QuantizeEmbedding(
-                    source_data + (emb_idx * num_dimensions),
-                    quantization_base,
-                    quantization_scale,
-                    tmp + (pos * num_dimensions)
+    size_t base_row_id = 0;
+    std::vector<entry_t> entries;
+};
+
+// The index build steps that run in parallel, on the executor and allocator they are given
+// (borrowed).
+class IVFUtils : public skmeans::AllocatorHolder {
+  public:
+    explicit IVFUtils(ParallelExecutor& executor, MemoryAllocator* allocator = nullptr)
+        : executor(executor) {
+        SetAllocator(allocator);
+    }
+
+    skmeans::AllocatedBuffer<float> NormalizeAndRotate(
+        const float* embeddings,
+        size_t num_embeddings,
+        uint32_t num_dimensions,
+        bool normalize,
+        const ADSamplingPruner& pruner
+    ) const {
+        PDX_PROFILE_SCOPE("Search/NormalizeAndRotate");
+        const size_t total_floats = num_embeddings * num_dimensions;
+        skmeans::AllocatedBuffer<float> normalized;
+        const float* rotation_input = embeddings;
+        if (normalize) {
+            normalized = skmeans::AllocateBuffer<float>(GetAllocator(), total_floats);
+            Quantizer quantizer(num_dimensions);
+            executor.ParallelFor(num_embeddings, [&](size_t begin, size_t end, size_t) {
+                for (size_t i = begin; i < end; i++) {
+                    quantizer.NormalizeQuery(
+                        embeddings + i * num_dimensions, normalized.get() + i * num_dimensions
+                    );
+                }
+            });
+            rotation_input = normalized.get();
+        }
+        auto preprocessed = skmeans::AllocateBuffer<float>(GetAllocator(), total_floats);
+        pruner.PreprocessEmbeddings(rotation_input, preprocessed.get(), num_embeddings, &executor);
+        return preprocessed;
+    }
+
+    // Compute centroids (clusters) and centroid-to-embedding assignments using SuperKMeans.
+    [[nodiscard]] KMeansResult ComputeKMeans(
+        const float* const embeddings,
+        const uint64_t num_embeddings,
+        const uint32_t num_dimensions,
+        const uint32_t num_clusters,
+        const PDX::DistanceMetric distance_metric,
+        const uint32_t seed,
+        const bool normalize = false,
+        const float sampling_fraction = 0.0f,
+        const uint32_t kmeans_iters = 8,
+        const bool hierarchical_indexing = true
+    ) const {
+        assert(num_embeddings >= 1);
+        assert(num_dimensions >= 1);
+        assert(num_clusters >= 1);
+
+        auto result = KMeansResult(num_clusters);
+
+        if (num_clusters == 1) {
+            result.centroids = std::vector<float>(embeddings, embeddings + num_dimensions);
+            for (uint64_t vec_id = 0; vec_id < num_embeddings; vec_id++) {
+                result.assignments[0].emplace_back(vec_id);
+            }
+            return result;
+        }
+
+        bool is_angular = normalize || distance_metric == PDX::DistanceMetric::COSINE ||
+                          distance_metric == PDX::DistanceMetric::IP;
+
+        float chosen_sampling_fraction = 0.3f;
+        if (sampling_fraction > 0.0f) {
+            chosen_sampling_fraction = sampling_fraction;
+        } else if (num_embeddings < KMeansResult::MIN_EMBEDDINGS_TO_SAMPLE) {
+            chosen_sampling_fraction = 1.0f;
+        }
+
+        bool use_hierarchical_indexing =
+            hierarchical_indexing && num_embeddings >= KMeansResult::MIN_EMBEDDINGS_TO_SAMPLE;
+
+        std::vector<uint32_t> assignments;
+        if (use_hierarchical_indexing) {
+            skmeans::HierarchicalSuperKMeansConfig config;
+            config.sampling_fraction = 1.0f; // For now we are using all points
+            config.angular = is_angular;
+            config.data_already_rotated = true;
+            config.suppress_warnings = true;
+            config.iters_mesoclustering = 3;
+            config.iters_fineclustering = 5;
+            config.iters_refinement = 0;
+            config.seed = seed;
+            // config.verbose = true;
+            config.executor = &executor;
+            config.allocator = &GetAllocator();
+            auto kmeans = skmeans::HierarchicalSuperKMeans(num_clusters, num_dimensions, config);
+            result.centroids = kmeans.Train(embeddings, num_embeddings);
+            if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                assignments = kmeans.AssignTrainingPoints(
+                    embeddings, result.centroids.data(), num_embeddings, num_clusters
                 );
             } else {
-                std::memcpy(
-                    tmp + (pos * num_dimensions),
-                    source_data + (emb_idx * num_dimensions),
-                    num_dimensions * sizeof(float)
+                assignments = kmeans.Assign(
+                    embeddings, result.centroids.data(), num_embeddings, num_clusters
+                );
+            }
+        } else {
+            skmeans::SuperKMeansConfig config;
+            config.sampling_fraction = chosen_sampling_fraction;
+            config.angular = is_angular;
+            config.data_already_rotated = true;
+            config.suppress_warnings = true;
+            config.iters = kmeans_iters;
+            config.seed = seed;
+            // config.verbose = true;
+            config.executor = &executor;
+            config.allocator = &GetAllocator();
+            auto kmeans = skmeans::SuperKMeans(num_clusters, num_dimensions, config);
+            result.centroids = kmeans.Train(embeddings, num_embeddings);
+            if (num_clusters > skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                assignments = kmeans.AssignTrainingPoints(
+                    embeddings, result.centroids.data(), num_embeddings, num_clusters
+                );
+            } else {
+                assignments = kmeans.Assign(
+                    embeddings, result.centroids.data(), num_embeddings, num_clusters
                 );
             }
         }
-        StoreClusterEmbeddings<Q, storage_t>(cluster, ivf, tmp, cluster_size);
+
+        // Convert from vec_id -> centroid_idx into centroid_idx -> vec_id
+        result.assignments.resize(num_clusters);
+        for (uint64_t vec_id = 0; vec_id < num_embeddings; vec_id++) {
+            result.assignments[assignments[vec_id]].emplace_back(vec_id);
+        }
+
+        return result;
     }
 
-    ivf.ComputeClusterOffsets();
-}
+    // Splits the clusters of kmeans_result above max_cluster_size by k-means on their own
+    // embeddings, into splits of about half of it, until they fit. A cluster k-means can't
+    // separate (identical embeddings) stays whole.
+    void SplitClustersAboveMaxClusterSize(
+        KMeansResult& kmeans_result,
+        const float* embeddings,
+        const uint32_t num_dimensions,
+        const uint32_t max_cluster_size,
+        const PDX::DistanceMetric distance_metric,
+        const uint32_t seed,
+        const bool normalize
+    ) const {
+        PDX_PROFILE_SCOPE("SplitClustersAboveMaxClusterSize");
+        // The splits appended to kmeans_result are visited later in this loop
+        for (size_t cluster_id = 0; cluster_id < kmeans_result.assignments.size(); cluster_id++) {
+            bool splittable = true;
+            while (splittable && kmeans_result.assignments[cluster_id].size() > max_cluster_size) {
+                splittable = TrySplitClusterWithKMeans(
+                    kmeans_result,
+                    cluster_id,
+                    embeddings,
+                    num_dimensions,
+                    max_cluster_size / 2, // target_size
+                    distance_metric,
+                    seed,
+                    normalize
+                );
+            }
+        }
+    }
+
+    template <Quantization Q>
+    void PopulateIVFClusters(
+        IVF<Q>& ivf,
+        const KMeansResult& kmeans_result,
+        const float* source_data,
+        const size_t* row_ids,
+        uint32_t num_dimensions,
+        uint32_t num_clusters,
+        float quantization_base,
+        float quantization_scale,
+        uint32_t max_cluster_size = 0
+    ) const {
+        using storage_t = pdx_data_t<Q>;
+
+        size_t largest_cluster_size = 0;
+        for (size_t i = 0; i < num_clusters; i++) {
+            largest_cluster_size =
+                std::max(largest_cluster_size, kmeans_result.assignments[i].size());
+        }
+
+        // Pre-allocate all clusters sequentially
+        for (size_t cluster_idx = 0; cluster_idx < num_clusters; cluster_idx++) {
+            const auto cluster_size =
+                static_cast<uint32_t>(kmeans_result.assignments[cluster_idx].size());
+            ivf.clusters.emplace_back(
+                cluster_size,
+                Cluster<Q>::CapacityFor(cluster_size, max_cluster_size),
+                num_dimensions,
+                &GetAllocator()
+            );
+            ivf.clusters[cluster_idx].id = cluster_idx;
+        }
+
+        // Per-worker tmp buffers for gather + quantize
+        const size_t n_workers = executor.NumWorkers();
+        std::vector<skmeans::AllocatedBuffer<storage_t>> tmp_buffers(n_workers);
+        for (size_t w = 0; w < n_workers; w++) {
+            tmp_buffers[w] = skmeans::AllocateBuffer<storage_t>(
+                GetAllocator(), static_cast<uint64_t>(largest_cluster_size) * num_dimensions
+            );
+        }
+
+        executor.ParallelFor(num_clusters, [&](size_t begin, size_t end, size_t worker) {
+            auto* tmp = tmp_buffers[worker].get();
+            for (size_t cluster_idx = begin; cluster_idx < end; cluster_idx++) {
+                const auto cluster_size = kmeans_result.assignments[cluster_idx].size();
+                auto& cluster = ivf.clusters[cluster_idx];
+
+                for (size_t pos = 0; pos < cluster_size; pos++) {
+                    const auto emb_idx = kmeans_result.assignments[cluster_idx][pos];
+                    cluster.indices[pos] = row_ids[emb_idx];
+
+                    if constexpr (Q == U8) {
+                        ScalarQuantizer<Q> quantizer(num_dimensions);
+                        quantizer.QuantizeEmbedding(
+                            source_data + (emb_idx * num_dimensions),
+                            quantization_base,
+                            quantization_scale,
+                            tmp + (pos * num_dimensions)
+                        );
+                    } else {
+                        std::memcpy(
+                            tmp + (pos * num_dimensions),
+                            source_data + (emb_idx * num_dimensions),
+                            num_dimensions * sizeof(float)
+                        );
+                    }
+                }
+                cluster.StoreEmbeddings(tmp, cluster_size);
+            }
+        });
+
+        ivf.ComputeClusterOffsets();
+    }
+
+  private:
+    // Splits one cluster of kmeans_result by k-means on its embeddings into non-empty splits of
+    // about target_size. False if k-means leaves it whole.
+    bool TrySplitClusterWithKMeans(
+        KMeansResult& kmeans_result,
+        const size_t cluster_id,
+        const float* embeddings,
+        const uint32_t num_dimensions,
+        const uint32_t target_size,
+        const PDX::DistanceMetric distance_metric,
+        const uint32_t seed,
+        const bool normalize
+    ) const {
+        const size_t d = num_dimensions;
+        const auto& ids = kmeans_result.assignments[cluster_id];
+        const size_t num_embeddings = ids.size();
+        auto cluster_embeddings =
+            skmeans::AllocateBuffer<float>(GetAllocator(), num_embeddings * d);
+        for (size_t i = 0; i < num_embeddings; i++) {
+            std::memcpy(
+                cluster_embeddings.get() + i * d, embeddings + ids[i] * d, d * sizeof(float)
+            );
+        }
+        const auto num_splits =
+            static_cast<uint32_t>((num_embeddings + target_size - 1) / target_size);
+        KMeansResult splits = ComputeKMeans(
+            cluster_embeddings.get(),
+            num_embeddings,
+            num_dimensions,
+            num_splits,
+            distance_metric,
+            seed,
+            normalize,
+            1.0f,
+            SPLIT_KMEANS_ITERS,
+            false
+        );
+
+        // From positions in the cluster to positions in embeddings
+        std::vector<uint32_t> non_empty_splits;
+        for (uint32_t split = 0; split < num_splits; split++) {
+            if (splits.assignments[split].empty()) {
+                continue;
+            }
+            non_empty_splits.push_back(split);
+            for (auto& position : splits.assignments[split]) {
+                position = ids[position];
+            }
+        }
+        if (non_empty_splits.size() < 2) {
+            return false;
+        }
+        for (size_t i = 0; i < non_empty_splits.size(); i++) {
+            const uint32_t split = non_empty_splits[i];
+            const float* centroid = splits.centroids.data() + static_cast<size_t>(split) * d;
+            // The first non-empty split replaces the cluster being split in its slot; the others
+            // are appended
+            if (i == 0) {
+                kmeans_result.assignments[cluster_id] = std::move(splits.assignments[split]);
+                std::memcpy(
+                    kmeans_result.centroids.data() + cluster_id * d, centroid, d * sizeof(float)
+                );
+            } else {
+                kmeans_result.assignments.push_back(std::move(splits.assignments[split]));
+                kmeans_result.centroids.insert(
+                    kmeans_result.centroids.end(), centroid, centroid + d
+                );
+            }
+        }
+        return true;
+    }
+
+    ParallelExecutor& executor;
+};
 
 // ******************************************
 // Maintenance helpers (SPFresh-like Append/Delete), shared by PDXIndex and PDXTreeIndex.
@@ -250,15 +542,16 @@ void PopulateIVFClusters(
 
 // Dequantize raw (Q-type) embeddings to float. For F32 this is a memcpy.
 template <Quantization Q>
-inline std::unique_ptr<float[]> DequantizeClusterEmbeddings(
+inline skmeans::AllocatedBuffer<float> DequantizeClusterEmbeddings(
     const IVF<Q>& index,
     ScalarQuantizer<Q>& quantizer,
     const pdx_data_t<Q>* raw_embeddings,
-    uint32_t n_emb
+    uint32_t n_emb,
+    MemoryAllocator& allocator
 ) {
     PDX_PROFILE_SCOPE("Dequantize");
     const size_t d = index.num_dimensions;
-    std::unique_ptr<float[]> result(new float[static_cast<size_t>(n_emb) * d]);
+    auto result = skmeans::AllocateBuffer<float>(allocator, static_cast<size_t>(n_emb) * d);
     if constexpr (Q == U8) {
         for (size_t i = 0; i < n_emb; i++) {
             quantizer.DequantizeEmbedding(
@@ -272,6 +565,70 @@ inline std::unique_ptr<float[]> DequantizeClusterEmbeddings(
         std::memcpy(result.get(), raw_embeddings, static_cast<size_t>(n_emb) * d * sizeof(float));
     }
     return result;
+}
+
+// The body of GetEmbeddingsFromIndexByRowIds shared by PDXIndex and PDXTreeIndex: each row read
+// from its cluster's slot (u8 dequantized), in the order of row_ids. The rows are read cluster by
+// cluster, so that a cluster without data is acquired from cluster_source once.
+template <Quantization Q>
+inline void GetEmbeddingsFromIndexByRowIdsImpl(
+    const IVF<Q>& index,
+    [[maybe_unused]] ScalarQuantizer<Q>& quantizer,
+    const RowIdClusterMapping& row_id_cluster_mapping,
+    const std::vector<size_t>& row_ids,
+    float* out,
+    IClusterSource* cluster_source
+) {
+    using data_t = pdx_data_t<Q>;
+    const size_t d = index.num_dimensions;
+    std::vector<RowIdClusterMapping::entry_t> locations(row_ids.size());
+    for (size_t i = 0; i < row_ids.size(); i++) {
+        locations[i] = row_id_cluster_mapping.Get(row_ids[i]);
+        if (locations[i].first == DELETED_MARKER) {
+            throw std::invalid_argument(
+                "GetEmbeddingsFromIndexByRowIds: a row id is not in the index"
+            );
+        }
+    }
+    std::vector<size_t> rows_by_cluster(row_ids.size());
+    std::iota(rows_by_cluster.begin(), rows_by_cluster.end(), 0);
+    std::sort(rows_by_cluster.begin(), rows_by_cluster.end(), [&](size_t a, size_t b) {
+        return locations[a].first < locations[b].first;
+    });
+    std::unique_ptr<data_t[]> embedding(new data_t[d]);
+    size_t next = 0;
+    while (next < rows_by_cluster.size()) {
+        const uint32_t cluster_id = locations[rows_by_cluster[next]].first;
+        const auto& cluster = index.clusters[cluster_id];
+        const bool from_cluster_source = !cluster.data;
+        const data_t* data = cluster.data.get();
+        size_t stride = cluster.max_capacity;
+        if (from_cluster_source) {
+            const char* cluster_bytes = cluster_source->Acquire(cluster_id);
+            data = reinterpret_cast<const data_t*>(
+                cluster_bytes + sizeof(uint32_t) * cluster.used_capacity
+            );
+            stride = cluster.used_capacity;
+        }
+        for (;
+             next < rows_by_cluster.size() && locations[rows_by_cluster[next]].first == cluster_id;
+             next++) {
+            const size_t i = rows_by_cluster[next];
+            Cluster<Q>::ReadEmbeddingFromPDXBuffer(
+                data, stride, index.num_dimensions, locations[i].second, embedding.get()
+            );
+            if constexpr (Q == U8) {
+                quantizer.DequantizeEmbedding(
+                    embedding.get(), index.quantization_base, index.quantization_scale, out + i * d
+                );
+            } else {
+                std::copy(embedding.get(), embedding.get() + d, out + i * d);
+            }
+        }
+        if (from_cluster_source) {
+            cluster_source->Release(cluster_id);
+        }
+    }
 }
 
 // Quantize (if U8) and append a float embedding to a cluster. Returns its index in the cluster.
@@ -366,7 +723,7 @@ inline std::unique_ptr<pdx_distance_t<Q>[]> CalculateDistanceFromEmbeddingToClus
     std::unique_ptr<uint32_t[]> pruning_positions(new uint32_t[n_vectors]);
     distance_computer_t::Vertical(
         embedding,
-        cluster.data,
+        cluster.data.get(),
         n_vectors,
         buffer_stride,
         0,
@@ -383,7 +740,7 @@ inline std::unique_ptr<pdx_distance_t<Q>[]> CalculateDistanceFromEmbeddingToClus
                               (vector_idx * H_DIM_SIZE);
             pruning_distances[vector_idx] += distance_computer_t::Horizontal(
                 embedding + index.num_vertical_dimensions + horizontal_dimension,
-                cluster.data + data_pos,
+                cluster.data.get() + data_pos,
                 H_DIM_SIZE
             );
         }
@@ -410,7 +767,8 @@ inline SplitPartition PartitionClusterForSplit(
     const float* centroid_to_split,
     const std::vector<uint32_t>& neighboring_clusters_ids,
     DistanceMetric distance_metric,
-    uint32_t seed
+    uint32_t seed,
+    MemoryAllocator& allocator
 ) {
     using distance_computer_f32_t = DistanceComputer<DistanceMetric::L2SQ, F32>;
     const size_t d = index.num_dimensions;
@@ -419,19 +777,21 @@ inline SplitPartition PartitionClusterForSplit(
     partition.centroid_b.reset(new float[d]);
     {
         PDX_PROFILE_SCOPE("Split/KMeans");
-        KMeansResult split_result = ComputeKMeans(
-            cluster_embeddings,
-            num_embeddings,
-            d,
-            2,
-            distance_metric,
-            seed,
-            true,
-            1.0f,
-            SPLIT_KMEANS_ITERS,
-            false,
-            1
-        );
+        // 1 thread because DML operations are assumed single-threaded
+        skmeans::SerialExecutor serial_executor;
+        KMeansResult split_result = IVFUtils(serial_executor, &allocator)
+                                        .ComputeKMeans(
+                                            cluster_embeddings,
+                                            num_embeddings,
+                                            d,
+                                            2,
+                                            distance_metric,
+                                            seed,
+                                            true,
+                                            1.0f,
+                                            SPLIT_KMEANS_ITERS,
+                                            false
+                                        );
         std::memcpy(partition.centroid_a.get(), split_result.centroids.data(), d * sizeof(float));
         std::memcpy(
             partition.centroid_b.get(), split_result.centroids.data() + d, d * sizeof(float)

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 namespace PDX {
 
@@ -41,11 +42,14 @@ class Quantizer {
 };
 
 template <Quantization Q = U8>
-class ScalarQuantizer : public Quantizer {
+class ScalarQuantizer : public Quantizer, public skmeans::ExecutorHolder {
   public:
     using quantized_embedding_t = pdx_quantized_embedding_t<Q>;
 
-    explicit ScalarQuantizer(size_t num_dimensions) : Quantizer(num_dimensions) {}
+    explicit ScalarQuantizer(size_t num_dimensions, ParallelExecutor* executor = nullptr)
+        : Quantizer(num_dimensions) {
+        SetExecutor(executor);
+    }
 
 #ifdef __AVX512F__
     // TODO(@lkuffo, low): We rely on _mm512_dpbusds_epi32 that has asymmetric operands
@@ -55,18 +59,25 @@ class ScalarQuantizer : public Quantizer {
     static constexpr uint8_t MAX_VALUE = 255;
 #endif
 
-    static ScalarQuantizationParams ComputeQuantizationParams(
+    ScalarQuantizationParams ComputeQuantizationParams(
         const float* embeddings,
         const size_t total_elements
-    ) {
-        float global_min = std::numeric_limits<float>::max();
-        float global_max = std::numeric_limits<float>::lowest();
-#pragma omp parallel for reduction(min : global_min) reduction(max : global_max)                   \
-    num_threads(PDX::g_n_threads)
-        for (size_t i = 0; i < total_elements; ++i) {
-            global_min = std::min(global_min, embeddings[i]);
-            global_max = std::max(global_max, embeddings[i]);
-        }
+    ) const {
+        auto& executor = GetExecutor();
+        std::vector<float> worker_min(executor.NumWorkers(), std::numeric_limits<float>::max());
+        std::vector<float> worker_max(executor.NumWorkers(), std::numeric_limits<float>::lowest());
+        executor.ParallelFor(total_elements, [&](size_t begin, size_t end, size_t worker) {
+            float local_min = worker_min[worker];
+            float local_max = worker_max[worker];
+            for (size_t i = begin; i < end; ++i) {
+                local_min = std::min(local_min, embeddings[i]);
+                local_max = std::max(local_max, embeddings[i]);
+            }
+            worker_min[worker] = local_min;
+            worker_max[worker] = local_max;
+        });
+        const float global_min = *std::min_element(worker_min.begin(), worker_min.end());
+        const float global_max = *std::max_element(worker_max.begin(), worker_max.end());
         const float range = global_max - global_min;
         return {global_min, (range > 0) ? static_cast<float>(MAX_VALUE) / range : 1.0f};
     }

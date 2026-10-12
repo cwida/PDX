@@ -129,7 +129,10 @@ void RunInsertDeleteAndSearch() {
     IndexT index(MakeConfig(D));
     index.BuildIndex(data.train.data(), n_build);
     index.Append(inserted_row_id, data.train.data() + inserted_row_id * D);
-    index.Delete(inserted_row_id);
+    EXPECT_TRUE(index.Contains(inserted_row_id));
+    EXPECT_TRUE(index.Delete(inserted_row_id));
+    EXPECT_FALSE(index.Contains(inserted_row_id));
+    EXPECT_FALSE(index.Delete(inserted_row_id));
     index.SetNProbe(0);
 
     auto results = index.Search(data.train.data() + inserted_row_id * D, TestUtils::KNN);
@@ -171,7 +174,8 @@ void RunFilteredSearchExcludesDeleted() {
 }
 
 // Test 5: A dense cloud of near-duplicates lands in one cluster. Small clusters get
-// MIN_MAX_CAPACITY slots, so inserting more than that must trigger at least one split, after
+// DEFAULT_MAX_CAPACITY_LOWER_BOUND slots, so inserting more than that must trigger at least one
+// split, after
 // which every point (inserted or original) must still be stored exactly once and be reachable.
 template <typename IndexT>
 void RunInsertDenseRegionForcesSplit() {
@@ -182,7 +186,7 @@ void RunInsertDenseRegionForcesSplit() {
     index.BuildIndex(data.train.data(), n_build);
     const uint32_t clusters_before = index.GetNumClusters();
 
-    const size_t n_insert = PDX::Cluster<PDX::F32>::MIN_MAX_CAPACITY + 64;
+    const size_t n_insert = PDX::Cluster<PDX::F32>::DEFAULT_MAX_CAPACITY_LOWER_BOUND + 64;
     const float* base = data.train.data();
     std::mt19937 rng(TestUtils::SEED);
     std::normal_distribution<float> noise(0.0f, 1e-3f);
@@ -266,7 +270,7 @@ void RunMaintenanceAfterRestore(const std::string& index_type) {
     const size_t kept_row_id = n_build;
     const size_t deleted_row_id = n_build + 1;
 
-    std::string path = "/tmp/pdx_test_maintenance_" + index_type;
+    std::string path = TestUtils::TempPath("pdx_test_maintenance_" + index_type);
     {
         IndexT index(MakeConfig(D));
         index.BuildIndex(data.train.data(), n_build);
@@ -330,6 +334,292 @@ TEST_P(MaintenanceTest, MaintenanceAfterRestore) {
     const std::string& index_type = GetParam();
     ForIndexType(index_type, [&index_type](auto tag) {
         RunMaintenanceAfterRestore<typename decltype(tag)::type>(index_type);
+    });
+}
+
+// Test 8: Many appends into a small index cascade splits (and neighbor steals) and then half the
+// rows are deleted; the index must stay consistent and exact-searchable throughout
+template <typename IndexT>
+void RunAppendCascadeThenDeleteHalf() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 2048;
+    constexpr size_t n_total = 60000;
+    constexpr size_t n_queries = 100;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+    std::vector<float> queries(n_queries * d);
+    for (auto& value : queries) {
+        value = uniform(gen);
+    }
+
+    IndexT index(MakeConfig(d));
+    index.BuildIndex(data.data(), n_build);
+    for (size_t row_id = n_build; row_id < n_total; row_id++) {
+        index.Append(row_id, data.data() + row_id * d);
+    }
+    index.SetNProbe(0);
+    ExpectIndexHoldsExactly(index, n_total);
+
+    auto gt = TestUtils::ComputeBruteForceCosineKNN(
+        data.data(), queries.data(), n_total, n_queries, d, TestUtils::KNN
+    );
+    EXPECT_GE(
+        TestUtils::ComputeAverageRecall(index, queries.data(), n_queries, d, TestUtils::KNN, gt),
+        0.9f
+    );
+
+    for (size_t row_id = 0; row_id < n_total; row_id += 2) {
+        index.Delete(row_id);
+    }
+    ExpectIndexHoldsExactly(index, n_total / 2);
+
+    std::vector<float> odd_rows(n_total / 2 * d);
+    for (size_t i = 0; i < n_total / 2; i++) {
+        std::copy(
+            data.begin() + static_cast<long>((2 * i + 1) * d),
+            data.begin() + static_cast<long>((2 * i + 2) * d),
+            odd_rows.begin() + static_cast<long>(i * d)
+        );
+    }
+    auto gt_odd = TestUtils::ComputeBruteForceCosineKNN(
+        odd_rows.data(), queries.data(), n_total / 2, n_queries, d, TestUtils::KNN
+    );
+    float total_recall = 0.0f;
+    for (size_t q = 0; q < n_queries; q++) {
+        auto results = index.Search(queries.data() + q * d, TestUtils::KNN);
+        for (auto& r : results) {
+            EXPECT_EQ(r.index % 2, 1u) << "deleted row_id " << r.index << " returned";
+            r.index = (r.index - 1) / 2;
+        }
+        total_recall += TestUtils::ComputeRecall(results, gt_odd.indices[q], TestUtils::KNN);
+    }
+    EXPECT_GE(total_recall / static_cast<float>(n_queries), 0.9f);
+}
+
+// Test 9: Delete every other row of a built index (every cluster drops to its merge threshold at
+// once); the survivors must still be exact-searchable
+template <typename IndexT>
+void RunBuildThenDeleteHalf() {
+    constexpr size_t d = 8;
+    constexpr size_t n_total = 50000;
+    constexpr size_t n_queries = 100;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+    std::vector<float> queries(n_queries * d);
+    for (auto& value : queries) {
+        value = uniform(gen);
+    }
+
+    auto config = MakeConfig(d);
+    config.num_clusters = 480;
+    IndexT index(config);
+    index.BuildIndex(data.data(), n_total);
+    index.SetNProbe(0);
+    for (size_t row_id = 0; row_id < n_total; row_id += 2) {
+        index.Delete(row_id);
+    }
+    ExpectIndexHoldsExactly(index, n_total / 2);
+
+    std::vector<float> odd_rows(n_total / 2 * d);
+    for (size_t i = 0; i < n_total / 2; i++) {
+        std::copy(
+            data.begin() + static_cast<long>((2 * i + 1) * d),
+            data.begin() + static_cast<long>((2 * i + 2) * d),
+            odd_rows.begin() + static_cast<long>(i * d)
+        );
+    }
+    auto gt_odd = TestUtils::ComputeBruteForceCosineKNN(
+        odd_rows.data(), queries.data(), n_total / 2, n_queries, d, TestUtils::KNN
+    );
+    float total_recall = 0.0f;
+    for (size_t q = 0; q < n_queries; q++) {
+        auto results = index.Search(queries.data() + q * d, TestUtils::KNN);
+        for (auto& r : results) {
+            EXPECT_EQ(r.index % 2, 1u) << "deleted row_id " << r.index << " returned";
+            r.index = (r.index - 1) / 2;
+        }
+        total_recall += TestUtils::ComputeRecall(results, gt_odd.indices[q], TestUtils::KNN);
+    }
+    EXPECT_GE(total_recall / static_cast<float>(n_queries), 0.9f);
+}
+
+// Test 11: Ask for more neighbors than live rows remain after mass deletes: the heap never fills,
+// so tombstoned slots must be skipped rather than masked
+template <typename IndexT>
+void RunSearchWithKAboveLiveCount() {
+    constexpr size_t d = 8;
+    constexpr size_t n_total = 20000;
+    constexpr size_t keep_every = 20;
+    constexpr size_t n_live = n_total / keep_every;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+
+    auto config = MakeConfig(d);
+    config.num_clusters = 64;
+    IndexT index(config);
+    index.BuildIndex(data.data(), n_total);
+    index.SetNProbe(0);
+    for (size_t row_id = 0; row_id < n_total; row_id++) {
+        if (row_id % keep_every != 0) {
+            index.Delete(row_id);
+        }
+    }
+    ExpectIndexHoldsExactly(index, n_live);
+
+    auto results = index.Search(data.data(), n_live + n_live / 2);
+    EXPECT_EQ(results.size(), n_live);
+    std::unordered_set<uint32_t> seen;
+    for (const auto& r : results) {
+        EXPECT_EQ(r.index % keep_every, 0u) << "deleted row_id " << r.index << " returned";
+        EXPECT_LT(r.index, n_total) << "stale row_id " << r.index << " returned";
+        EXPECT_TRUE(seen.insert(r.index).second) << "row_id " << r.index << " returned twice";
+    }
+}
+
+// Test 12: Appending exact copies of one row grows their cluster instead of splitting off empty
+// clusters
+template <typename IndexT>
+void RunAppendDuplicatesCreatesNoEmptyCluster() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 2048;
+    constexpr size_t n_copies = 3000;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_build * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+
+    IndexT index(MakeConfig(d));
+    index.BuildIndex(data.data(), n_build);
+    const size_t empty_before = TestUtils::CountEmptyClusters(index);
+    for (size_t i = 0; i < n_copies; i++) {
+        index.Append(n_build + i, data.data());
+        ASSERT_EQ(TestUtils::CountEmptyClusters(index), empty_before)
+            << "after " << i + 1 << " copies";
+    }
+    ExpectIndexHoldsExactly(index, n_build + n_copies);
+}
+
+uint32_t LargestClusterSize(const PDX::IPDXIndex& index) {
+    uint32_t largest = 0;
+    for (uint32_t c = 0; c < index.GetNumClusters(); c++) {
+        largest = std::max(largest, index.GetClusterSize(c));
+    }
+    return largest;
+}
+
+// Test 13: With max_cluster_size, appends split every cluster that reaches it
+template <typename IndexT>
+void RunAppendsSplitAtMaxClusterSize() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 2048;
+    constexpr size_t n_total = 10000;
+    constexpr uint32_t max_cluster_size = 64;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+
+    for (const uint32_t limit : {0u, max_cluster_size}) {
+        auto config = MakeConfig(d);
+        config.max_cluster_size = limit;
+        IndexT index(config);
+        index.BuildIndex(data.data(), n_build);
+        for (size_t row_id = n_build; row_id < n_total; row_id++) {
+            index.Append(row_id, data.data() + row_id * d);
+        }
+        ExpectIndexHoldsExactly(index, n_total);
+        if (limit == 0) {
+            EXPECT_GT(LargestClusterSize(index), max_cluster_size);
+        } else {
+            EXPECT_LE(LargestClusterSize(index), max_cluster_size);
+        }
+    }
+}
+
+// Test 14: With max_cluster_size, the build splits the clusters k-means leaves above it, except a
+// group of identical rows, which stays whole
+template <typename IndexT>
+void RunBuildSplitsClustersAboveMaxClusterSize() {
+    constexpr size_t d = 8;
+    constexpr size_t n_uniform = 4000;
+    constexpr size_t n_copies = 500;
+    constexpr size_t n_total = n_uniform + n_copies;
+    constexpr uint32_t num_clusters = 4;
+    constexpr uint32_t max_cluster_size = 256;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (size_t i = 0; i < n_uniform * d; i++) {
+        data[i] = uniform(gen);
+    }
+    for (size_t i = n_uniform; i < n_total; i++) {
+        std::copy(data.begin(), data.begin() + d, data.begin() + static_cast<long>(i * d));
+    }
+
+    for (const uint32_t limit : {0u, max_cluster_size}) {
+        auto config = MakeConfig(d);
+        config.num_clusters = num_clusters;
+        config.max_cluster_size = limit;
+        IndexT index(config);
+        index.BuildIndex(data.data(), n_total);
+        ExpectIndexHoldsExactly(index, n_total);
+        uint32_t num_above = 0;
+        for (uint32_t c = 0; c < index.GetNumClusters(); c++) {
+            num_above += index.GetClusterSize(c) > max_cluster_size;
+        }
+        EXPECT_EQ(num_above, limit == 0 ? num_clusters : 1u);
+    }
+}
+
+TEST_P(MaintenanceTest, SearchWithKAboveLiveCount) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunSearchWithKAboveLiveCount<typename decltype(tag)::type>();
+    });
+}
+
+TEST_P(MaintenanceTest, BuildThenDeleteHalf) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBuildThenDeleteHalf<typename decltype(tag)::type>();
+    });
+}
+
+TEST_P(MaintenanceTest, AppendCascadeThenDeleteHalf) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunAppendCascadeThenDeleteHalf<typename decltype(tag)::type>();
+    });
+}
+
+TEST_P(MaintenanceTest, AppendDuplicatesCreatesNoEmptyCluster) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunAppendDuplicatesCreatesNoEmptyCluster<typename decltype(tag)::type>();
+    });
+}
+
+TEST_P(MaintenanceTest, AppendsSplitAtMaxClusterSize) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunAppendsSplitAtMaxClusterSize<typename decltype(tag)::type>();
+    });
+}
+
+TEST_P(MaintenanceTest, BuildSplitsClustersAboveMaxClusterSize) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBuildSplitsClustersAboveMaxClusterSize<typename decltype(tag)::type>();
     });
 }
 

@@ -39,13 +39,11 @@ jobs:
       CXX: clang++-18
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 clang-tidy-18 libomp-18-dev libopenblas-dev cmake
+          sudo apt-get install -y clang-18 clang-tidy-18 cmake
           sudo ln -sf /usr/bin/clang-tidy-18 /usr/local/bin/clang-tidy
 
       - name: Configure
@@ -60,19 +58,22 @@ jobs:
           ./scripts/tidy_check.sh
 
   cpp-build-and-test:
-    runs-on: ubuntu-24.04
+    name: cpp-build-and-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
     env:
       CC: clang-18
       CXX: clang++-18
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+          sudo apt-get install -y clang-18 cmake
 
       - name: Configure
         run: cmake -B build -DPDX_COMPILE_TESTS=ON -DCMAKE_BUILD_TYPE=Release
@@ -83,6 +84,61 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
+  windows-msvc:
+    name: windows-msvc (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            arch: x64
+          - os: windows-11-arm
+            arch: ARM64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -A ${{ matrix.arch }} -DPDX_COMPILE_TESTS=ON
+
+      - name: Build tests
+        run: cmake --build build --config Release --parallel --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  macos-accelerate:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DPDX_COMPILE_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build tests
+        run: cmake --build build -j$(sysctl -n hw.ncpu) --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: 3.1.71
+
+      - name: Configure
+        run: emcmake cmake -B build -DPDX_COMPILE_TESTS=ON -DPDX_SKIP_FFTW=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build tests
+        run: cmake --build build -j$(nproc) --target tests
+
+      - name: Run tests (Node)
+        run: ctest --test-dir build --output-on-failure
+
   python:
     runs-on: ubuntu-24.04
     env:
@@ -90,13 +146,11 @@ jobs:
       CXX: clang++-18
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+          sudo apt-get install -y clang-18 cmake
 
       - uses: actions/setup-python@v5
         with:
@@ -109,25 +163,30 @@ jobs:
         run: python -c "import pdxearch; print('pdxearch imported successfully')"
 
   sanitizers-asan-ubsan:
-    runs-on: ubuntu-24.04
+    name: sanitizers-asan-ubsan (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
     env:
       CC: clang-18
       CXX: clang++-18
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+          sudo apt-get install -y clang-18 cmake
 
       - name: Configure with ASan + UBSan
         run: |
           cmake -B build_asan -DPDX_COMPILE_TESTS=ON \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_C_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -D_GLIBCXX_SANITIZE_VECTOR=1" \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
 
       - name: Build tests
@@ -136,6 +195,40 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build_asan --output-on-failure
 
+  sanitizers-tsan:
+    name: sanitizers-tsan (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    env:
+      CC: clang-18
+      CXX: clang++-18
+      TSAN_OPTIONS: ignore_noninstrumented_modules=1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 cmake
+
+      - name: Configure with TSan
+        run: |
+          cmake -B build_tsan -DPDX_COMPILE_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_C_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+
+      - name: Build tests
+        run: cmake --build build_tsan -j$(nproc) --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build_tsan --output-on-failure
+
   ci-pass:
     runs-on: ubuntu-latest
     if: always()
@@ -143,8 +236,12 @@ jobs:
       - format-check
       - tidy-check
       - cpp-build-and-test
+      - windows-msvc
+      - macos-accelerate
+      - wasm
       - python
       - sanitizers-asan-ubsan
+      - sanitizers-tsan
     steps:
       - name: Check all jobs passed
         run: |

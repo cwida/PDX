@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <numeric>
 #include <queue>
@@ -28,6 +29,10 @@ struct TestData {
     std::vector<float> train;
     std::vector<float> queries;
 };
+
+inline std::string TempPath(const std::string& name) {
+    return (std::filesystem::temp_directory_path() / name).string();
+}
 
 inline TestData LoadTestData(size_t d = MAX_D) {
     static std::vector<float> full_data;
@@ -239,6 +244,14 @@ inline std::unique_ptr<PDX::IPDXIndex> BuildIndexWithConfig(
         index = std::move(p);
     }
     return index;
+}
+
+inline size_t CountEmptyClusters(const PDX::IPDXIndex& index) {
+    size_t num_empty = 0;
+    for (uint32_t cluster_id = 0; cluster_id < index.GetNumClusters(); cluster_id++) {
+        num_empty += index.GetClusterSize(cluster_id) == 0;
+    }
+    return num_empty;
 }
 
 } // namespace TestUtils

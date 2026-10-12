@@ -64,7 +64,7 @@ Once you have downloaded and created the indexes, you can start benchmarking.
 
 ## Prerequisites
 
-### Clang, CMake, OpenMP and a BLAS implementation 
+### Clang and CMake
 Check [INSTALL.md](./INSTALL.md). 
 
 ### Building

@@ -46,18 +46,17 @@ class PyPDXIndex {
         bool hierarchical_indexing,
         uint32_t n_threads
     ) {
-        PDXIndexConfig config{
-            .num_dimensions = num_dimensions,
-            .distance_metric = ToDistanceMetric(distance_metric),
-            .seed = seed,
-            .num_clusters = num_clusters,
-            .num_meso_clusters = num_meso_clusters,
-            .normalize = normalize,
-            .sampling_fraction = sampling_fraction,
-            .kmeans_iters = kmeans_iters,
-            .hierarchical_indexing = hierarchical_indexing,
-            .n_threads = n_threads,
-        };
+        PDXIndexConfig config;
+        config.num_dimensions = num_dimensions;
+        config.distance_metric = ToDistanceMetric(distance_metric);
+        config.seed = seed;
+        config.num_clusters = num_clusters;
+        config.num_meso_clusters = num_meso_clusters;
+        config.normalize = normalize;
+        config.sampling_fraction = sampling_fraction;
+        config.kmeans_iters = kmeans_iters;
+        config.hierarchical_indexing = hierarchical_indexing;
+        config.n_threads = n_threads;
         // NOLINTBEGIN(bugprone-branch-clone)
         if (index_type == "pdx_f32") {
             index = std::make_unique<PDXIndexF32>(config);
@@ -174,7 +173,7 @@ class PyPDXIndex {
         index->Append(row_id, static_cast<const float*>(buf.ptr));
     }
 
-    void Delete(size_t row_id) { index->Delete(row_id); }
+    bool Delete(size_t row_id) { return index->Delete(row_id); }
 };
 
 } // namespace PDX
