@@ -777,6 +777,47 @@ TEST_P(MaintenanceTest, BulkAppendRejectsInvalidIds) {
     });
 }
 
+// Test 19: Deleting the only row of a cluster empties it, and its merge has no row to reassign
+template <typename IndexT>
+void RunDeleteOnlyRowOfCluster() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 256;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_build * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+    // Half as many clusters as rows: k-means leaves some of them with a single row
+    auto config = MakeConfig(d);
+    config.num_clusters = n_build / 2;
+    IndexT index(config);
+    index.BuildIndex(data.data(), n_build);
+    const uint32_t clusters_before = index.GetNumClusters();
+
+    uint32_t single_row_cluster = clusters_before;
+    for (uint32_t c = 0; c < clusters_before; c++) {
+        if (index.GetClusterSize(c) == 1) {
+            single_row_cluster = c;
+            break;
+        }
+    }
+    ASSERT_LT(single_row_cluster, clusters_before) << "k-means left no single-row cluster";
+    const uint32_t row_id = index.GetClusterRowIds(single_row_cluster)[0];
+
+    index.Delete(row_id);
+
+    EXPECT_EQ(index.GetNumClusters(), clusters_before - 1) << "The emptied cluster was not merged";
+    ExpectIndexHoldsExactly(index, n_build - 1);
+    EXPECT_FALSE(index.Contains(row_id));
+}
+
+TEST_P(MaintenanceTest, DeleteOnlyRowOfCluster) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunDeleteOnlyRowOfCluster<typename decltype(tag)::type>();
+    });
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     MaintenanceTest,

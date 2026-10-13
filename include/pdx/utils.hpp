@@ -31,6 +31,9 @@ struct BufferReader {
     char*& ptr;
 
     void Read(void* dst, size_t num_bytes) {
+        if (num_bytes == 0) {
+            return;
+        }
         std::memcpy(dst, ptr, num_bytes);
         ptr += num_bytes;
     }

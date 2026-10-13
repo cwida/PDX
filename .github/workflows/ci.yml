@@ -58,25 +58,31 @@ jobs:
           ./scripts/tidy_check.sh
 
   cpp-build-and-test:
-    name: cpp-build-and-test (${{ matrix.os }})
+    name: cpp-build-and-test (${{ matrix.os }}, ${{ matrix.compiler }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
+        compiler: [clang, gcc]
+        include:
+          # NumKong's arch=armv8.2-a kernels cannot inline helpers built for a newer -march=native
+          - os: ubuntu-24.04-arm
+            compiler: gcc
+            cmake-args: -DPDX_PORTABLE=ON
     env:
-      CC: clang-18
-      CXX: clang++-18
+      CC: ${{ matrix.compiler == 'gcc' && 'gcc-13' || 'clang-18' }}
+      CXX: ${{ matrix.compiler == 'gcc' && 'g++-13' || 'clang++-18' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 cmake
+          sudo apt-get install -y clang-18 g++-13 cmake
 
       - name: Configure
-        run: cmake -B build -DPDX_COMPILE_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DPDX_COMPILE_TESTS=ON -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake-args }}
 
       - name: Build tests
         run: cmake --build build -j$(nproc) --target tests

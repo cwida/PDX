@@ -734,7 +734,7 @@ inline skmeans::AllocatedBuffer<float> DequantizeClusterEmbeddings(
                 result.get() + i * d
             );
         }
-    } else {
+    } else if (n_emb > 0) {
         std::memcpy(result.get(), raw_embeddings, static_cast<size_t>(n_emb) * d * sizeof(float));
     }
     return result;
