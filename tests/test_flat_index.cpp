@@ -239,4 +239,44 @@ TEST(FlatIndex, BulkAppendMatchesAppend) {
     }
 }
 
+// BulkSearch returns what Search returns per query, with and without row slices, also with fewer
+// live rows than k.
+TEST(FlatIndex, BulkSearchMatchesSearch) {
+    auto data = TestUtils::LoadTestData(D);
+    std::vector<float> queries = data.queries;
+    queries.insert(queries.end(), data.queries.begin(), data.queries.end());
+    auto pool = skmeans::MakeDefaultExecutor(4);
+    for (const auto& [n_rows, k] :
+         {std::pair<size_t, size_t>{TestUtils::N_TRAIN, TestUtils::KNN}, {20, 20}}) {
+        PDX::FlatIndex index(MakeConfig());
+        index.BuildIndex(data.train.data(), n_rows);
+        for (size_t row_id = 0; row_id < n_rows; row_id += 4) {
+            index.Delete(row_id);
+        }
+        for (const size_t n_queries : {TestUtils::N_QUERIES, 2 * TestUtils::N_QUERIES}) {
+            for (PDX::ParallelExecutor* executor :
+                 {static_cast<PDX::ParallelExecutor*>(nullptr), pool.get()}) {
+                SCOPED_TRACE(
+                    "rows=" + std::to_string(n_rows) + " queries=" + std::to_string(n_queries) +
+                    " injected=" + std::to_string(executor != nullptr)
+                );
+                const auto bulk_results =
+                    index.BulkSearch(queries.data(), n_queries, k, false, executor);
+                ASSERT_EQ(bulk_results.size(), n_queries);
+                for (size_t q = 0; q < n_queries; q++) {
+                    const auto results = index.Search(queries.data() + q * D, k);
+                    ASSERT_EQ(Ids(bulk_results[q]), Ids(results)) << "query " << q;
+                    for (size_t i = 0; i < results.size(); i++) {
+                        EXPECT_NEAR(
+                            bulk_results[q][i].distance,
+                            results[i].distance,
+                            1e-3f * results[i].distance
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 } // namespace

@@ -31,6 +31,15 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
         size_t knn,
         const std::vector<size_t>& passing_row_ids
     ) const = 0;
+    virtual std::vector<std::vector<KNNCandidate>> BulkSearch(
+        const float* /*query_embeddings*/,
+        size_t /*num_queries*/,
+        size_t /*knn*/,
+        bool /*is_query_transformed*/ = false,
+        ParallelExecutor* /*executor*/ = nullptr
+    ) const {
+        throw std::logic_error("BulkSearch: not implemented for this index type");
+    }
     virtual void BuildIndex(const float* embeddings, size_t num_embeddings) = 0;
     virtual void SetNProbe(uint32_t n_probe) = 0;
     virtual void Save(const std::string& path) = 0;

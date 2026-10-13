@@ -981,9 +981,8 @@ inline std::vector<std::vector<std::pair<uint32_t, bool>>> FindNeighborRowsToSte
     const size_t d = index.num_dimensions;
     const float norm_a = Eigen::Map<const Eigen::VectorXf>(centroid_a, d).squaredNorm();
     const float norm_b = Eigen::Map<const Eigen::VectorXf>(centroid_b, d).squaredNorm();
-    std::vector<std::vector<std::pair<uint32_t, bool>>> rows_to_steal(
-        neighboring_clusters_ids.size()
-    );
+    std::vector<std::vector<std::pair<uint32_t, bool>>> rows_to_steal(neighboring_clusters_ids.size(
+    ));
     executor.ParallelFor(neighboring_clusters_ids.size(), [&](size_t begin, size_t end, size_t) {
         ScalarQuantizer<Q> quantizer(d);
         std::unique_ptr<pdx_data_t<Q>[]> raw_row(new pdx_data_t<Q>[d]);
@@ -993,7 +992,8 @@ inline std::vector<std::vector<std::pair<uint32_t, bool>>> FindNeighborRowsToSte
         for (size_t j = begin; j < end; j++) {
             const uint32_t neighbor_id = neighboring_clusters_ids[j];
             const Cluster<Q>& neighbor = index.clusters[neighbor_id];
-            const float* own_centroid = index.centroids.data() + static_cast<size_t>(neighbor_id) * d;
+            const float* own_centroid =
+                index.centroids.data() + static_cast<size_t>(neighbor_id) * d;
             const size_t n = neighbor.used_capacity;
             if (n == 0) {
                 continue;

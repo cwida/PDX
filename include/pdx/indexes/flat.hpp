@@ -156,6 +156,26 @@ class FlatIndex : public IPDXIndex {
         return searcher->FilteredSearch(query_embedding, knn, PassingPositions(passing_row_ids));
     }
 
+    std::vector<std::vector<KNNCandidate>> BulkSearch(
+        const float* query_embeddings,
+        size_t num_queries,
+        size_t knn,
+        bool is_query_transformed = false,
+        ParallelExecutor* executor = nullptr
+    ) const override {
+        PDX_PROFILE_SCOPE("BulkSearch");
+        ParallelExecutor& search_executor = executor != nullptr ? *executor : GetExecutor();
+        skmeans::ParallelSection parallel_section(search_executor);
+        return searcher->BulkSearch(
+            query_embeddings,
+            num_queries,
+            static_cast<uint32_t>(knn),
+            is_query_transformed,
+            search_executor,
+            GetAllocator()
+        );
+    }
+
     std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
         const float* query_embedding,
         uint32_t knn,

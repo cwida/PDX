@@ -101,6 +101,7 @@ static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[20] = {16,  16,  32,  32,   
                                                            256, 256, 512, 1024, 2048, 16384};
 
 static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
+static constexpr size_t FLAT_SEARCHER_BULK_SEARCH_SIZE_THRESHOLD = 512;
 
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most

@@ -38,6 +38,13 @@ All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`) and shar
   `FlatSearcher` in `flat_searcher.hpp`). Same `IPDXIndex` API (one cluster; the cursor is `Done()`
   after its first `Next`), `PDX_FLAT` in `PDXIndexType`, not in the Python bindings.
   `GetRowIds()`/`GetEmbeddings()` feed a `PDXIndex::BuildIndex` with `is_data_transformed`.
+  `IPDXIndex::BulkSearch(queries, n, k, is_query_transformed, executor)`, implemented by Flat only
+  (the other indexes throw `std::logic_error`): one transform, then
+  SuperKMeans' `BatchComputer::FindKNearestNeighbors` on the given executor, else the bound one: GEMMs
+  over 256-query blocks in parallel (one block runs on the calling thread). With at least
+  `FLAT_SEARCHER_BULK_SEARCH_SIZE_THRESHOLD` (512) rows and fewer blocks than workers, each worker
+  searches a slice of the rows instead and the slices' top-k merge per query. Tombstones get an
+  infinite norm. Unfiltered.
 
 Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`;
 `PDX_FLAT` is serialization only).
