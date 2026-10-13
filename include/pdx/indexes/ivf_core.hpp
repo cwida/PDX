@@ -43,6 +43,8 @@ class IVF : public skmeans::AllocatorHolder {
     std::vector<uint64_t> cluster_data_offsets;
     bool is_normalized{};
     std::vector<float> centroids;
+    skmeans::AllocatedBuffer<float> centroid_norms; // |c|^2 per centroid, see GetCentroidNorms
+    bool centroid_norms_stale = true;
 
     // U8-specific quantization parameters
     float quantization_scale = 1.0f;
@@ -98,6 +100,20 @@ class IVF : public skmeans::AllocatorHolder {
             max_cluster_capacity =
                 std::max(max_cluster_capacity, static_cast<size_t>(clusters[i].max_capacity));
         }
+        centroid_norms_stale = true;
+    }
+
+    // Recomputed after a structural change: every change ends with ComputeClusterOffsets
+    const float* GetCentroidNorms() {
+        if (centroid_norms_stale) {
+            skmeans::EnsureBufferSize(centroid_norms, GetAllocator(), num_clusters);
+            Eigen::Map<Eigen::VectorXf>(centroid_norms.get(), num_clusters).noalias() =
+                Eigen::Map<const eigen_matrix_t>(centroids.data(), num_clusters, num_dimensions)
+                    .rowwise()
+                    .squaredNorm();
+            centroid_norms_stale = false;
+        }
+        return centroid_norms.get();
     }
 
     void Load(char* input) {

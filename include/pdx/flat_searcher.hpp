@@ -11,6 +11,7 @@
 #include "pdx/common.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/indexes/flat_core.hpp"
+#include "pdx/indexes/ivf_utils.hpp"
 #include "pdx/ivf_searcher.hpp"
 #include "pdx/pruners/adsampling.hpp"
 #include "pdx/quantizers/scalar.hpp"
@@ -21,6 +22,8 @@ namespace PDX {
 class FlatSearcher {
   public:
     using distance_computer_t = DistanceComputer<DistanceMetric::L2SQ, F32>;
+    using batch_computer =
+        skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>;
 
     Quantizer quantizer;
     ADSamplingPruner& pruner;
@@ -134,6 +137,92 @@ class FlatSearcher {
         return BuildResultSetFromHeap(static_cast<uint32_t>(k), top_k_heap.heap);
     }
 
+    std::vector<std::vector<KNNCandidate>> BulkSearch(
+        const float* PDX_RESTRICT raw_queries,
+        size_t n_queries,
+        uint32_t k,
+        bool is_query_transformed,
+        ParallelExecutor& executor,
+        MemoryAllocator& allocator
+    ) {
+        std::vector<std::vector<KNNCandidate>> results(n_queries);
+        const size_t n_rows = flat_data.UsedCapacity();
+        if (n_queries == 0 || n_rows == 0 || k == 0) {
+            return results;
+        }
+        const size_t d = flat_data.num_dimensions;
+        skmeans::AllocatedBuffer<float> transformed;
+        if (!is_query_transformed) {
+            transformed =
+                IVFUtils(executor, &allocator)
+                    .NormalizeAndRotate(raw_queries, n_queries, d, flat_data.is_normalized, pruner);
+        }
+        const float* queries = is_query_transformed ? raw_queries : transformed.get();
+
+        auto query_norms = skmeans::AllocateBuffer<float>(allocator, n_queries);
+        Eigen::Map<Eigen::VectorXf>(query_norms.get(), n_queries).noalias() =
+            Eigen::Map<const eigen_matrix_t>(queries, n_queries, d).rowwise().squaredNorm();
+        auto row_norms = skmeans::AllocateBuffer<float>(allocator, n_rows);
+        Eigen::Map<Eigen::VectorXf>(row_norms.get(), n_rows).noalias() =
+            Eigen::Map<const eigen_matrix_t>(flat_data.data.data(), n_rows, d)
+                .rowwise()
+                .squaredNorm();
+        for (size_t position = 0; position < n_rows; position++) {
+            if (flat_data.HasTombstone(position)) {
+                // An infinite distance never enters a top-k
+                row_norms[position] = std::numeric_limits<float>::infinity();
+            }
+        }
+
+        auto positions = skmeans::AllocateBuffer<uint32_t>(allocator, n_queries * k);
+        auto distances = skmeans::AllocateBuffer<float>(allocator, n_queries * k);
+        const size_t n_workers = executor.NumWorkers();
+        // TODO(@lkuffo, med): This threshold was taken from an Intel Granite Rapids
+        // A cost model on query_n, rows_n and threads_n would be better, but this is a solid start.
+        // Many rows, fewer 256-query blocks than workers: each worker takes a slice of the rows
+        if (n_rows >= FLAT_SEARCHER_BULK_SEARCH_SIZE_THRESHOLD && n_workers > 1 &&
+            n_queries < skmeans::MINI_BATCH_SIZE * n_workers) {
+            FindKNearestNeighborsOverRowSlices(
+                queries,
+                n_queries,
+                k,
+                query_norms.get(),
+                row_norms.get(),
+                positions.get(),
+                distances.get(),
+                executor,
+                allocator
+            );
+        } else {
+            auto scratch =
+                skmeans::AllocateBuffer<float>(allocator, batch_computer::ScratchSize(executor));
+            batch_computer::FindKNearestNeighbors(
+                executor,
+                queries,
+                flat_data.data.data(),
+                n_queries,
+                n_rows,
+                d,
+                query_norms.get(),
+                row_norms.get(),
+                k,
+                positions.get(),
+                distances.get(),
+                scratch.get()
+            );
+        }
+        for (size_t q = 0; q < n_queries; q++) {
+            for (size_t i = q * k; i < (q + 1) * k; i++) {
+                if (positions[i] == std::numeric_limits<uint32_t>::max() ||
+                    flat_data.HasTombstone(positions[i])) {
+                    break;
+                }
+                results[q].push_back(KNNCandidate{flat_data.indices[positions[i]], distances[i]});
+            }
+        }
+        return results;
+    }
+
     [[nodiscard]] IterativeSearch BeginIterativeSearch(
         const float* PDX_RESTRICT raw_query,
         uint32_t k,
@@ -187,6 +276,79 @@ class FlatSearcher {
     }
 
   private:
+    // Each worker finds every query's top-k among a slice of the rows; then the slices' top-k merge
+    void FindKNearestNeighborsOverRowSlices(
+        const float* PDX_RESTRICT queries,
+        size_t n_queries,
+        uint32_t k,
+        const float* PDX_RESTRICT query_norms,
+        const float* PDX_RESTRICT row_norms,
+        uint32_t* PDX_RESTRICT out_positions,
+        float* PDX_RESTRICT out_distances,
+        ParallelExecutor& executor,
+        MemoryAllocator& allocator
+    ) const {
+        const size_t d = flat_data.num_dimensions;
+        const size_t n_rows = flat_data.UsedCapacity();
+        const size_t n_slices = std::min(executor.NumWorkers(), n_rows);
+        const size_t slice_results = n_queries * k;
+        skmeans::SerialExecutor serial_executor;
+        const size_t slice_scratch_size = batch_computer::ScratchSize(serial_executor);
+        auto slice_positions =
+            skmeans::AllocateBuffer<uint32_t>(allocator, n_slices * slice_results);
+        auto slice_distances = skmeans::AllocateBuffer<float>(allocator, n_slices * slice_results);
+        auto slice_scratch =
+            skmeans::AllocateBuffer<float>(allocator, n_slices * slice_scratch_size);
+        executor.ParallelFor(n_slices, [&](size_t begin, size_t end, size_t) {
+            skmeans::SerialExecutor slice_executor;
+            for (size_t s = begin; s < end; s++) {
+                const size_t first = n_rows * s / n_slices;
+                const size_t last = n_rows * (s + 1) / n_slices;
+                batch_computer::FindKNearestNeighbors(
+                    slice_executor,
+                    queries,
+                    flat_data.data.data() + first * d,
+                    n_queries,
+                    last - first,
+                    d,
+                    query_norms,
+                    row_norms + first,
+                    k,
+                    slice_positions.get() + s * slice_results,
+                    slice_distances.get() + s * slice_results,
+                    slice_scratch.get() + s * slice_scratch_size
+                );
+            }
+        });
+        std::vector<std::pair<float, uint32_t>> candidates;
+        candidates.reserve(n_slices * k);
+        for (size_t q = 0; q < n_queries; q++) {
+            candidates.clear();
+            for (size_t s = 0; s < n_slices; s++) {
+                const auto first = static_cast<uint32_t>(n_rows * s / n_slices);
+                for (size_t i = s * slice_results + q * k; i < s * slice_results + (q + 1) * k;
+                     i++) {
+                    if (slice_positions[i] == std::numeric_limits<uint32_t>::max()) {
+                        break;
+                    }
+                    candidates.emplace_back(slice_distances[i], first + slice_positions[i]);
+                }
+            }
+            const size_t n_nearest = std::min<size_t>(k, candidates.size());
+            std::partial_sort(
+                candidates.begin(),
+                candidates.begin() + static_cast<std::ptrdiff_t>(n_nearest),
+                candidates.end()
+            );
+            for (size_t i = 0; i < k; i++) {
+                out_positions[q * k + i] =
+                    i < n_nearest ? candidates[i].second : std::numeric_limits<uint32_t>::max();
+                out_distances[q * k + i] =
+                    i < n_nearest ? candidates[i].first : std::numeric_limits<float>::max();
+            }
+        }
+    }
+
     std::unique_ptr<float[]> PrepareQuery(
         const float* PDX_RESTRICT raw_query,
         bool is_query_transformed

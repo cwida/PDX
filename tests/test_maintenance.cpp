@@ -623,6 +623,160 @@ TEST_P(MaintenanceTest, BuildSplitsClustersAboveMaxClusterSize) {
     });
 }
 
+// Test 15: A batch that fits in its clusters lands where row-by-row appends put it
+template <typename IndexT>
+void RunBulkAppendMatchesAppendWithoutSplits() {
+    auto data = TestUtils::LoadTestData(D);
+    constexpr size_t n_appended = 1000;
+    const size_t n_build = TestUtils::N_TRAIN - n_appended;
+    std::vector<size_t> row_ids(n_appended);
+    for (size_t i = 0; i < n_appended; i++) {
+        row_ids[i] = n_build + i;
+    }
+
+    IndexT appended(MakeConfig(D));
+    appended.BuildIndex(data.train.data(), n_build);
+    for (const size_t row_id : row_ids) {
+        appended.Append(row_id, data.train.data() + row_id * D);
+    }
+    IndexT bulk_appended(MakeConfig(D));
+    bulk_appended.BuildIndex(data.train.data(), n_build);
+    bulk_appended.BulkAppend(row_ids.data(), data.train.data() + n_build * D, n_appended);
+
+    ASSERT_EQ(bulk_appended.GetNumClusters(), appended.GetNumClusters());
+    for (uint32_t c = 0; c < appended.GetNumClusters(); c++) {
+        EXPECT_EQ(bulk_appended.GetClusterRowIds(c), appended.GetClusterRowIds(c))
+            << "cluster " << c;
+    }
+}
+
+TEST_P(MaintenanceTest, BulkAppendMatchesAppendWithoutSplits) {
+    if (GetParam().rfind("pdx_tree", 0) == 0) {
+        GTEST_SKIP() << "The tree's Append searches the leaves approximately";
+    }
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBulkAppendMatchesAppendWithoutSplits<typename decltype(tag)::type>();
+    });
+}
+
+// Test 16: Growing a small index ~29x in bulk (one batch, or batches of 1,000) cascades splits;
+// every row stays stored once and exact-searchable
+template <typename IndexT>
+void RunBulkAppendCascade() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 2048;
+    constexpr size_t n_total = 60000;
+    constexpr size_t n_queries = 100;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+    std::vector<float> queries(n_queries * d);
+    for (auto& value : queries) {
+        value = uniform(gen);
+    }
+    std::vector<size_t> row_ids(n_total);
+    for (size_t i = 0; i < n_total; i++) {
+        row_ids[i] = i;
+    }
+    auto gt = TestUtils::ComputeBruteForceCosineKNN(
+        data.data(), queries.data(), n_total, n_queries, d, TestUtils::KNN
+    );
+
+    for (const size_t batch_size : {n_total - n_build, size_t{1000}}) {
+        IndexT index(MakeConfig(d));
+        index.BuildIndex(data.data(), n_build);
+        for (size_t first = n_build; first < n_total; first += batch_size) {
+            const size_t count = std::min(batch_size, n_total - first);
+            index.BulkAppend(row_ids.data() + first, data.data() + first * d, count);
+        }
+        index.SetNProbe(0);
+        ExpectIndexHoldsExactly(index, n_total);
+        EXPECT_GE(
+            TestUtils::ComputeAverageRecall(
+                index, queries.data(), n_queries, d, TestUtils::KNN, gt
+            ),
+            0.9f
+        ) << "batch size "
+          << batch_size;
+    }
+}
+
+TEST_P(MaintenanceTest, BulkAppendCascade) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBulkAppendCascade<typename decltype(tag)::type>();
+    });
+}
+
+// Test 17: One bulk batch respects max_cluster_size as row-by-row appends do
+template <typename IndexT>
+void RunBulkAppendSplitsAtMaxClusterSize() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 2048;
+    constexpr size_t n_total = 10000;
+    constexpr uint32_t max_cluster_size = 64;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n_total * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+    std::vector<size_t> row_ids(n_total - n_build);
+    for (size_t i = 0; i < row_ids.size(); i++) {
+        row_ids[i] = n_build + i;
+    }
+
+    auto config = MakeConfig(d);
+    config.max_cluster_size = max_cluster_size;
+    IndexT index(config);
+    index.BuildIndex(data.data(), n_build);
+    index.BulkAppend(row_ids.data(), data.data() + n_build * d, row_ids.size());
+    ExpectIndexHoldsExactly(index, n_total);
+    EXPECT_LE(LargestClusterSize(index), max_cluster_size);
+}
+
+TEST_P(MaintenanceTest, BulkAppendSplitsAtMaxClusterSize) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBulkAppendSplitsAtMaxClusterSize<typename decltype(tag)::type>();
+    });
+}
+
+// Test 18: A batch with a live id, a repeated id or an id beyond uint32 throws before any row is
+// appended
+template <typename IndexT>
+void RunBulkAppendRejectsInvalidIds() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 2048;
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data((n_build + 2) * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+    IndexT index(MakeConfig(d));
+    index.BuildIndex(data.data(), n_build);
+
+    const float* batch = data.data() + n_build * d;
+    for (const std::vector<size_t>& row_ids :
+         {std::vector<size_t>{5000, 10},
+          std::vector<size_t>{5000, 5000},
+          std::vector<size_t>{5000, size_t{1} << 32}}) {
+        EXPECT_THROW(
+            index.BulkAppend(row_ids.data(), batch, row_ids.size()), std::invalid_argument
+        );
+        ExpectIndexHoldsExactly(index, n_build);
+        EXPECT_FALSE(index.Contains(5000));
+    }
+}
+
+TEST_P(MaintenanceTest, BulkAppendRejectsInvalidIds) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBulkAppendRejectsInvalidIds<typename decltype(tag)::type>();
+    });
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     MaintenanceTest,

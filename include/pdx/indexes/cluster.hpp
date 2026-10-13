@@ -128,28 +128,21 @@ struct Cluster : skmeans::AllocatorHolder {
     uint32_t AppendEmbedding(uint32_t row_id, const data_t* PDX_RESTRICT embedding) {
         PDX_PROFILE_SCOPE("LeafAppend");
         std::lock_guard<std::mutex> lock(cluster_mutex);
-        uint32_t next_free_idx = used_capacity;
-        bool replaced_tombstone = false;
-        if (!tombstones.empty()) {
-            next_free_idx = PopTombstone();
-            replaced_tombstone = true;
-        }
-        if (next_free_idx >= max_capacity) {
-            throw std::runtime_error(
-                "AppendEmbedding: cluster buffer overflow (used_capacity=" +
-                std::to_string(used_capacity) + ", max_capacity=" + std::to_string(max_capacity) +
-                ")"
+        return AppendEmbeddingUnderLock(row_id, embedding);
+    }
+
+    void AppendEmbeddings(
+        const data_t* embeddings,
+        const uint32_t* row_ids,
+        uint32_t num_rows,
+        uint32_t* out_positions
+    ) {
+        std::lock_guard<std::mutex> lock(cluster_mutex);
+        for (uint32_t i = 0; i < num_rows; i++) {
+            out_positions[i] = AppendEmbeddingUnderLock(
+                row_ids[i], embeddings + static_cast<size_t>(i) * num_dimensions
             );
         }
-        InsertEmbedding(next_free_idx, row_id, embedding);
-        num_embeddings++;
-        if (!replaced_tombstone) {
-            used_capacity++;
-        }
-        assert(num_embeddings <= used_capacity);
-
-        n_inserted++;
-        return next_free_idx;
     }
 
     void DeleteEmbedding(uint32_t index_in_cluster) {
@@ -432,6 +425,31 @@ struct Cluster : skmeans::AllocatorHolder {
     }
 
   private:
+    uint32_t AppendEmbeddingUnderLock(uint32_t row_id, const data_t* PDX_RESTRICT embedding) {
+        uint32_t next_free_idx = used_capacity;
+        bool replaced_tombstone = false;
+        if (!tombstones.empty()) {
+            next_free_idx = PopTombstone();
+            replaced_tombstone = true;
+        }
+        if (next_free_idx >= max_capacity) {
+            throw std::runtime_error(
+                "AppendEmbedding: cluster buffer overflow (used_capacity=" +
+                std::to_string(used_capacity) + ", max_capacity=" + std::to_string(max_capacity) +
+                ")"
+            );
+        }
+        InsertEmbedding(next_free_idx, row_id, embedding);
+        num_embeddings++;
+        if (!replaced_tombstone) {
+            used_capacity++;
+        }
+        assert(num_embeddings <= used_capacity);
+
+        n_inserted++;
+        return next_free_idx;
+    }
+
     void ReadEmbeddingFromPDXBuffer(uint32_t idx_in_cluster, data_t* out) const {
         ReadEmbeddingFromPDXBuffer(data.get(), max_capacity, num_dimensions, idx_in_cluster, out);
     }

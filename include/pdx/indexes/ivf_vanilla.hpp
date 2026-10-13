@@ -31,6 +31,15 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
         size_t knn,
         const std::vector<size_t>& passing_row_ids
     ) const = 0;
+    virtual std::vector<std::vector<KNNCandidate>> BulkSearch(
+        const float* /*query_embeddings*/,
+        size_t /*num_queries*/,
+        size_t /*knn*/,
+        bool /*is_query_transformed*/ = false,
+        ParallelExecutor* /*executor*/ = nullptr
+    ) const {
+        throw std::logic_error("BulkSearch: not implemented for this index type");
+    }
     virtual void BuildIndex(const float* embeddings, size_t num_embeddings) = 0;
     virtual void SetNProbe(uint32_t n_probe) = 0;
     virtual void Save(const std::string& path) = 0;
@@ -58,6 +67,13 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     virtual size_t GetInMemorySizeInBytes() const = 0;
     // Maintenance (SPFresh-like). Concurrent writes must go through a single writer thread.
     virtual void Append(size_t row_id, const float* embedding) = 0;
+    // Appends num_embeddings rows at once, as Append does one: same validation, same split rule.
+    // Basic exception guarantee.
+    virtual void BulkAppend(
+        const size_t* row_ids,
+        const float* embeddings,
+        size_t num_embeddings
+    ) = 0;
     // Returns whether the row was in the index: deleting an absent row is a no-op.
     virtual bool Delete(size_t row_id) = 0;
     virtual std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const = 0;
@@ -108,6 +124,34 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     ) const = 0;
 
   protected:
+    void ValidateBulkAppendRowIds(
+        const size_t* row_ids,
+        const size_t num_embeddings,
+        const size_t base_row_id
+    ) const {
+        std::vector<size_t> sorted_row_ids(row_ids, row_ids + num_embeddings);
+        std::sort(sorted_row_ids.begin(), sorted_row_ids.end());
+        for (size_t i = 0; i < num_embeddings; i++) {
+            const size_t row_id = sorted_row_ids[i];
+            if (row_id < base_row_id || row_id > std::numeric_limits<uint32_t>::max()) {
+                throw std::invalid_argument(
+                    "BulkAppend: row_id " + std::to_string(row_id) +
+                    " is below the index's base_row_id or above the uint32 range"
+                );
+            }
+            if (i > 0 && row_id == sorted_row_ids[i - 1]) {
+                throw std::invalid_argument(
+                    "BulkAppend: row_id " + std::to_string(row_id) + " appears twice in the batch"
+                );
+            }
+            if (Contains(row_id)) {
+                throw std::invalid_argument(
+                    "BulkAppend: row_id " + std::to_string(row_id) + " already exists in the index"
+                );
+            }
+        }
+    }
+
     void BindExecutor(const PDXIndexConfig& config) {
         if (config.executor != nullptr) {
             SetExecutor(config.executor);
@@ -532,6 +576,43 @@ class PDXIndex : public IPDXIndex {
         CheckClusterHealth(cluster);
     }
 
+    void BulkAppend(const size_t* row_ids, const float* embeddings, size_t num_embeddings)
+        override {
+        PDX_PROFILE_SCOPE("BulkAppend");
+        if (num_embeddings == 0) {
+            return;
+        }
+        ValidateBulkAppendRowIds(row_ids, num_embeddings, config.base_row_id);
+        if (index.num_clusters == 0) {
+            throw std::logic_error("BulkAppend: the index is not built");
+        }
+        if (searcher->cluster_source) {
+            throw std::logic_error("BulkAppend: the index was loaded without its clusters' data");
+        }
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        const IVFUtils ivf_utils(GetExecutor(), &GetAllocator());
+        skmeans::AllocatedBuffer<float> transformed;
+        if (!config.is_data_transformed) {
+            PDX_PROFILE_SCOPE("BulkAppend/Transform");
+            transformed = ivf_utils.NormalizeAndRotate(
+                embeddings, num_embeddings, index.num_dimensions, index.is_normalized, *pruner
+            );
+        }
+        const float* pending_embeddings =
+            config.is_data_transformed ? embeddings : transformed.get();
+        std::vector<uint32_t> pending_row_ids(num_embeddings);
+        for (size_t i = 0; i < num_embeddings; i++) {
+            pending_row_ids[i] = static_cast<uint32_t>(row_ids[i]);
+        }
+        skmeans::AllocatedBuffer<float> held_embeddings;
+        while (!pending_row_ids.empty()) {
+            PDX_PROFILE_SCOPE("BulkAppend/Round");
+            held_embeddings = BulkAppendRound(ivf_utils, pending_embeddings, pending_row_ids);
+            pending_embeddings = held_embeddings.get();
+        }
+        index.ComputeClusterOffsets();
+    }
+
     // Concurrent deletes must always go through a single writer thread
     bool Delete(size_t row_id) override {
         PDX_PROFILE_SCOPE("Delete");
@@ -742,6 +823,7 @@ class PDXIndex : public IPDXIndex {
             neighboring_clusters_ids,
             config.distance_metric,
             config.seed,
+            GetExecutor(),
             GetAllocator()
         );
         auto& centroid_a = partition.centroid_a;
@@ -806,7 +888,6 @@ class PDXIndex : public IPDXIndex {
         // Steal neighbors closer to A or B than to their own centroid
         StealNeighborEmbeddings<Q>(
             index,
-            searcher->quantizer,
             neighboring_clusters_ids,
             centroid_a.get(),
             centroid_b.get(),
@@ -815,7 +896,9 @@ class PDXIndex : public IPDXIndex {
             centroid_sum_a.get(),
             embs_b,
             ids_b,
-            centroid_sum_b.get()
+            centroid_sum_b.get(),
+            GetExecutor(),
+            GetAllocator()
         );
 
         // Compute true centroids from accumulated sums
@@ -894,18 +977,133 @@ class PDXIndex : public IPDXIndex {
                 uint32_t& depth;
                 ~DepthGuard() { depth--; }
             } depth_guard{split_depth};
+            // The rest group was closer to one of the neighbors than to A and B
+            std::vector<uint32_t> rest_candidates = neighboring_clusters_ids;
+            rest_candidates.push_back(cluster_id);
+            rest_candidates.push_back(index.num_clusters - 1);
             ReassignEmbeddings(
                 ids_rest.get(),
                 float_rest.get(),
                 static_cast<uint32_t>(group_rest_idx.size()),
-                false
+                false,
+                &rest_candidates
             );
         }
 
         index.ComputeClusterOffsets();
     }
 
-    // Reassign dequantized (float) embeddings to their closest centroid among all clusters.
+    // One round of BulkAppend: each cluster takes what fits of its rows (one slot stays free), then
+    // the clusters that overflowed split. Returns the rows held back, whose ids replace row_ids.
+    skmeans::AllocatedBuffer<float> BulkAppendRound(
+        const IVFUtils& ivf_utils,
+        const float* embeddings,
+        std::vector<uint32_t>& row_ids
+    ) {
+        const uint32_t d = index.num_dimensions;
+        const size_t num_rows = row_ids.size();
+        auto assignments = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_rows);
+        {
+            PDX_PROFILE_SCOPE("BulkAppend/Assign");
+            ivf_utils.AssignToNearestCentroids(
+                embeddings,
+                num_rows,
+                index.centroids.data(),
+                index.GetCentroidNorms(),
+                index.num_clusters,
+                d,
+                assignments.get()
+            );
+        }
+        std::vector<uint32_t> cluster_starts;
+        std::vector<uint32_t> rows_by_cluster;
+        IVFUtils::GroupRowsByCluster(
+            assignments.get(), num_rows, index.num_clusters, cluster_starts, rows_by_cluster
+        );
+
+        std::vector<IVFUtils::ClusterAppendRange> ranges;
+        std::vector<std::pair<uint32_t, uint32_t>> overflowed_clusters; // (cluster, trigger row)
+        std::vector<uint32_t> held_rows;
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            const uint32_t first = cluster_starts[c];
+            const uint32_t num_cluster_rows = cluster_starts[c + 1] - first;
+            if (num_cluster_rows == 0) {
+                continue;
+            }
+            const cluster_t& cluster = index.clusters[c];
+            const uint32_t free_slots = cluster.max_capacity - cluster.used_capacity +
+                                        static_cast<uint32_t>(cluster.tombstones.size());
+            const uint32_t num_fitting = std::min(num_cluster_rows, free_slots - 1);
+            if (num_fitting > 0) {
+                ranges.push_back({c, first, num_fitting});
+            }
+            if (num_fitting < num_cluster_rows) {
+                overflowed_clusters.emplace_back(c, rows_by_cluster[first + num_fitting]);
+                for (uint32_t j = num_fitting + 1; j < num_cluster_rows; j++) {
+                    held_rows.push_back(rows_by_cluster[first + j]);
+                }
+            }
+        }
+
+        auto positions = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_rows);
+        {
+            PDX_PROFILE_SCOPE("BulkAppend/Write");
+            ivf_utils.AppendRowsToClusters(
+                index, embeddings, row_ids.data(), rows_by_cluster.data(), ranges, positions.get()
+            );
+        }
+        for (const auto& range : ranges) {
+            for (uint32_t j = 0; j < range.num_rows; j++) {
+                const uint32_t row = rows_by_cluster[range.first_row + j];
+                SetRowIdMapping(row_ids[row], range.cluster_id, positions[row]);
+            }
+            index.total_num_embeddings += range.num_rows;
+        }
+        {
+            PDX_PROFILE_SCOPE("BulkAppend/Split");
+            SplitOverflowedClusters(embeddings, row_ids, overflowed_clusters);
+        }
+
+        auto held_embeddings = skmeans::AllocateBuffer<float>(GetAllocator(), held_rows.size() * d);
+        std::vector<uint32_t> held_row_ids(held_rows.size());
+        for (size_t i = 0; i < held_rows.size(); i++) {
+            std::memcpy(
+                held_embeddings.get() + i * d,
+                embeddings + static_cast<size_t>(held_rows[i]) * d,
+                d * sizeof(float)
+            );
+            held_row_ids[i] = row_ids[held_rows[i]];
+        }
+        row_ids = std::move(held_row_ids);
+        return held_embeddings;
+    }
+
+    // Each cluster's trigger row fills its last free slot, so the cluster splits as with Append
+    void SplitOverflowedClusters(
+        const float* embeddings,
+        const std::vector<uint32_t>& row_ids,
+        const std::vector<std::pair<uint32_t, uint32_t>>& overflowed_clusters
+    ) {
+        const uint32_t d = index.num_dimensions;
+        for (const auto& [cluster_id, trigger_row] : overflowed_clusters) {
+            ReserveClusterSlotIfNeeded();
+            cluster_t& cluster = index.clusters[cluster_id];
+            const uint32_t row_id = row_ids[trigger_row];
+            const uint32_t position = QuantizeAndAppend<Q>(
+                index,
+                searcher->quantizer,
+                cluster,
+                row_id,
+                embeddings + static_cast<size_t>(trigger_row) * d
+            );
+            SetRowIdMapping(row_id, cluster_id, position);
+            index.total_num_embeddings++;
+            CheckClusterHealth(cluster, /*allow_merges=*/false);
+        }
+    }
+
+    // Reassign dequantized (float) embeddings to their closest centroid among candidate_cluster_ids
+    // (all clusters when null).
     // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
     // TODO(@lkuffo, med): We can optimize reassignments by doing GEMM+PRUNING for assignments
     // TODO(@lkuffo, high): The assignments are computed once, against the centroids at loop start.
@@ -918,14 +1116,29 @@ class PDXIndex : public IPDXIndex {
         const uint32_t* row_ids,
         const float* embeddings,
         uint32_t num_embeddings,
-        bool allow_merges = true
+        bool allow_merges = true,
+        const std::vector<uint32_t>* candidate_cluster_ids = nullptr
     ) {
         PDX_PROFILE_SCOPE("Reassign");
         if (num_embeddings == 0) {
             return;
         }
         const uint32_t d = index.num_dimensions;
-        const uint32_t n_clusters = index.num_clusters;
+        const float* centroids = index.centroids.data();
+        uint32_t n_clusters = index.num_clusters;
+        std::unique_ptr<float[]> candidate_centroids;
+        if (candidate_cluster_ids != nullptr) {
+            n_clusters = static_cast<uint32_t>(candidate_cluster_ids->size());
+            candidate_centroids.reset(new float[static_cast<size_t>(n_clusters) * d]);
+            for (size_t i = 0; i < n_clusters; i++) {
+                std::memcpy(
+                    candidate_centroids.get() + i * d,
+                    index.centroids.data() + static_cast<size_t>((*candidate_cluster_ids)[i]) * d,
+                    d * sizeof(float)
+                );
+            }
+            centroids = candidate_centroids.get();
+        }
 
         std::unique_ptr<uint32_t[]> assignments(new uint32_t[num_embeddings]);
         std::unique_ptr<float[]> result_distances(new float[num_embeddings]);
@@ -939,14 +1152,14 @@ class PDXIndex : public IPDXIndex {
         v_norms.noalias() = embeddings_matrix.rowwise().squaredNorm();
 
         std::vector<float> centroid_norms(n_clusters);
-        Eigen::Map<const MatrixR> centroids_matrix(index.centroids.data(), n_clusters, d);
+        Eigen::Map<const MatrixR> centroids_matrix(centroids, n_clusters, d);
         Eigen::Map<VectorR> c_norms(centroid_norms.data(), n_clusters);
         c_norms.noalias() = centroids_matrix.rowwise().squaredNorm();
 
         batch_computer::FindNearestNeighbor(
             GetExecutor(),
             embeddings,
-            index.centroids.data(),
+            centroids,
             num_embeddings,
             n_clusters,
             d,
@@ -958,7 +1171,9 @@ class PDXIndex : public IPDXIndex {
         );
 
         for (size_t i = 0; i < num_embeddings; i++) {
-            uint32_t best_cluster = assignments[i];
+            const uint32_t best_cluster = candidate_cluster_ids != nullptr
+                                              ? (*candidate_cluster_ids)[assignments[i]]
+                                              : assignments[i];
             uint32_t row_id = row_ids[i];
             uint32_t new_pos = QuantizeAndAppend<Q>(
                 index, searcher->quantizer, index.clusters[best_cluster], row_id, embeddings + i * d

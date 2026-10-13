@@ -38,6 +38,13 @@ All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`) and shar
   `FlatSearcher` in `flat_searcher.hpp`). Same `IPDXIndex` API (one cluster; the cursor is `Done()`
   after its first `Next`), `PDX_FLAT` in `PDXIndexType`, not in the Python bindings.
   `GetRowIds()`/`GetEmbeddings()` feed a `PDXIndex::BuildIndex` with `is_data_transformed`.
+  `IPDXIndex::BulkSearch(queries, n, k, is_query_transformed, executor)`, implemented by Flat only
+  (the other indexes throw `std::logic_error`): one transform, then
+  SuperKMeans' `BatchComputer::FindKNearestNeighbors` on the given executor, else the bound one: GEMMs
+  over 256-query blocks in parallel (one block runs on the calling thread). With at least
+  `FLAT_SEARCHER_BULK_SEARCH_SIZE_THRESHOLD` (512) rows and fewer blocks than workers, each worker
+  searches a slice of the rows instead and the slices' top-k merge per query. Tombstones get an
+  infinite norm. Unfiltered.
 
 Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`;
 `PDX_FLAT` is serialization only).
@@ -75,6 +82,14 @@ Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopK
 
 Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIndex` additionally keeps the meso-cluster layer (L0) in sync. The leaf-level helpers they share live in `indexes/ivf_utils.hpp`; operations on one cluster's own data (`StoreEmbeddings`, `Grow`, `CompactCluster`) are `Cluster` members (`indexes/cluster.hpp`).
 - **Append**: normalize+rotate → nearest centroid (vanilla: exact scan of all centroids; tree: PDX search over L0). Centroids never move on a plain append.
+- **BulkAppend** (`row_ids, embeddings, n`): validates every id first (live, repeated in the batch, outside
+  [base_row_id, uint32]) and throws before any change. Transforms the batch with one `NormalizeAndRotate`, then runs
+  rounds: assign the pending rows with one GEMM (`IVFUtils::AssignToNearestCentroids`; the tree assigns exactly over
+  all leaves), group them by cluster (`GroupRowsByCluster`), append in parallel what fits of each cluster's rows while
+  one slot stays free (`AppendRowsToClusters` → `Cluster::AppendEmbeddings`), then each overflowing cluster's trigger
+  row goes through the `Append` path so the cluster splits at its normal full size (`SplitOverflowedClusters`, merges
+  off). Held rows are assigned again next round against the new centroids. Not identical to `Append`: rows are
+  placed against the round's centroids. Basic exception guarantee. Flat: one transform, then the `AppendEmbedding` loop.
 - **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`, `CheckClusterHealth`. Search masks tombstones and never lets them into the heap, also while the heap is not yet full (`k` above the live count); `Save()` compacts them away.
 - **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM) with merges disabled to avoid cascades.
 - **SplitCluster**: 2-means into A and B; points closer to one of the `SPLIT_MAX_NEIGHBOR_CLUSTERS` nearest centroids go to a "rest" group that is reassigned, and neighbour points closer to A or B are stolen. If the 2-means leaves A or B empty (identical embeddings cannot be separated), the cluster is not split: `Cluster::Grow()` re-lays it out in `CAPACITY_THRESHOLD` times as many slots (same slots, row ids and centroid). The rest group's reassignment can split other clusters recursively; past `SPLIT_CASCADE_MAX_DEPTH` nested levels a full cluster grows instead of splitting.
@@ -111,6 +126,8 @@ cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 # Index building + search (index_type defaults to pdx_f32; nprobe 0/omitted sweeps a preset list)
 # `index_type`: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8
 ./benchmarks/BenchmarkEndToEnd <dataset_id> [index_type] [nprobe]
+# Appends: build on n - n_append rows, append the rest in batches (1 = Append per row, 0 = rebuild reference)
+./benchmarks/BenchmarkBulkAppend <dataset_id> <index_type> <batch_size> [n_append] [n_threads]
 ```
 Add a benchmark with `pdx_add_benchmark(<Name> <source>)` in `benchmarks/CMakeLists.txt`; a test with `pdx_add_test(<name>.out <source>)` in `tests/CMakeLists.txt` (+ the `tests` custom target list).
 
@@ -154,7 +171,7 @@ Performance-critical — weigh every copy/allocation.
   hands the executor down: `IVFUtils(executor)` (normalize+rotate, k-means, cluster population),
   `ScalarQuantizer(d, &executor)`, `ADSamplingPruner::PreprocessEmbeddings(..., &executor)` (pruners are
   shared across indexes, so they never hold an index's executor) and `BatchComputer` calls (scratch of
-  `ScratchSize(executor)` floats). The k=2 split k-means runs on a `skmeans::SerialExecutor`. A
+  `ScratchSize(executor)` floats). `ComputeKMeans` with k=2 (the splits) runs `skmeans::TwoMeans` on the index's executor. A
   `ParallelFor` body must not call `ParallelFor`; FFTW plans only on the calling thread.
 - **Memory allocator.** Large buffers come from SuperKMeans' `MemoryAllocator` (aliased in
   `common.hpp`), borrowed: it must outlive the index; unbound means the `VanillaAllocator`.
