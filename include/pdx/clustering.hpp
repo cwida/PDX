@@ -2,6 +2,7 @@
 
 #include "pdx/common.hpp"
 #include "superkmeans/hierarchical_superkmeans.h"
+#include "superkmeans/two_means.h"
 #include <vector>
 
 namespace PDX {

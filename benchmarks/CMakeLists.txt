@@ -16,6 +16,7 @@ pdx_add_benchmark(BenchmarkSpecialFilters pdx_special_filtered.cpp)
 pdx_add_benchmark(BenchmarkInsertion pdx_insertion.cpp)
 pdx_add_benchmark(BenchmarkWorkload pdx_workload.cpp)
 pdx_add_benchmark(BenchmarkIterativeFiltered pdx_iterative_filtered.cpp)
+pdx_add_benchmark(BenchmarkBulkAppend pdx_bulk_append.cpp)
 
 add_custom_target(benchmarks
     DEPENDS
@@ -27,4 +28,5 @@ add_custom_target(benchmarks
         BenchmarkInsertion
         BenchmarkWorkload
         BenchmarkIterativeFiltered
+        BenchmarkBulkAppend
 )

@@ -108,6 +108,7 @@ static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 static constexpr size_t SPLIT_MAX_NEIGHBOR_CLUSTERS = 32;
 // The 2-means cluster split runs this many iterations
 static constexpr uint32_t SPLIT_KMEANS_ITERS = 4;
+static constexpr float TWO_MEANS_TOL = 1e-4f;
 static constexpr uint32_t SPLIT_CASCADE_MAX_DEPTH = 32;
 static constexpr uint32_t MAX_CLUSTER_SIZE_LOWER_BOUND = 32;
 static constexpr uint32_t DELETED_MARKER = std::numeric_limits<uint32_t>::max();

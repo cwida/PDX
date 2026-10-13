@@ -271,15 +271,18 @@ class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::Allocat
             return;
         }
 #endif
-        // Single-threaded GEMMs over blocks of ROTATION_BLOCK_SIZE rows, run in parallel
+        // Single-threaded GEMMs over blocks of ROTATION_BLOCK_SIZE rows, run in parallel; fewer
+        // rows are split evenly across the workers
         const int dim = static_cast<int>(num_dimensions);
-        const size_t n_blocks =
-            (n + skmeans::ROTATION_BLOCK_SIZE - 1) / skmeans::ROTATION_BLOCK_SIZE;
+        const size_t n_workers = executor.NumWorkers();
+        const size_t block_size = std::max<size_t>(
+            1, std::min(skmeans::ROTATION_BLOCK_SIZE, (n + n_workers - 1) / n_workers)
+        );
+        const size_t n_blocks = (n + block_size - 1) / block_size;
         executor.ParallelFor(n_blocks, [&](size_t block_begin, size_t block_end, size_t) {
             for (size_t block = block_begin; block < block_end; ++block) {
-                const size_t row = block * skmeans::ROTATION_BLOCK_SIZE;
-                const int n_rows =
-                    static_cast<int>(std::min(skmeans::ROTATION_BLOCK_SIZE, n - row));
+                const size_t row = block * block_size;
+                const int n_rows = static_cast<int>(std::min(block_size, n - row));
                 skmeans::Sgemm(
                     'N',
                     'N',

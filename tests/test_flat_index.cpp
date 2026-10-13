@@ -210,4 +210,33 @@ TEST(FlatIndex, TransformedInputAndPromotionToIVF) {
     EXPECT_GE(recall, 0.99f);
 }
 
+TEST(FlatIndex, BulkAppendMatchesAppend) {
+    auto data = TestUtils::LoadTestData(D);
+    constexpr size_t n_appended = 500;
+    const size_t n_build = TestUtils::N_TRAIN - n_appended;
+    std::vector<size_t> row_ids(n_appended);
+    for (size_t i = 0; i < n_appended; i++) {
+        row_ids[i] = n_build + i;
+    }
+
+    PDX::FlatIndex appended(MakeConfig());
+    appended.BuildIndex(data.train.data(), n_build);
+    for (const size_t row_id : row_ids) {
+        appended.Append(row_id, data.train.data() + row_id * D);
+    }
+    PDX::FlatIndex bulk_appended(MakeConfig());
+    bulk_appended.BuildIndex(data.train.data(), n_build);
+    bulk_appended.BulkAppend(row_ids.data(), data.train.data() + n_build * D, n_appended);
+
+    EXPECT_EQ(bulk_appended.GetRowIds(), appended.GetRowIds());
+    for (size_t q = 0; q < TestUtils::N_QUERIES; q++) {
+        const float* query = data.queries.data() + q * D;
+        EXPECT_EQ(
+            Ids(bulk_appended.Search(query, TestUtils::KNN)),
+            Ids(appended.Search(query, TestUtils::KNN))
+        ) << "query "
+          << q;
+    }
+}
+
 } // namespace

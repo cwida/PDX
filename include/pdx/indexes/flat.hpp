@@ -103,6 +103,33 @@ class FlatIndex : public IPDXIndex {
         row_id_cluster_mapping.Set(row_id, 0, position);
     }
 
+    void BulkAppend(const size_t* row_ids, const float* embeddings, size_t num_embeddings)
+        override {
+        PDX_PROFILE_SCOPE("BulkAppend");
+        if (num_embeddings == 0) {
+            return;
+        }
+        ValidateBulkAppendRowIds(row_ids, num_embeddings, config.base_row_id);
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        const size_t d = index.num_dimensions;
+        skmeans::AllocatedBuffer<float> transformed;
+        if (!config.is_data_transformed) {
+            transformed = IVFUtils(GetExecutor(), &GetAllocator())
+                              .NormalizeAndRotate(
+                                  embeddings, num_embeddings, d, index.is_normalized, *pruner
+                              );
+        }
+        const float* preprocessed = config.is_data_transformed ? embeddings : transformed.get();
+        index.data.reserve(index.data.size() + num_embeddings * d);
+        index.indices.reserve(index.indices.size() + num_embeddings);
+        index.tombstones.reserve(index.tombstones.size() + num_embeddings);
+        for (size_t i = 0; i < num_embeddings; i++) {
+            const auto position =
+                index.AppendEmbedding(static_cast<uint32_t>(row_ids[i]), preprocessed + i * d);
+            row_id_cluster_mapping.Set(row_ids[i], 0, position);
+        }
+    }
+
     bool Delete(size_t row_id) override {
         const auto [cluster_id, position] = GetRowIdMapping(row_id);
         if (cluster_id == DELETED_MARKER) {
