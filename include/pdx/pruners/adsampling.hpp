@@ -100,6 +100,10 @@ class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::Allocat
         return Eigen::Map<const matrix_t>(matrix.get(), matrix_rows, num_dimensions);
     }
 
+    size_t GetAllocatedSizeInBytes() const {
+        return matrix ? matrix.get_deleter().Size() * sizeof(float) : 0;
+    }
+
     float GetPruningThreshold(uint32_t, Heap& heap, const uint32_t current_dimension_idx) const {
         float ratio = current_dimension_idx == num_dimensions ? 1 : ratios[current_dimension_idx];
         return heap.top().distance * ratio;

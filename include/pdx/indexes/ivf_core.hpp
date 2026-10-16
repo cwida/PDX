@@ -300,6 +300,18 @@ class IVF : public skmeans::AllocatorHolder {
         }
     }
 
+    size_t GetCentroidNormsSizeInBytes() const {
+        return centroid_norms ? centroid_norms.get_deleter().Size() * sizeof(float) : 0;
+    }
+
+    size_t GetAllocatedSizeInBytes() const {
+        size_t size = GetCentroidNormsSizeInBytes();
+        for (const auto& cluster : clusters) {
+            size += cluster.GetAllocatedSizeInBytes();
+        }
+        return size;
+    }
+
     size_t GetInMemorySizeInBytes() const {
         size_t in_memory_size_in_bytes = 0;
         in_memory_size_in_bytes += sizeof(*this);
@@ -309,6 +321,7 @@ class IVF : public skmeans::AllocatorHolder {
         in_memory_size_in_bytes +=
             (clusters.capacity() - clusters.size()) * sizeof(*clusters.data());
         in_memory_size_in_bytes += centroids.capacity() * sizeof(*centroids.data());
+        in_memory_size_in_bytes += GetCentroidNormsSizeInBytes();
         in_memory_size_in_bytes += num_clusters * sizeof(size_t); // cluster_offsets
         in_memory_size_in_bytes += cluster_data_offsets.capacity() * sizeof(uint64_t);
         return in_memory_size_in_bytes;
@@ -492,6 +505,10 @@ class IVFTree : public IVF<Q> {
         }
     }
 
+    size_t GetAllocatedSizeInBytes() const {
+        return IVF<Q>::GetAllocatedSizeInBytes() + l0.GetAllocatedSizeInBytes();
+    }
+
     size_t GetInMemorySizeInBytes() const {
         size_t size = sizeof(*this);
 
@@ -501,6 +518,9 @@ class IVFTree : public IVF<Q> {
         }
         size += (this->clusters.capacity() - this->clusters.size()) * sizeof(Cluster<Q>);
         size += this->centroids.capacity() * sizeof(float);
+        size += this->GetCentroidNormsSizeInBytes();
+        size += this->num_clusters * sizeof(size_t); // cluster_offsets
+        size += this->cluster_data_offsets.capacity() * sizeof(uint64_t);
 
         // L0 meso-clusters
         for (const auto& cluster : l0.clusters) {
@@ -508,6 +528,9 @@ class IVFTree : public IVF<Q> {
         }
         size += (l0.clusters.capacity() - l0.clusters.size()) * sizeof(Cluster<F32>);
         size += l0.centroids.capacity() * sizeof(float);
+        size += l0.GetCentroidNormsSizeInBytes();
+        size += l0.num_clusters * sizeof(size_t); // cluster_offsets
+        size += l0.cluster_data_offsets.capacity() * sizeof(uint64_t);
 
         return size;
     }

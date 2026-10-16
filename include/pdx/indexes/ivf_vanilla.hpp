@@ -65,6 +65,12 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     virtual uint32_t GetClusterSize(uint32_t cluster_id) const = 0;
     virtual std::vector<uint32_t> GetClusterRowIds(uint32_t cluster_id) const = 0;
     virtual size_t GetInMemorySizeInBytes() const = 0;
+    // The bytes of the buffers the index holds from its allocator.
+    virtual size_t GetAllocatedSizeInBytes() const = 0;
+    // What GetInMemorySizeInBytes counts outside the allocator.
+    size_t GetHeapSizeInBytes() const {
+        return GetInMemorySizeInBytes() - GetAllocatedSizeInBytes();
+    }
     // Maintenance (SPFresh-like). Concurrent writes must go through a single writer thread.
     virtual void Append(size_t row_id, const float* embedding) = 0;
     // Appends num_embeddings rows at once, as Append does one: same validation, same split rule.
@@ -433,6 +439,11 @@ class PDXIndex : public IPDXIndex {
         return size;
     }
 
+    size_t GetAllocatedSizeInBytes() const override {
+        return index.GetAllocatedSizeInBytes() +
+               (owned_pruner ? owned_pruner->GetAllocatedSizeInBytes() : 0);
+    }
+
     void BuildIndex(const float* const embeddings, const size_t num_embeddings) override {
         std::vector<size_t> row_ids(num_embeddings);
         std::iota(row_ids.begin(), row_ids.end(), 0);
@@ -487,6 +498,7 @@ class PDXIndex : public IPDXIndex {
         } else {
             index = PDX::IVF<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
         }
+        index.SetAllocator(&GetAllocator());
 
         KMeansResult kmeans_result = ivf_utils.ComputeKMeans(
             preprocessed,

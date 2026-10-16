@@ -403,6 +403,7 @@ class PDXTreeIndex : public IPDXIndex {
         } else {
             index = PDX::IVFTree<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
         }
+        index.SetAllocator(&GetAllocator());
 
         KMeansResult kmeans_result = ivf_utils.ComputeKMeans(
             preprocessed,
@@ -452,6 +453,7 @@ class PDXTreeIndex : public IPDXIndex {
         }
 
         index.l0 = PDX::IVF<F32>(num_dimensions, num_clusters, l0_num_clusters, normalize);
+        index.l0.SetAllocator(&GetAllocator());
         KMeansResult l0_kmeans_result = ivf_utils.ComputeKMeans(
             index.centroids.data(),
             num_clusters,
@@ -548,6 +550,11 @@ class PDXTreeIndex : public IPDXIndex {
         }
         size += row_id_cluster_mapping.SizeInBytes();
         return size;
+    }
+
+    size_t GetAllocatedSizeInBytes() const override {
+        return index.GetAllocatedSizeInBytes() +
+               (owned_pruner ? owned_pruner->GetAllocatedSizeInBytes() : 0);
     }
 
   private:
