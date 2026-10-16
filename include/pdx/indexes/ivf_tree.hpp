@@ -319,12 +319,12 @@ class PDXTreeIndex : public IPDXIndex {
         }
         const float* pending_embeddings =
             config.is_data_transformed ? embeddings : transformed.get();
-        std::vector<uint32_t> pending_row_ids(num_embeddings);
+        auto pending_row_ids = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_embeddings);
         for (size_t i = 0; i < num_embeddings; i++) {
             pending_row_ids[i] = static_cast<uint32_t>(row_ids[i]);
         }
         skmeans::AllocatedBuffer<float> held_embeddings;
-        while (!pending_row_ids.empty()) {
+        while (pending_row_ids.get_deleter().Size() > 0) {
             PDX_PROFILE_SCOPE("BulkAppend/Round");
             held_embeddings = BulkAppendRound(ivf_utils, pending_embeddings, pending_row_ids);
             pending_embeddings = held_embeddings.get();
@@ -697,13 +697,14 @@ class PDXTreeIndex : public IPDXIndex {
         const uint32_t num_embeddings = l0_cluster.num_embeddings;
 
         // Gather L1 cluster IDs and their centroids
-        std::vector<uint32_t> l1_ids(num_embeddings);
-        std::vector<float> l1_centroids(static_cast<size_t>(num_embeddings) * d);
+        auto l1_ids = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_embeddings);
+        auto l1_centroids =
+            skmeans::AllocateBuffer<float>(GetAllocator(), static_cast<size_t>(num_embeddings) * d);
         for (uint32_t i = 0; i < num_embeddings; i++) {
             uint32_t l1_id = l0_cluster.indices[i];
             l1_ids[i] = l1_id;
             std::memcpy(
-                l1_centroids.data() + static_cast<size_t>(i) * d,
+                l1_centroids.get() + static_cast<size_t>(i) * d,
                 index.centroids.data() + static_cast<size_t>(l1_id) * d,
                 d * sizeof(float)
             );
@@ -711,7 +712,7 @@ class PDXTreeIndex : public IPDXIndex {
 
         KMeansResult split_result = IVFUtils(GetExecutor(), &GetAllocator())
                                         .ComputeKMeans(
-                                            l1_centroids.data(),
+                                            l1_centroids.get(),
                                             num_embeddings,
                                             d,
                                             2,
@@ -726,18 +727,21 @@ class PDXTreeIndex : public IPDXIndex {
         auto& group_b = split_result.assignments[1];
 
         // Gather IDs and compute true centroids
-        std::vector<uint32_t> ids_a(group_a.size()), ids_b(group_b.size());
+        const size_t count_a = group_a.size();
+        const size_t count_b = group_b.size();
+        auto ids_a = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_a);
+        auto ids_b = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_b);
         auto centroid_sum_a = std::make_unique<float[]>(d); // zero-init needed
         auto centroid_sum_b = std::make_unique<float[]>(d); // zero-init needed
-        for (size_t i = 0; i < group_a.size(); i++) {
+        for (size_t i = 0; i < count_a; i++) {
             ids_a[i] = l1_ids[group_a[i]];
-            const float* c = l1_centroids.data() + static_cast<size_t>(group_a[i]) * d;
+            const float* c = l1_centroids.get() + static_cast<size_t>(group_a[i]) * d;
             for (uint32_t j = 0; j < d; j++)
                 centroid_sum_a[j] += c[j];
         }
-        for (size_t i = 0; i < group_b.size(); i++) {
+        for (size_t i = 0; i < count_b; i++) {
             ids_b[i] = l1_ids[group_b[i]];
-            const float* c = l1_centroids.data() + static_cast<size_t>(group_b[i]) * d;
+            const float* c = l1_centroids.get() + static_cast<size_t>(group_b[i]) * d;
             for (uint32_t j = 0; j < d; j++)
                 centroid_sum_b[j] += c[j];
         }
@@ -763,33 +767,33 @@ class PDXTreeIndex : public IPDXIndex {
         // Create new L0 clusters
         ReserveL0ClusterSlotIfNeeded();
         uint32_t new_l0_id = index.l0.num_clusters;
-        Cluster<F32> new_a(static_cast<uint32_t>(ids_a.size()), d, &GetAllocator());
+        Cluster<F32> new_a(static_cast<uint32_t>(count_a), d, &GetAllocator());
         new_a.id = l0_cluster_id;
-        if (!ids_a.empty()) {
-            std::memcpy(new_a.indices.get(), ids_a.data(), ids_a.size() * sizeof(uint32_t));
-            std::vector<float> centroids_a(ids_a.size() * d);
-            for (size_t i = 0; i < ids_a.size(); i++) {
+        if (count_a > 0) {
+            std::memcpy(new_a.indices.get(), ids_a.get(), count_a * sizeof(uint32_t));
+            auto centroids_a = skmeans::AllocateBuffer<float>(GetAllocator(), count_a * d);
+            for (size_t i = 0; i < count_a; i++) {
                 std::memcpy(
-                    centroids_a.data() + i * d,
+                    centroids_a.get() + i * d,
                     index.centroids.data() + static_cast<size_t>(ids_a[i]) * d,
                     d * sizeof(float)
                 );
             }
-            new_a.StoreEmbeddings(centroids_a.data(), ids_a.size());
+            new_a.StoreEmbeddings(centroids_a.get(), count_a);
         }
-        Cluster<F32> new_b(static_cast<uint32_t>(ids_b.size()), d, &GetAllocator());
+        Cluster<F32> new_b(static_cast<uint32_t>(count_b), d, &GetAllocator());
         new_b.id = new_l0_id;
-        if (!ids_b.empty()) {
-            std::memcpy(new_b.indices.get(), ids_b.data(), ids_b.size() * sizeof(uint32_t));
-            std::vector<float> centroids_b(ids_b.size() * d);
-            for (size_t i = 0; i < ids_b.size(); i++) {
+        if (count_b > 0) {
+            std::memcpy(new_b.indices.get(), ids_b.get(), count_b * sizeof(uint32_t));
+            auto centroids_b = skmeans::AllocateBuffer<float>(GetAllocator(), count_b * d);
+            for (size_t i = 0; i < count_b; i++) {
                 std::memcpy(
-                    centroids_b.data() + i * d,
+                    centroids_b.get() + i * d,
                     index.centroids.data() + static_cast<size_t>(ids_b[i]) * d,
                     d * sizeof(float)
                 );
             }
-            new_b.StoreEmbeddings(centroids_b.data(), ids_b.size());
+            new_b.StoreEmbeddings(centroids_b.get(), count_b);
         }
 
         // Replace old L0 cluster with A, append B
@@ -808,11 +812,11 @@ class PDXTreeIndex : public IPDXIndex {
         );
 
         // Update mesocluster_id on affected L1 clusters
-        for (uint32_t id : ids_a) {
-            index.clusters[id].mesocluster_id = l0_cluster_id;
+        for (size_t i = 0; i < count_a; i++) {
+            index.clusters[ids_a[i]].mesocluster_id = l0_cluster_id;
         }
-        for (uint32_t id : ids_b) {
-            index.clusters[id].mesocluster_id = new_l0_id;
+        for (size_t i = 0; i < count_b; i++) {
+            index.clusters[ids_b[i]].mesocluster_id = new_l0_id;
         }
 
         index.l0.ComputeClusterOffsets();
@@ -825,13 +829,13 @@ class PDXTreeIndex : public IPDXIndex {
         const uint32_t num_embeddings = l0_cluster.num_embeddings;
 
         // Gather L1 cluster IDs and their centroids
-        std::vector<uint32_t> l1_ids(
-            l0_cluster.indices.get(), l0_cluster.indices.get() + num_embeddings
-        );
-        std::vector<float> l1_centroids(static_cast<size_t>(num_embeddings) * d);
+        auto l1_ids = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_embeddings);
+        std::memcpy(l1_ids.get(), l0_cluster.indices.get(), num_embeddings * sizeof(uint32_t));
+        auto l1_centroids =
+            skmeans::AllocateBuffer<float>(GetAllocator(), static_cast<size_t>(num_embeddings) * d);
         for (uint32_t i = 0; i < num_embeddings; i++) {
             std::memcpy(
-                l1_centroids.data() + static_cast<size_t>(i) * d,
+                l1_centroids.get() + static_cast<size_t>(i) * d,
                 index.centroids.data() + static_cast<size_t>(l1_ids[i]) * d,
                 d * sizeof(float)
             );
@@ -865,7 +869,7 @@ class PDXTreeIndex : public IPDXIndex {
         index.l0.total_num_embeddings -= num_embeddings;
 
         // Reassign L1 clusters to nearest L0 centroids
-        ReassignEmbeddingsL0(l1_ids.data(), l1_centroids.data(), num_embeddings);
+        ReassignEmbeddingsL0(l1_ids.get(), l1_centroids.get(), num_embeddings);
 
         index.l0.ComputeClusterOffsets();
     }
@@ -878,15 +882,15 @@ class PDXTreeIndex : public IPDXIndex {
         PDX_PROFILE_SCOPE("ReassignL0");
         const uint32_t n_l0 = index.l0.num_clusters;
 
-        std::unique_ptr<uint32_t[]> assignments(new uint32_t[num_embeddings]);
-        std::unique_ptr<float[]> result_distances(new float[num_embeddings]);
+        auto assignments = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_embeddings);
+        auto result_distances = skmeans::AllocateBuffer<float>(GetAllocator(), num_embeddings);
         auto tmp_distances_buf = skmeans::AllocateBuffer<float>(
             GetAllocator(), batch_computer::ScratchSize(GetExecutor())
         );
 
-        std::vector<float> entry_norms(num_embeddings);
+        auto entry_norms = skmeans::AllocateBuffer<float>(GetAllocator(), num_embeddings);
         Eigen::Map<const MatrixR> entries_matrix(l1_centroids, num_embeddings, d);
-        Eigen::Map<VectorR> e_norms(entry_norms.data(), num_embeddings);
+        Eigen::Map<VectorR> e_norms(entry_norms.get(), num_embeddings);
         e_norms.noalias() = entries_matrix.rowwise().squaredNorm();
 
         std::vector<float> l0_norms(n_l0);
@@ -901,7 +905,7 @@ class PDXTreeIndex : public IPDXIndex {
             num_embeddings,
             n_l0,
             d,
-            entry_norms.data(),
+            entry_norms.get(),
             l0_norms.data(),
             assignments.get(),
             result_distances.get(),
@@ -951,7 +955,8 @@ class PDXTreeIndex : public IPDXIndex {
         const uint32_t n_emb = cluster.num_embeddings;
 
         auto raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
-        std::vector<uint32_t> cluster_indices(cluster.indices.get(), cluster.indices.get() + n_emb);
+        auto cluster_indices = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_emb);
+        std::memcpy(cluster_indices.get(), cluster.indices.get(), n_emb * sizeof(uint32_t));
         auto cluster_embeddings = DequantizeClusterEmbeddings<Q>(
             index, searcher->quantizer, raw_embeddings.get(), n_emb, GetAllocator()
         );
@@ -995,7 +1000,7 @@ class PDXTreeIndex : public IPDXIndex {
 
         // Fully removed the dying cluster before reassignment
         ReassignEmbeddings(
-            cluster_indices.data(), cluster_embeddings.get(), n_emb, mesocluster_id, false
+            cluster_indices.get(), cluster_embeddings.get(), n_emb, mesocluster_id, false
         );
 
         CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
@@ -1043,13 +1048,24 @@ class PDXTreeIndex : public IPDXIndex {
             return;
         }
 
+        // Neighbors' rows closer to A or B than to their own centroid, stolen below
+        const auto rows_to_steal = FindNeighborRowsToSteal<Q>(
+            index,
+            neighboring_clusters_ids,
+            centroid_a.get(),
+            centroid_b.get(),
+            GetExecutor(),
+            GetAllocator()
+        );
+        const auto [num_stolen_a, num_stolen_b] = CountRowsToSteal(rows_to_steal);
+        const size_t count_a = group_a_idx.size() + num_stolen_a;
+        const size_t count_b = group_b_idx.size() + num_stolen_b;
+
         // Gather embeddings and IDs, accumulate centroid sums
-        std::vector<embedding_storage_t> embs_a, embs_b;
-        std::vector<uint32_t> ids_a, ids_b;
-        embs_a.reserve(group_a_idx.size() * d);
-        embs_b.reserve(group_b_idx.size() * d);
-        ids_a.reserve(group_a_idx.size());
-        ids_b.reserve(group_b_idx.size());
+        auto embs_a = skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_a * d);
+        auto embs_b = skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_b * d);
+        auto ids_a = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_a);
+        auto ids_b = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_b);
         auto centroid_sum_a = std::make_unique<float[]>(d);
         auto centroid_sum_b = std::make_unique<float[]>(d);
         {
@@ -1060,8 +1076,8 @@ class PDXTreeIndex : public IPDXIndex {
                 group_a_idx,
                 raw_embeddings.get(),
                 cluster_embeddings.get(),
-                embs_a,
-                ids_a,
+                embs_a.get(),
+                ids_a.get(),
                 centroid_sum_a.get()
             );
             GatherGroupEmbeddings<Q>(
@@ -1070,15 +1086,15 @@ class PDXTreeIndex : public IPDXIndex {
                 group_b_idx,
                 raw_embeddings.get(),
                 cluster_embeddings.get(),
-                embs_b,
-                ids_b,
+                embs_b.get(),
+                ids_b.get(),
                 centroid_sum_b.get()
             );
         }
 
         // Gather group_rest NOW, before the cluster is replaced
         auto float_rest = skmeans::AllocateBuffer<float>(GetAllocator(), group_rest_idx.size() * d);
-        std::unique_ptr<uint32_t[]> ids_rest(new uint32_t[group_rest_idx.size()]);
+        auto ids_rest = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), group_rest_idx.size());
         for (size_t i = 0; i < group_rest_idx.size(); i++) {
             std::memcpy(
                 float_rest.get() + i * d,
@@ -1092,21 +1108,16 @@ class PDXTreeIndex : public IPDXIndex {
         StealNeighborEmbeddings<Q>(
             index,
             neighboring_clusters_ids,
-            centroid_a.get(),
-            centroid_b.get(),
-            embs_a,
-            ids_a,
+            rows_to_steal,
+            embs_a.get() + group_a_idx.size() * d,
+            ids_a.get() + group_a_idx.size(),
             centroid_sum_a.get(),
-            embs_b,
-            ids_b,
-            centroid_sum_b.get(),
-            GetExecutor(),
-            GetAllocator()
+            embs_b.get() + group_b_idx.size() * d,
+            ids_b.get() + group_b_idx.size(),
+            centroid_sum_b.get()
         );
 
         // Compute true centroids from accumulated sums
-        size_t count_a = ids_a.size();
-        size_t count_b = ids_b.size();
         std::unique_ptr<float[]> true_centroid_a(new float[d]);
         std::unique_ptr<float[]> true_centroid_b(new float[d]);
         {
@@ -1139,8 +1150,8 @@ class PDXTreeIndex : public IPDXIndex {
             new_cluster_a.id = cluster_id;
             new_cluster_a.mesocluster_id = mesocluster_id;
             if (count_a > 0) {
-                std::memcpy(new_cluster_a.indices.get(), ids_a.data(), count_a * sizeof(uint32_t));
-                new_cluster_a.StoreEmbeddings(embs_a.data(), count_a);
+                std::memcpy(new_cluster_a.indices.get(), ids_a.get(), count_a * sizeof(uint32_t));
+                new_cluster_a.StoreEmbeddings(embs_a.get(), count_a);
             }
             uint32_t new_cluster_b_id = index.num_clusters;
             const auto size_b = static_cast<uint32_t>(count_b);
@@ -1150,8 +1161,8 @@ class PDXTreeIndex : public IPDXIndex {
             new_cluster_b.id = new_cluster_b_id;
             new_cluster_b.mesocluster_id = mesocluster_id;
             if (count_b > 0) {
-                std::memcpy(new_cluster_b.indices.get(), ids_b.data(), count_b * sizeof(uint32_t));
-                new_cluster_b.StoreEmbeddings(embs_b.data(), count_b);
+                std::memcpy(new_cluster_b.indices.get(), ids_b.get(), count_b * sizeof(uint32_t));
+                new_cluster_b.StoreEmbeddings(embs_b.get(), count_b);
             }
             // Replace old cluster with A, append B
             index.clusters[cluster_id] = std::move(new_cluster_a);
@@ -1217,9 +1228,9 @@ class PDXTreeIndex : public IPDXIndex {
     skmeans::AllocatedBuffer<float> BulkAppendRound(
         const IVFUtils& ivf_utils,
         const float* embeddings,
-        std::vector<uint32_t>& row_ids
+        skmeans::AllocatedBuffer<uint32_t>& row_ids
     ) {
-        const size_t num_rows = row_ids.size();
+        const size_t num_rows = row_ids.get_deleter().Size();
         auto assignments = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_rows);
         {
             PDX_PROFILE_SCOPE("BulkAppend/Assign");
@@ -1234,14 +1245,15 @@ class PDXTreeIndex : public IPDXIndex {
             );
         }
         std::vector<uint32_t> cluster_starts;
-        std::vector<uint32_t> rows_by_cluster;
+        auto rows_by_cluster = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_rows);
         IVFUtils::GroupRowsByCluster(
-            assignments.get(), num_rows, index.num_clusters, cluster_starts, rows_by_cluster
+            assignments.get(), num_rows, index.num_clusters, cluster_starts, rows_by_cluster.get()
         );
 
         std::vector<IVFUtils::ClusterAppendRange> ranges;
         std::vector<std::pair<uint32_t, uint32_t>> overflowed_clusters; // (cluster, trigger row)
-        std::vector<uint32_t> held_rows;
+        auto held_rows = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_rows);
+        size_t num_held = 0;
         for (uint32_t c = 0; c < index.num_clusters; c++) {
             const uint32_t first = cluster_starts[c];
             const uint32_t num_cluster_rows = cluster_starts[c + 1] - first;
@@ -1258,7 +1270,7 @@ class PDXTreeIndex : public IPDXIndex {
             if (num_fitting < num_cluster_rows) {
                 overflowed_clusters.emplace_back(c, rows_by_cluster[first + num_fitting]);
                 for (uint32_t j = num_fitting + 1; j < num_cluster_rows; j++) {
-                    held_rows.push_back(rows_by_cluster[first + j]);
+                    held_rows[num_held++] = rows_by_cluster[first + j];
                 }
             }
         }
@@ -1267,7 +1279,7 @@ class PDXTreeIndex : public IPDXIndex {
         {
             PDX_PROFILE_SCOPE("BulkAppend/Write");
             ivf_utils.AppendRowsToClusters(
-                index, embeddings, row_ids.data(), rows_by_cluster.data(), ranges, positions.get()
+                index, embeddings, row_ids.get(), rows_by_cluster.get(), ranges, positions.get()
             );
         }
         for (const auto& range : ranges) {
@@ -1279,12 +1291,12 @@ class PDXTreeIndex : public IPDXIndex {
         }
         {
             PDX_PROFILE_SCOPE("BulkAppend/Split");
-            SplitOverflowedClusters(embeddings, row_ids, overflowed_clusters);
+            SplitOverflowedClusters(embeddings, row_ids.get(), overflowed_clusters);
         }
 
-        auto held_embeddings = skmeans::AllocateBuffer<float>(GetAllocator(), held_rows.size() * d);
-        std::vector<uint32_t> held_row_ids(held_rows.size());
-        for (size_t i = 0; i < held_rows.size(); i++) {
+        auto held_embeddings = skmeans::AllocateBuffer<float>(GetAllocator(), num_held * d);
+        auto held_row_ids = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_held);
+        for (size_t i = 0; i < num_held; i++) {
             std::memcpy(
                 held_embeddings.get() + i * d,
                 embeddings + static_cast<size_t>(held_rows[i]) * d,
@@ -1299,7 +1311,7 @@ class PDXTreeIndex : public IPDXIndex {
     // Each cluster's trigger row fills its last free slot, so the cluster splits as with Append
     void SplitOverflowedClusters(
         const float* embeddings,
-        const std::vector<uint32_t>& row_ids,
+        const uint32_t* row_ids,
         const std::vector<std::pair<uint32_t, uint32_t>>& overflowed_clusters
     ) {
         for (const auto& [cluster_id, trigger_row] : overflowed_clusters) {
@@ -1351,39 +1363,40 @@ class PDXTreeIndex : public IPDXIndex {
         }
         const uint32_t n_candidates = static_cast<uint32_t>(candidate_ids.size());
 
-        std::vector<float> candidate_centroids(static_cast<size_t>(n_candidates) * d);
+        auto candidate_centroids =
+            skmeans::AllocateBuffer<float>(GetAllocator(), static_cast<size_t>(n_candidates) * d);
         for (size_t i = 0; i < n_candidates; i++) {
             std::memcpy(
-                candidate_centroids.data() + i * d,
+                candidate_centroids.get() + i * d,
                 index.centroids.data() + static_cast<size_t>(candidate_ids[i]) * d,
                 d * sizeof(float)
             );
         }
 
-        std::unique_ptr<uint32_t[]> assignments(new uint32_t[num_embeddings]);
-        std::unique_ptr<float[]> result_distances(new float[num_embeddings]);
+        auto assignments = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_embeddings);
+        auto result_distances = skmeans::AllocateBuffer<float>(GetAllocator(), num_embeddings);
         auto tmp_distances_buf = skmeans::AllocateBuffer<float>(
             GetAllocator(), batch_computer::ScratchSize(GetExecutor())
         );
 
-        std::vector<float> embeddings_norms(num_embeddings);
+        auto embeddings_norms = skmeans::AllocateBuffer<float>(GetAllocator(), num_embeddings);
         Eigen::Map<const MatrixR> embeddings_matrix(embeddings, num_embeddings, d);
-        Eigen::Map<VectorR> v_norms(embeddings_norms.data(), num_embeddings);
+        Eigen::Map<VectorR> v_norms(embeddings_norms.get(), num_embeddings);
         v_norms.noalias() = embeddings_matrix.rowwise().squaredNorm();
 
         std::vector<float> centroid_norms(n_candidates);
-        Eigen::Map<const MatrixR> centroids_matrix(candidate_centroids.data(), n_candidates, d);
+        Eigen::Map<const MatrixR> centroids_matrix(candidate_centroids.get(), n_candidates, d);
         Eigen::Map<VectorR> c_norms(centroid_norms.data(), n_candidates);
         c_norms.noalias() = centroids_matrix.rowwise().squaredNorm();
 
         batch_computer::FindNearestNeighbor(
             GetExecutor(),
             embeddings,
-            candidate_centroids.data(),
+            candidate_centroids.get(),
             num_embeddings,
             n_candidates,
             d,
-            embeddings_norms.data(),
+            embeddings_norms.get(),
             centroid_norms.data(),
             assignments.get(),
             result_distances.get(),

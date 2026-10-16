@@ -563,7 +563,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
         const size_t num_rows,
         const uint32_t num_clusters,
         std::vector<uint32_t>& cluster_starts,
-        std::vector<uint32_t>& rows_by_cluster
+        uint32_t* rows_by_cluster
     ) {
         cluster_starts.assign(static_cast<size_t>(num_clusters) + 1, 0);
         for (size_t i = 0; i < num_rows; i++) {
@@ -571,7 +571,6 @@ class IVFUtils : public skmeans::AllocatorHolder {
         }
         std::partial_sum(cluster_starts.begin(), cluster_starts.end(), cluster_starts.begin());
         std::vector<uint32_t> next_slot(cluster_starts.begin(), cluster_starts.end() - 1);
-        rows_by_cluster.resize(num_rows);
         for (size_t i = 0; i < num_rows; i++) {
             rows_by_cluster[next_slot[assignments[i]]++] = static_cast<uint32_t>(i);
         }
@@ -601,12 +600,14 @@ class IVFUtils : public skmeans::AllocatorHolder {
         const size_t n_workers = executor.NumWorkers();
         auto rows_buffer =
             skmeans::AllocateBuffer<storage_t>(GetAllocator(), n_workers * largest_range * d);
-        std::vector<uint32_t> ids_buffer(n_workers * largest_range);
-        std::vector<uint32_t> positions_buffer(n_workers * largest_range);
+        auto ids_buffer =
+            skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_workers * largest_range);
+        auto positions_buffer =
+            skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_workers * largest_range);
         executor.ParallelFor(ranges.size(), [&](size_t begin, size_t end, size_t worker) {
             storage_t* rows = rows_buffer.get() + worker * largest_range * d;
-            uint32_t* ids = ids_buffer.data() + worker * largest_range;
-            uint32_t* positions = positions_buffer.data() + worker * largest_range;
+            uint32_t* ids = ids_buffer.get() + worker * largest_range;
+            uint32_t* positions = positions_buffer.get() + worker * largest_range;
             ScalarQuantizer<Q> quantizer(d);
             for (size_t r = begin; r < end; r++) {
                 const ClusterAppendRange& range = ranges[r];
@@ -824,8 +825,8 @@ inline uint32_t QuantizeAndAppend(
     }
 }
 
-// Gather the raw embeddings and row ids at the given positions of a cluster, accumulating
-// their (float) sum into centroid_sum.
+// Gather the raw embeddings and row ids at the given positions of a cluster into embs_out and
+// ids_out (room for group_idx.size() rows), accumulating their (float) sum into centroid_sum.
 template <Quantization Q>
 inline void GatherGroupEmbeddings(
     const IVF<Q>& index,
@@ -833,18 +834,19 @@ inline void GatherGroupEmbeddings(
     const std::vector<uint32_t>& group_idx,
     const pdx_data_t<Q>* raw_embeddings,
     const float* float_embeddings,
-    std::vector<pdx_data_t<Q>>& embs_out,
-    std::vector<uint32_t>& ids_out,
+    pdx_data_t<Q>* embs_out,
+    uint32_t* ids_out,
     float* centroid_sum
 ) {
     const size_t d = index.num_dimensions;
-    for (uint32_t idx : group_idx) {
-        embs_out.insert(
-            embs_out.end(),
+    for (size_t i = 0; i < group_idx.size(); i++) {
+        const uint32_t idx = group_idx[i];
+        std::memcpy(
+            embs_out + i * d,
             raw_embeddings + static_cast<size_t>(idx) * d,
-            raw_embeddings + (static_cast<size_t>(idx) + 1) * d
+            d * sizeof(pdx_data_t<Q>)
         );
-        ids_out.push_back(cluster.indices[idx]);
+        ids_out[i] = cluster.indices[idx];
         const float* emb_f = float_embeddings + static_cast<size_t>(idx) * d;
         for (size_t j = 0; j < d; j++) {
             centroid_sum[j] += emb_f[j];
@@ -966,11 +968,27 @@ inline SplitPartition PartitionClusterForSplit(
     return partition;
 }
 
+// Per neighboring cluster: (slot, goes to A) of each row to steal
+using NeighborRowsToSteal = std::vector<std::vector<std::pair<uint32_t, bool>>>;
+
+// The rows to steal that go to A and to B
+inline std::pair<size_t, size_t> CountRowsToSteal(const NeighborRowsToSteal& rows_to_steal) {
+    size_t num_rows = 0;
+    size_t num_rows_to_a = 0;
+    for (const auto& neighbor_rows : rows_to_steal) {
+        num_rows += neighbor_rows.size();
+        for (const auto& [slot, goes_to_a] : neighbor_rows) {
+            num_rows_to_a += goes_to_a;
+        }
+    }
+    return {num_rows_to_a, num_rows - num_rows_to_a};
+}
+
 // For each neighboring cluster: the slots of its live rows whose own centroid is not strictly
 // closer than both A and B, and whether each goes to A. One GEMM per neighbor, of its gathered
 // (dequantized) rows against [own, A, B], in parallel over the neighbors.
 template <Quantization Q>
-inline std::vector<std::vector<std::pair<uint32_t, bool>>> FindNeighborRowsToSteal(
+inline NeighborRowsToSteal FindNeighborRowsToSteal(
     const IVF<Q>& index,
     const std::vector<uint32_t>& neighboring_clusters_ids,
     const float* centroid_a,
@@ -978,11 +996,11 @@ inline std::vector<std::vector<std::pair<uint32_t, bool>>> FindNeighborRowsToSte
     ParallelExecutor& executor,
     MemoryAllocator& allocator
 ) {
+    PDX_PROFILE_SCOPE("Split/NeighborReassign");
     const size_t d = index.num_dimensions;
     const float norm_a = Eigen::Map<const Eigen::VectorXf>(centroid_a, d).squaredNorm();
     const float norm_b = Eigen::Map<const Eigen::VectorXf>(centroid_b, d).squaredNorm();
-    std::vector<std::vector<std::pair<uint32_t, bool>>> rows_to_steal(neighboring_clusters_ids.size(
-    ));
+    NeighborRowsToSteal rows_to_steal(neighboring_clusters_ids.size());
     executor.ParallelFor(neighboring_clusters_ids.size(), [&](size_t begin, size_t end, size_t) {
         ScalarQuantizer<Q> quantizer(d);
         std::unique_ptr<pdx_data_t<Q>[]> raw_row(new pdx_data_t<Q>[d]);
@@ -999,7 +1017,7 @@ inline std::vector<std::vector<std::pair<uint32_t, bool>>> FindNeighborRowsToSte
                 continue;
             }
             std::memcpy(centroids.get(), own_centroid, d * sizeof(float));
-            std::unique_ptr<float[]> dots(new float[n * 3]);
+            auto dots = skmeans::AllocateBuffer<float>(allocator, n * 3);
             if constexpr (Q == U8) {
                 auto rows = skmeans::AllocateBuffer<float>(allocator, n * d);
                 for (size_t p = 0; p < n; p++) {
@@ -1085,32 +1103,28 @@ inline std::vector<std::vector<std::pair<uint32_t, bool>>> FindNeighborRowsToSte
     return rows_to_steal;
 }
 
-// Steal from the neighboring clusters the embeddings that are closer to centroid A or B than to
-// their own centroid: they are tombstoned in the neighbor and appended to the A/B groups (raw
-// embeddings, row ids, centroid sums). The caller must refresh the row-id mapping of the moved
-// ids once the new clusters exist.
+// Steal from the neighboring clusters the rows of FindNeighborRowsToSteal: they are tombstoned in
+// the neighbor and written to the A/B groups (raw embeddings, row ids; embs_a and ids_a have room
+// for the rows that go to A, see CountRowsToSteal), their sum accumulated into the centroid sums.
+// The caller must refresh the row-id mapping of the moved ids once the new clusters exist.
 template <Quantization Q>
 inline void StealNeighborEmbeddings(
     IVF<Q>& index,
     const std::vector<uint32_t>& neighboring_clusters_ids,
-    const float* centroid_a,
-    const float* centroid_b,
-    std::vector<pdx_data_t<Q>>& embs_a,
-    std::vector<uint32_t>& ids_a,
+    const NeighborRowsToSteal& rows_to_steal,
+    pdx_data_t<Q>* embs_a,
+    uint32_t* ids_a,
     float* centroid_sum_a,
-    std::vector<pdx_data_t<Q>>& embs_b,
-    std::vector<uint32_t>& ids_b,
-    float* centroid_sum_b,
-    ParallelExecutor& executor,
-    MemoryAllocator& allocator
+    pdx_data_t<Q>* embs_b,
+    uint32_t* ids_b,
+    float* centroid_sum_b
 ) {
     PDX_PROFILE_SCOPE("Split/NeighborReassign");
     const size_t d = index.num_dimensions;
-    const auto rows_to_steal = FindNeighborRowsToSteal<Q>(
-        index, neighboring_clusters_ids, centroid_a, centroid_b, executor, allocator
-    );
     ScalarQuantizer<Q> quantizer(d);
     std::unique_ptr<float[]> emb_f32(new float[d]);
+    size_t num_rows_to_a = 0;
+    size_t num_rows_to_b = 0;
     for (size_t j = 0; j < neighboring_clusters_ids.size(); j++) {
         auto& neighbor = index.clusters[neighboring_clusters_ids[j]];
         for (const auto& [slot, goes_to_a] : rows_to_steal[j]) {
@@ -1127,11 +1141,12 @@ inline void StealNeighborEmbeddings(
 
             const uint32_t row_id = neighbor.indices[slot];
             neighbor.DeleteEmbedding(slot);
-            auto& embs = goes_to_a ? embs_a : embs_b;
-            auto& ids = goes_to_a ? ids_a : ids_b;
+            const size_t position = goes_to_a ? num_rows_to_a++ : num_rows_to_b++;
+            pdx_data_t<Q>* embs = goes_to_a ? embs_a : embs_b;
+            uint32_t* ids = goes_to_a ? ids_a : ids_b;
             float* centroid_sum = goes_to_a ? centroid_sum_a : centroid_sum_b;
-            embs.insert(embs.end(), raw_emb.get(), raw_emb.get() + d);
-            ids.push_back(row_id);
+            std::memcpy(embs + position * d, raw_emb.get(), d * sizeof(pdx_data_t<Q>));
+            ids[position] = row_id;
             for (size_t k = 0; k < d; k++) {
                 centroid_sum[k] += emb_ptr[k];
             }
