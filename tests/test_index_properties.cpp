@@ -1,9 +1,12 @@
 #include <algorithm>
+#include <atomic>
 #include <gtest/gtest.h>
+#include <numeric>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
+#include "pdx/indexes/flat.hpp"
 #include "pdx/indexes/ivf_tree.hpp"
 #include "pdx/indexes/ivf_vanilla.hpp"
 #include "superkmeans/pdx/utils.h"
@@ -78,6 +81,64 @@ TEST(ClusterTest, InMemorySizeCountsAllocatedSlotsAndTombstones) {
     const size_t size_before_delete = cluster.GetInMemorySizeInBytes();
     cluster.DeleteEmbedding(0);
     EXPECT_GT(cluster.GetInMemorySizeInBytes(), size_before_delete);
+}
+
+class CountingAllocator final : public PDX::MemoryAllocator {
+  public:
+    void* Allocate(const size_t bytes) override {
+        live_bytes += bytes;
+        return vanilla.Allocate(bytes);
+    }
+    void Free(void* const ptr, const size_t bytes) override {
+        live_bytes -= bytes;
+        vanilla.Free(ptr, bytes);
+    }
+
+    std::atomic<size_t> live_bytes{0};
+
+  private:
+    skmeans::VanillaAllocator vanilla;
+};
+
+PDX::PDXIndexConfig MakeConfigWithAllocator(const size_t d, PDX::MemoryAllocator* allocator) {
+    return PDX::PDXIndexConfig{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+        .allocator = allocator,
+    };
+}
+
+// The heap size plus the allocator's live bytes is the in-memory size, after appends and deletes
+TEST_P(IndexPropertiesTest, HeapSizeExcludesAllocatedBytes) {
+    const std::string index_type = GetParam();
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    CountingAllocator allocator;
+    auto index = TestUtils::BuildIndexWithConfig(
+        index_type, MakeConfigWithAllocator(d, &allocator), data.train.data(), TestUtils::N_TRAIN
+    );
+    EXPECT_EQ(index->GetHeapSizeInBytes() + allocator.live_bytes, index->GetInMemorySizeInBytes());
+
+    std::vector<size_t> row_ids(TestUtils::N_QUERIES);
+    std::iota(row_ids.begin(), row_ids.end(), TestUtils::N_TRAIN);
+    index->BulkAppend(row_ids.data(), data.queries.data(), TestUtils::N_QUERIES);
+    for (size_t row_id = 0; row_id < 100; ++row_id) {
+        index->Delete(row_id);
+    }
+    EXPECT_EQ(index->GetHeapSizeInBytes() + allocator.live_bytes, index->GetInMemorySizeInBytes());
+}
+
+TEST(FlatIndexSizeTest, HeapSizeExcludesAllocatedBytes) {
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    CountingAllocator allocator;
+    PDX::FlatIndex index(MakeConfigWithAllocator(d, &allocator));
+    index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    EXPECT_EQ(index.GetHeapSizeInBytes() + allocator.live_bytes, index.GetInMemorySizeInBytes());
 }
 
 TEST_P(IndexPropertiesTest, KnnLargerThanDataReturnsAvailable) {

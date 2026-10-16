@@ -369,6 +369,10 @@ class FlatIndex : public IPDXIndex {
         return size;
     }
 
+    size_t GetAllocatedSizeInBytes() const override {
+        return owned_pruner ? owned_pruner->GetAllocatedSizeInBytes() : 0;
+    }
+
   private:
     static bool Normalize(const PDXIndexConfig& config) {
         return config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);

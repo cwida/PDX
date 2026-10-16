@@ -153,11 +153,14 @@ struct Cluster : skmeans::AllocatorHolder {
         n_deleted++;
     }
 
+    size_t GetAllocatedSizeInBytes() const {
+        const size_t data_size = data ? data.get_deleter().Size() * sizeof(data_t) : 0;
+        const size_t indices_size = indices ? indices.get_deleter().Size() * sizeof(uint32_t) : 0;
+        return data_size + indices_size;
+    }
+
     size_t GetInMemorySizeInBytes() const {
-        const size_t data_size =
-            data ? max_capacity * static_cast<uint64_t>(num_dimensions) * sizeof(data_t) : 0;
-        const size_t indices_size = indices ? max_capacity * sizeof(uint32_t) : 0;
-        return sizeof(*this) + data_size + indices_size +
+        return sizeof(*this) + GetAllocatedSizeInBytes() +
                tombstones.size() * (sizeof(uint32_t) + 2 * sizeof(void*)) +
                tombstones.bucket_count() * sizeof(void*);
     }
