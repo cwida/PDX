@@ -182,10 +182,12 @@ Performance-critical — weigh every copy/allocation.
   SuperKMeans' k-means) and to new clusters; each `Cluster` keeps it for `Grow`.
   `LoadPDXIndex`/`LoadPDXIndexFromStream` take it as a parameter, since loading allocates the clusters.
   Routed: cluster `data`/`indices`, the pruner's rotation (an `AllocatedBuffer` behind an `Eigen::Map`),
-  `IVF::centroid_norms`, `NormalizeAndRotate`, the population gathers, split/merge/reassign scratch,
-  `ReadRotationMatrix`, `FlatIndex::GetEmbeddings`. On the heap: centroids (SuperKMeans' `Train`
-  vector), `RowIdClusterMapping`, tombstones, `Flat` storage, per-query searcher buffers, the
-  single-embedding transform in `Append`, d-sized arrays, `MmapFile` and Eigen's QR internals.
+  `IVF::centroid_norms`, `NormalizeAndRotate`, the population gathers, split/merge/reassign scratch
+  (the split's A/B embeddings and ids, sized up front by `CountRowsToSteal`), `BulkAppend`'s row-id
+  arrays, `ReadRotationMatrix`, `FlatIndex::GetEmbeddings`. On the heap: centroids (SuperKMeans'
+  `Train` vector), `RowIdClusterMapping`, tombstones, `Flat` storage, per-query searcher buffers, the
+  single-embedding transform in `Append`, d-sized and per-cluster (k-sized) arrays, the split's
+  `SplitPartition` positions and k=2 assignments, `MmapFile` and Eigen's QR internals.
   `IPDXIndex::GetAllocatedSizeInBytes()` counts the routed buffers an index keeps (cluster data, norms,
   an owned pruner's rotation); `GetHeapSizeInBytes()` is the rest of `GetInMemorySizeInBytes()`, for a
   caller whose allocator already charges the routed bytes.
