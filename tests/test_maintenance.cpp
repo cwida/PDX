@@ -818,6 +818,129 @@ TEST_P(MaintenanceTest, DeleteOnlyRowOfCluster) {
     });
 }
 
+std::vector<float> UniformEmbeddings(size_t n, size_t d) {
+    std::mt19937 gen(TestUtils::SEED);
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    std::vector<float> data(n * d);
+    for (auto& value : data) {
+        value = uniform(gen);
+    }
+    return data;
+}
+
+// 202 dimensions lay out u8 groups of 4, a u8 remainder and horizontal blocks
+constexpr size_t RESTRIDE_D = 202;
+
+// Test 20: A build that expects no appends gives each cluster one free slot, and appends grow its
+// clusters up to max_cluster_size
+template <typename IndexT>
+void RunBuildWithoutAppendHeadroom() {
+    constexpr size_t n_build = 2048;
+    constexpr size_t n_total = 6000;
+    constexpr size_t n_appended_one_by_one = 2000;
+    constexpr uint32_t max_cluster_size = 64;
+    const auto data = UniformEmbeddings(n_total, RESTRIDE_D);
+    auto config = MakeConfig(RESTRIDE_D);
+    config.max_cluster_size = max_cluster_size;
+    config.expect_appends = false;
+    IndexT index(config);
+    index.BuildIndex(data.data(), n_build);
+    for (const auto& cluster : index.GetSearcher().pdx_data.clusters) {
+        EXPECT_EQ(cluster.max_capacity, cluster.num_embeddings + 1);
+    }
+
+    size_t row_id = n_build;
+    for (; row_id < n_build + n_appended_one_by_one; row_id++) {
+        index.Append(row_id, data.data() + row_id * RESTRIDE_D);
+    }
+    std::vector<size_t> row_ids;
+    for (; row_id < n_total; row_id++) {
+        row_ids.push_back(row_id);
+    }
+    index.BulkAppend(row_ids.data(), data.data() + row_ids[0] * RESTRIDE_D, row_ids.size());
+    ExpectIndexHoldsExactly(index, n_total);
+    EXPECT_LE(LargestClusterSize(index), max_cluster_size);
+}
+
+TEST_P(MaintenanceTest, BuildWithoutAppendHeadroom) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBuildWithoutAppendHeadroom<typename decltype(tag)::type>();
+    });
+}
+
+// Test 21: With max_cluster_size, a built cluster gets 1.3 times its rows in slots, not the limit
+template <typename IndexT>
+void RunBuildCapsHeadroomAtMaxClusterSize() {
+    constexpr size_t d = 8;
+    constexpr size_t n_build = 2048;
+    const auto data = UniformEmbeddings(n_build, d);
+    auto config = MakeConfig(d);
+    config.max_cluster_size = 256;
+    IndexT index(config);
+    index.BuildIndex(data.data(), n_build);
+    for (const auto& cluster : index.GetSearcher().pdx_data.clusters) {
+        const uint32_t n = cluster.num_embeddings;
+        EXPECT_GT(cluster.max_capacity, n);
+        EXPECT_LE(cluster.max_capacity, std::max(static_cast<uint32_t>(n * 1.3f), n + 1));
+    }
+}
+
+TEST_P(MaintenanceTest, BuildCapsHeadroomAtMaxClusterSize) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunBuildCapsHeadroomAtMaxClusterSize<typename decltype(tag)::type>();
+    });
+}
+
+// Test 22: After growing and ShrinkToFit, each cluster has one free slot and every row reads back
+// as in an index without the limit (which never re-lays out its clusters), and the index still
+// takes appends
+template <typename IndexT>
+void RunShrinkToFit() {
+    constexpr size_t n_build = 2048;
+    constexpr size_t n_filled = 6000;
+    constexpr size_t n_total = 6100;
+    const auto data = UniformEmbeddings(n_total, RESTRIDE_D);
+    std::vector<size_t> row_ids;
+    for (size_t row_id = n_build; row_id < n_filled; row_id++) {
+        row_ids.push_back(row_id);
+    }
+    IndexT reference(MakeConfig(RESTRIDE_D));
+    reference.BuildIndex(data.data(), n_build);
+    reference.BulkAppend(row_ids.data(), data.data() + n_build * RESTRIDE_D, row_ids.size());
+    auto config = MakeConfig(RESTRIDE_D);
+    config.max_cluster_size = 64;
+    IndexT index(config);
+    index.BuildIndex(data.data(), n_build);
+    index.BulkAppend(row_ids.data(), data.data() + n_build * RESTRIDE_D, row_ids.size());
+    std::vector<size_t> live_row_ids;
+    for (size_t row_id = 0; row_id < n_filled; row_id++) {
+        if (row_id % 7 == 0) {
+            index.Delete(row_id);
+        } else {
+            live_row_ids.push_back(row_id);
+        }
+    }
+
+    index.ShrinkToFit();
+
+    for (const auto& cluster : index.GetSearcher().pdx_data.clusters) {
+        EXPECT_EQ(cluster.max_capacity, cluster.used_capacity + 1);
+    }
+    std::vector<float> embeddings(live_row_ids.size() * RESTRIDE_D);
+    std::vector<float> reference_embeddings(live_row_ids.size() * RESTRIDE_D);
+    index.GetEmbeddingsFromIndexByRowIds(live_row_ids, embeddings.data());
+    reference.GetEmbeddingsFromIndexByRowIds(live_row_ids, reference_embeddings.data());
+    EXPECT_EQ(embeddings, reference_embeddings);
+    for (size_t row_id = n_filled; row_id < n_total; row_id++) {
+        index.Append(row_id, data.data() + row_id * RESTRIDE_D);
+    }
+    ExpectIndexHoldsExactly(index, live_row_ids.size() + n_total - n_filled);
+}
+
+TEST_P(MaintenanceTest, ShrinkToFit) {
+    ForIndexType(GetParam(), [](auto tag) { RunShrinkToFit<typename decltype(tag)::type>(); });
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     MaintenanceTest,

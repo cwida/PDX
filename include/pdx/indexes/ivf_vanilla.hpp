@@ -82,6 +82,8 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     ) = 0;
     // Returns whether the row was in the index: deleting an absent row is a no-op.
     virtual bool Delete(size_t row_id) = 0;
+    // Leaves one free slot per cluster, for an index that stops receiving appends.
+    virtual void ShrinkToFit() {}
     virtual std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const = 0;
     bool Contains(size_t row_id) const { return GetRowIdMapping(row_id).first != DELETED_MARKER; }
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
@@ -537,7 +539,8 @@ class PDXIndex : public IPDXIndex {
             num_clusters,
             quantization_base,
             quantization_scale,
-            config.max_cluster_size
+            config.max_cluster_size,
+            config.expect_appends
         );
 
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
@@ -643,6 +646,19 @@ class PDXIndex : public IPDXIndex {
             CheckClusterHealth(cluster);
         }
         return true;
+    }
+
+    void ShrinkToFit() override {
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            auto& cluster = index.clusters[c];
+            if (!cluster.data) {
+                throw std::logic_error(
+                    "ShrinkToFit: the index was loaded without its clusters' data"
+                );
+            }
+            cluster.ShrinkToFit();
+        }
+        index.ComputeClusterOffsets();
     }
 
   private:
@@ -758,6 +774,11 @@ class PDXIndex : public IPDXIndex {
                 for (const auto& [row_id, new_idx] : moves) {
                     SetRowIdMapping(row_id, cluster.id, new_idx);
                 }
+            } else if (cluster.max_capacity < config.max_cluster_size) {
+                cluster.GrowTo(
+                    cluster_t::CapacityFor(cluster.num_embeddings, config.max_cluster_size)
+                );
+                index.ComputeClusterOffsets();
             } else if (split_depth >= SPLIT_CASCADE_MAX_DEPTH) {
                 cluster.Grow();
                 index.ComputeClusterOffsets();
@@ -1051,7 +1072,10 @@ class PDXIndex : public IPDXIndex {
             if (num_cluster_rows == 0) {
                 continue;
             }
-            const cluster_t& cluster = index.clusters[c];
+            cluster_t& cluster = index.clusters[c];
+            if (cluster.GrowToFit(num_cluster_rows, config.max_cluster_size)) {
+                index.ComputeClusterOffsets();
+            }
             const uint32_t free_slots = cluster.max_capacity - cluster.used_capacity +
                                         static_cast<uint32_t>(cluster.tombstones.size());
             const uint32_t num_fitting = std::min(num_cluster_rows, free_slots - 1);

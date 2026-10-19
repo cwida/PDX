@@ -37,6 +37,7 @@ struct PDXIndexConfig {
     bool is_data_transformed = false;
     size_t base_row_id = 0;
     uint32_t max_cluster_size = 0; // Clusters split at this size (0 = at 1.3x their initial size)
+    bool expect_appends = true;    // false: built clusters get one free slot (not serialized)
     // Runs the parallel loops (not owned, not serialized). nullptr: the index creates a default
     // one.
     ParallelExecutor* executor = nullptr;
@@ -412,7 +413,8 @@ class IVFUtils : public skmeans::AllocatorHolder {
         uint32_t num_clusters,
         float quantization_base,
         float quantization_scale,
-        uint32_t max_cluster_size = 0
+        uint32_t max_cluster_size = 0,
+        bool expect_appends = true
     ) const {
         using storage_t = pdx_data_t<Q>;
 
@@ -428,7 +430,8 @@ class IVFUtils : public skmeans::AllocatorHolder {
                 static_cast<uint32_t>(kmeans_result.assignments[cluster_idx].size());
             ivf.clusters.emplace_back(
                 cluster_size,
-                Cluster<Q>::CapacityFor(cluster_size, max_cluster_size),
+                expect_appends ? Cluster<Q>::CapacityFor(cluster_size, max_cluster_size)
+                               : cluster_size + 1,
                 num_dimensions,
                 &GetAllocator()
             );
