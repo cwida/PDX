@@ -774,6 +774,7 @@ class PDXIndex : public IPDXIndex {
                 for (const auto& [row_id, new_idx] : moves) {
                     SetRowIdMapping(row_id, cluster.id, new_idx);
                 }
+                // NOLINTNEXTLINE(bugprone-branch-clone)
             } else if (cluster.max_capacity < config.max_cluster_size) {
                 cluster.GrowTo(
                     cluster_t::CapacityFor(cluster.num_embeddings, config.max_cluster_size)
