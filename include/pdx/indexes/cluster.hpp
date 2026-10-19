@@ -25,14 +25,15 @@ struct Cluster : skmeans::AllocatorHolder {
     constexpr static uint32_t DEFAULT_MAX_CAPACITY_LOWER_BOUND = 256;
 
     static uint32_t CapacityFor(uint32_t num_embeddings, uint32_t max_cluster_size) {
+        const auto grown_capacity = static_cast<uint32_t>(num_embeddings * CAPACITY_THRESHOLD);
         if (max_cluster_size == 0) {
-            return std::max(
-                static_cast<uint32_t>(num_embeddings * CAPACITY_THRESHOLD),
-                DEFAULT_MAX_CAPACITY_LOWER_BOUND
-            );
+            return std::max(grown_capacity, DEFAULT_MAX_CAPACITY_LOWER_BOUND);
         }
-        // Guaranteeing a free slot for the next append
-        return std::max(max_cluster_size, num_embeddings + 1);
+        // Guaranteeing a free slot for the next append. The cluster grows up to max_cluster_size.
+        return std::min(
+            std::max(grown_capacity, num_embeddings + 1),
+            std::max(max_cluster_size, num_embeddings + 1)
+        );
     }
 
     Cluster(uint32_t num_embeddings, uint32_t num_dimensions, MemoryAllocator* allocator = nullptr)
@@ -365,19 +366,31 @@ struct Cluster : skmeans::AllocatorHolder {
     // ids, centroid and the index's row id mapping stay valid). For a full cluster that a split
     // cannot separate. Assumes no tombstones; the index must recompute its cluster offsets.
     void Grow() {
-        PDX_PROFILE_SCOPE("GrowCluster");
-        auto rows = GetHorizontalEmbeddingsFromPDXBuffer();
-        const uint32_t new_max_capacity = CapacityFor(num_embeddings, 0);
-        auto new_indices = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), new_max_capacity);
-        auto new_data = skmeans::AllocateBuffer<data_t>(
-            GetAllocator(), static_cast<uint64_t>(new_max_capacity) * num_dimensions
-        );
-        std::memcpy(new_indices.get(), indices.get(), num_embeddings * sizeof(uint32_t));
-        indices = std::move(new_indices);
-        data = std::move(new_data);
-        max_capacity = new_max_capacity;
+        GrowTo(CapacityFor(num_embeddings, 0));
         min_capacity = static_cast<uint32_t>(num_embeddings * MIN_CAPACITY_THRESHOLD);
-        StoreEmbeddings(rows.get(), num_embeddings);
+    }
+
+    void GrowTo(uint32_t new_max_capacity) {
+        PDX_PROFILE_SCOPE("GrowCluster");
+        assert(new_max_capacity > max_capacity);
+        Restride(new_max_capacity);
+    }
+
+    void ShrinkToFit() {
+        if (max_capacity > used_capacity + 1) {
+            Restride(used_capacity + 1);
+        }
+    }
+
+    bool GrowToFit(uint32_t num_rows, uint32_t max_cluster_size) {
+        const auto num_tombstones = static_cast<uint32_t>(tombstones.size());
+        const uint32_t used_after_append =
+            used_capacity + num_rows - std::min(num_rows, num_tombstones);
+        if (used_after_append < max_capacity || max_capacity >= max_cluster_size) {
+            return false;
+        }
+        GrowTo(std::min(CapacityFor(used_after_append, max_cluster_size), max_cluster_size));
+        return true;
     }
 
     // Gather-reads one embedding from a transposed PDX buffer of the given stride into a horizontal
@@ -451,6 +464,43 @@ struct Cluster : skmeans::AllocatorHolder {
 
         n_inserted++;
         return next_free_idx;
+    }
+
+    void Restride(uint32_t new_max_capacity) {
+        assert(new_max_capacity > used_capacity);
+        auto new_indices = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), new_max_capacity);
+        auto new_data = skmeans::AllocateBuffer<data_t>(
+            GetAllocator(), static_cast<uint64_t>(new_max_capacity) * num_dimensions
+        );
+        std::memcpy(new_indices.get(), indices.get(), used_capacity * sizeof(uint32_t));
+        const auto restride_block = [&](uint32_t first_dimension, uint32_t width) {
+            std::memcpy(
+                new_data.get() + static_cast<size_t>(first_dimension) * new_max_capacity,
+                data.get() + static_cast<size_t>(first_dimension) * max_capacity,
+                sizeof(data_t) * used_capacity * width
+            );
+        };
+        const uint32_t vertical_d = GetPDXDimensionSplit(num_dimensions).vertical_dimensions;
+        uint32_t d = 0;
+        if constexpr (Q == Quantization::F32) {
+            for (; d < vertical_d; d++) {
+                restride_block(d, 1);
+            }
+        } else {
+            for (; d + U8_INTERLEAVE_SIZE <= vertical_d; d += U8_INTERLEAVE_SIZE) {
+                restride_block(d, U8_INTERLEAVE_SIZE);
+            }
+            if (d < vertical_d) {
+                restride_block(d, vertical_d - d);
+                d = vertical_d;
+            }
+        }
+        for (; d < num_dimensions; d += H_DIM_SIZE) {
+            restride_block(d, H_DIM_SIZE);
+        }
+        indices = std::move(new_indices);
+        data = std::move(new_data);
+        max_capacity = new_max_capacity;
     }
 
     void ReadEmbeddingFromPDXBuffer(uint32_t idx_in_cluster, data_t* out) const {

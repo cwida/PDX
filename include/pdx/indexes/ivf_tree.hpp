@@ -349,6 +349,13 @@ class PDXTreeIndex : public IPDXIndex {
         return true;
     }
 
+    void ShrinkToFit() override {
+        for (uint32_t c = 0; c < index.num_clusters; c++) {
+            index.clusters[c].ShrinkToFit();
+        }
+        index.ComputeClusterOffsets();
+    }
+
     void BuildIndex(const float* const embeddings, const size_t num_embeddings) override {
         std::vector<size_t> row_ids(num_embeddings);
         std::iota(row_ids.begin(), row_ids.end(), 0);
@@ -441,7 +448,8 @@ class PDXTreeIndex : public IPDXIndex {
             num_clusters,
             quantization_base,
             quantization_scale,
-            config.max_cluster_size
+            config.max_cluster_size,
+            config.expect_appends
         );
 
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
@@ -935,6 +943,12 @@ class PDXTreeIndex : public IPDXIndex {
                 for (const auto& [row_id, new_idx] : moves) {
                     SetRowIdMapping(row_id, cluster.id, new_idx);
                 }
+                // NOLINTNEXTLINE(bugprone-branch-clone)
+            } else if (cluster.max_capacity < config.max_cluster_size) {
+                cluster.GrowTo(
+                    cluster_t::CapacityFor(cluster.num_embeddings, config.max_cluster_size)
+                );
+                index.ComputeClusterOffsets();
             } else if (split_depth >= SPLIT_CASCADE_MAX_DEPTH) {
                 cluster.Grow();
                 index.ComputeClusterOffsets();
@@ -1260,7 +1274,10 @@ class PDXTreeIndex : public IPDXIndex {
             if (num_cluster_rows == 0) {
                 continue;
             }
-            const cluster_t& cluster = index.clusters[c];
+            cluster_t& cluster = index.clusters[c];
+            if (cluster.GrowToFit(num_cluster_rows, config.max_cluster_size)) {
+                index.ComputeClusterOffsets();
+            }
             const uint32_t free_slots = cluster.max_capacity - cluster.used_capacity +
                                         static_cast<uint32_t>(cluster.tombstones.size());
             const uint32_t num_fitting = std::min(num_cluster_rows, free_slots - 1);
