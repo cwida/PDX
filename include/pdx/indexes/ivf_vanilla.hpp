@@ -68,7 +68,7 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     // The bytes of the buffers the index holds from its allocator.
     virtual size_t GetAllocatedSizeInBytes() const = 0;
     // What GetInMemorySizeInBytes counts outside the allocator.
-    size_t GetHeapSizeInBytes() const {
+    size_t GetSelfManagedMemorySizeInBytes() const {
         return GetInMemorySizeInBytes() - GetAllocatedSizeInBytes();
     }
     // Maintenance (SPFresh-like). Concurrent writes must go through a single writer thread.

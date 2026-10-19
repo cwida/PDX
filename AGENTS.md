@@ -191,7 +191,8 @@ Performance-critical — weigh every copy/allocation.
   single-embedding transform in `Append`, d-sized and per-cluster (k-sized) arrays, the split's
   `SplitPartition` positions and k=2 assignments, `MmapFile` and Eigen's QR internals.
   `IPDXIndex::GetAllocatedSizeInBytes()` counts the routed buffers an index keeps (cluster data, norms,
-  an owned pruner's rotation); `GetHeapSizeInBytes()` is the rest of `GetInMemorySizeInBytes()`, for a
-  caller whose allocator already charges the routed bytes.
+  an owned pruner's rotation); `GetSelfManagedMemorySizeInBytes()` is the rest of
+  `GetInMemorySizeInBytes()` (what the index allocates itself, outside the allocator), for a caller whose
+  allocator already charges the routed bytes.
 - **Profiling**: `PDX_PROFILE_SCOPE("name")` (`profiler.hpp`); most benchmarks call
   `Profiler::Get().Print()` at the end (e.g. `BenchmarkEndToEnd`).
