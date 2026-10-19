@@ -67,6 +67,7 @@ class FlatSearcher {
                     heap.push(candidate);
                 }
             }
+            top_k_heap->PublishKthDistance(k);
             return 1;
         }
 
