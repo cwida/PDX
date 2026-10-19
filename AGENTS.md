@@ -74,6 +74,8 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 
 `PDXearch<Q>::IterativeSearch<FILTERED>` allows for: i) concurrent queries on one index, ii) resume a search. The API of a resumable search is: `Next(n)`: probes the next n clusters ranked once at `Begin`; `Done()`: the clusters are exhausted. `GetClustersAccessOrder(query)` returns every cluster, nearest first; passing it as `BeginIterativeSearch`'s `clusters_access_order` lets several cursors of one query (e.g. one per batch of passing rows) skip ranking again (Flat returns `{0}`).
 
+Cursors may share one `thread_safe` `TopKHeap`. Only merges take its lock (`Start`'s full scan of the first clusters runs unlocked), and each merge ends with `PublishKthDistance(k)`; the pruning thresholds read that atomic `kth_distance` (+inf while fewer than k) without the lock, as a stale value is only looser. Every change to `heap` must be followed by `PublishKthDistance(k)` under the lock, and a heap reused for another query is reset with `Clear()`.
+
 For many queries over one filter (e.g. a LATERAL join over a partition): `CreateSharedPredicateEvaluator(passing_row_ids)` builds the filter once and `BeginIterativeSearchWithSharedEvaluator` starts each query's cursor on it (the evaluator must outlive them).
 
 Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopKHeap`, one cursor over the n_probe-clamped ranking. Note: The tree's meso-cluster (L0) layer is not supported by cursors or by `FilteredSearch`. Both rank all leaf centroids flat, so a tree cursor is a vanilla IVF search over the tree's leaves.
