@@ -112,8 +112,9 @@ PDX::PDXIndexConfig MakeConfigWithAllocator(const size_t d, PDX::MemoryAllocator
     };
 }
 
-// The heap size plus the allocator's live bytes is the in-memory size, after appends and deletes
-TEST_P(IndexPropertiesTest, HeapSizeExcludesAllocatedBytes) {
+// The self-managed memory plus the allocator's live bytes is the in-memory size, after appends and
+// deletes
+TEST_P(IndexPropertiesTest, SelfManagedMemoryExcludesAllocatedBytes) {
     const std::string index_type = GetParam();
     const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
@@ -121,7 +122,10 @@ TEST_P(IndexPropertiesTest, HeapSizeExcludesAllocatedBytes) {
     auto index = TestUtils::BuildIndexWithConfig(
         index_type, MakeConfigWithAllocator(d, &allocator), data.train.data(), TestUtils::N_TRAIN
     );
-    EXPECT_EQ(index->GetHeapSizeInBytes() + allocator.live_bytes, index->GetInMemorySizeInBytes());
+    EXPECT_EQ(
+        index->GetSelfManagedMemorySizeInBytes() + allocator.live_bytes,
+        index->GetInMemorySizeInBytes()
+    );
 
     std::vector<size_t> row_ids(TestUtils::N_QUERIES);
     std::iota(row_ids.begin(), row_ids.end(), TestUtils::N_TRAIN);
@@ -129,16 +133,22 @@ TEST_P(IndexPropertiesTest, HeapSizeExcludesAllocatedBytes) {
     for (size_t row_id = 0; row_id < 100; ++row_id) {
         index->Delete(row_id);
     }
-    EXPECT_EQ(index->GetHeapSizeInBytes() + allocator.live_bytes, index->GetInMemorySizeInBytes());
+    EXPECT_EQ(
+        index->GetSelfManagedMemorySizeInBytes() + allocator.live_bytes,
+        index->GetInMemorySizeInBytes()
+    );
 }
 
-TEST(FlatIndexSizeTest, HeapSizeExcludesAllocatedBytes) {
+TEST(FlatIndexSizeTest, SelfManagedMemoryExcludesAllocatedBytes) {
     const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     CountingAllocator allocator;
     PDX::FlatIndex index(MakeConfigWithAllocator(d, &allocator));
     index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
-    EXPECT_EQ(index.GetHeapSizeInBytes() + allocator.live_bytes, index.GetInMemorySizeInBytes());
+    EXPECT_EQ(
+        index.GetSelfManagedMemorySizeInBytes() + allocator.live_bytes,
+        index.GetInMemorySizeInBytes()
+    );
 }
 
 TEST_P(IndexPropertiesTest, KnnLargerThanDataReturnsAvailable) {
