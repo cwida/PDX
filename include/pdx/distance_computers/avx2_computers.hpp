@@ -112,14 +112,30 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const uint8_t* PDX_RESTRICT codes,
         size_t num_dimensions
     ) {
-        __m256 dot_vec = _mm256_setzero_ps();
+        __m256 dot_vec_0 = _mm256_setzero_ps();
+        __m256 dot_vec_1 = _mm256_setzero_ps();
+        __m256 dot_vec_2 = _mm256_setzero_ps();
+        __m256 dot_vec_3 = _mm256_setzero_ps();
+        const auto codes_as_floats = [codes](size_t offset) {
+            return _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(
+                _mm_loadl_epi64(reinterpret_cast<const __m128i*>(codes + offset))
+            ));
+        };
         size_t i = 0;
-        for (; i + 8 <= num_dimensions; i += 8) {
-            const __m256 codes_vec = _mm256_cvtepi32_ps(
-                _mm256_cvtepu8_epi32(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(codes + i)))
-            );
-            dot_vec = _mm256_fmadd_ps(_mm256_loadu_ps(query + i), codes_vec, dot_vec);
+        for (; i + 32 <= num_dimensions; i += 32) {
+            dot_vec_0 = _mm256_fmadd_ps(_mm256_loadu_ps(query + i), codes_as_floats(i), dot_vec_0);
+            dot_vec_1 =
+                _mm256_fmadd_ps(_mm256_loadu_ps(query + i + 8), codes_as_floats(i + 8), dot_vec_1);
+            dot_vec_2 =
+                _mm256_fmadd_ps(_mm256_loadu_ps(query + i + 16), codes_as_floats(i + 16), dot_vec_2);
+            dot_vec_3 =
+                _mm256_fmadd_ps(_mm256_loadu_ps(query + i + 24), codes_as_floats(i + 24), dot_vec_3);
         }
+        for (; i + 8 <= num_dimensions; i += 8) {
+            dot_vec_0 = _mm256_fmadd_ps(_mm256_loadu_ps(query + i), codes_as_floats(i), dot_vec_0);
+        }
+        const __m256 dot_vec =
+            _mm256_add_ps(_mm256_add_ps(dot_vec_0, dot_vec_1), _mm256_add_ps(dot_vec_2, dot_vec_3));
         __m128 dot_halves =
             _mm_add_ps(_mm256_castps256_ps128(dot_vec), _mm256_extractf128_ps(dot_vec, 1));
         dot_halves = _mm_hadd_ps(dot_halves, dot_halves);
@@ -135,24 +151,33 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const uint8_t* PDX_RESTRICT codes,
         size_t num_dimensions
     ) {
-        __m256 dot_vec_low = _mm256_setzero_ps();
-        __m256 dot_vec_high = _mm256_setzero_ps();
+        __m256 dot_vec_0 = _mm256_setzero_ps();
+        __m256 dot_vec_1 = _mm256_setzero_ps();
+        __m256 dot_vec_2 = _mm256_setzero_ps();
+        __m256 dot_vec_3 = _mm256_setzero_ps();
         const __m128i nibble_mask = _mm_set1_epi8(0x0F);
-        size_t i = 0;
-        for (; i + 16 <= num_dimensions; i += 16) {
+        const auto accumulate_16_dimensions = [&](size_t offset, __m256& dot_low, __m256& dot_high) {
             const __m128i code_pairs =
-                _mm_loadl_epi64(reinterpret_cast<const __m128i*>(codes + i / 2));
+                _mm_loadl_epi64(reinterpret_cast<const __m128i*>(codes + offset / 2));
             const __m128i low_nibbles = _mm_and_si128(code_pairs, nibble_mask);
             const __m128i high_nibbles = _mm_and_si128(_mm_srli_epi16(code_pairs, 4), nibble_mask);
             const __m128i ordered_codes = _mm_unpacklo_epi8(low_nibbles, high_nibbles);
             const __m256 codes_low_vec = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(ordered_codes));
             const __m256 codes_high_vec =
                 _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_srli_si128(ordered_codes, 8)));
-            dot_vec_low = _mm256_fmadd_ps(_mm256_loadu_ps(query + i), codes_low_vec, dot_vec_low);
-            dot_vec_high =
-                _mm256_fmadd_ps(_mm256_loadu_ps(query + i + 8), codes_high_vec, dot_vec_high);
+            dot_low = _mm256_fmadd_ps(_mm256_loadu_ps(query + offset), codes_low_vec, dot_low);
+            dot_high = _mm256_fmadd_ps(_mm256_loadu_ps(query + offset + 8), codes_high_vec, dot_high);
+        };
+        size_t i = 0;
+        for (; i + 32 <= num_dimensions; i += 32) {
+            accumulate_16_dimensions(i, dot_vec_0, dot_vec_1);
+            accumulate_16_dimensions(i + 16, dot_vec_2, dot_vec_3);
         }
-        const __m256 dot_vec = _mm256_add_ps(dot_vec_low, dot_vec_high);
+        for (; i + 16 <= num_dimensions; i += 16) {
+            accumulate_16_dimensions(i, dot_vec_0, dot_vec_1);
+        }
+        const __m256 dot_vec =
+            _mm256_add_ps(_mm256_add_ps(dot_vec_0, dot_vec_1), _mm256_add_ps(dot_vec_2, dot_vec_3));
         __m128 dot_halves =
             _mm_add_ps(_mm256_castps256_ps128(dot_vec), _mm256_extractf128_ps(dot_vec, 1));
         dot_halves = _mm_hadd_ps(dot_halves, dot_halves);
@@ -166,6 +191,283 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             dot += query[i] * static_cast<float>(codes[i / 2] & 0x0F);
         }
         return dot;
+    }
+
+    static void MinMax(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float& lower,
+        float& upper
+    ) {
+        __m256 lower_vec = _mm256_set1_ps(std::numeric_limits<float>::infinity());
+        __m256 upper_vec = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
+        size_t i = 0;
+        for (; i + 8 <= num_dimensions; i += 8) {
+            const __m256 values_vec = _mm256_loadu_ps(values + i);
+            lower_vec = _mm256_min_ps(lower_vec, values_vec);
+            upper_vec = _mm256_max_ps(upper_vec, values_vec);
+        }
+        alignas(32) float lowers[8];
+        alignas(32) float uppers[8];
+        _mm256_store_ps(lowers, lower_vec);
+        _mm256_store_ps(uppers, upper_vec);
+        lower = *std::min_element(lowers, lowers + 8);
+        upper = *std::max_element(uppers, uppers + 8);
+        for (; i < num_dimensions; ++i) {
+            lower = std::min(lower, values[i]);
+            upper = std::max(upper, values[i]);
+        }
+    }
+
+    // Returns the squared norm of the dequantized values
+    static float QuantizeToU8(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        const __m256 lower_vec = _mm256_set1_ps(lower);
+        const __m256 inverse_step_vec = _mm256_set1_ps(1.0f / step);
+        const __m256 step_vec = _mm256_set1_ps(step);
+        __m256 squared_norm_vec = _mm256_setzero_ps();
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            _mm_storeu_si128(
+                reinterpret_cast<__m128i*>(codes + i),
+                Quantize16<255>(values + i, lower_vec, inverse_step_vec, step_vec, squared_norm_vec)
+            );
+        }
+        return ReduceAdd(squared_norm_vec) +
+               scalar_computer::QuantizeToU8(values + i, num_dimensions - i, lower, step, codes + i);
+    }
+
+    // Dimension 2i in the low nibble of byte i. Returns the squared norm of the dequantized values
+    static float QuantizeToU4(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        const __m256 lower_vec = _mm256_set1_ps(lower);
+        const __m256 inverse_step_vec = _mm256_set1_ps(1.0f / step);
+        const __m256 step_vec = _mm256_set1_ps(step);
+        // maddubs with these weights packs each pair of codes as even | odd << 4
+        const __m128i code_pair_weights = _mm_set1_epi16(0x1001);
+        __m256 squared_norm_vec = _mm256_setzero_ps();
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            const __m128i codes_vec =
+                Quantize16<15>(values + i, lower_vec, inverse_step_vec, step_vec, squared_norm_vec);
+            const __m128i code_pairs = _mm_maddubs_epi16(codes_vec, code_pair_weights);
+            _mm_storel_epi64(
+                reinterpret_cast<__m128i*>(codes + i / 2), _mm_packus_epi16(code_pairs, code_pairs)
+            );
+        }
+        return ReduceAdd(squared_norm_vec) + scalar_computer::QuantizeToU4(
+                                                 values + i, num_dimensions - i, lower, step, codes + i / 2
+                                             );
+    }
+
+    static void DequantizeFromU4(
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        float* PDX_RESTRICT out
+    ) {
+        const __m256 lower_vec = _mm256_set1_ps(lower);
+        const __m256 step_vec = _mm256_set1_ps(step);
+        const __m128i nibble_mask = _mm_set1_epi8(0x0F);
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            const __m128i code_pairs =
+                _mm_loadl_epi64(reinterpret_cast<const __m128i*>(codes + i / 2));
+            const __m128i ordered_codes = _mm_unpacklo_epi8(
+                _mm_and_si128(code_pairs, nibble_mask),
+                _mm_and_si128(_mm_srli_epi16(code_pairs, 4), nibble_mask)
+            );
+            _mm256_storeu_ps(
+                out + i,
+                _mm256_fmadd_ps(
+                    _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(ordered_codes)), step_vec, lower_vec
+                )
+            );
+            _mm256_storeu_ps(
+                out + i + 8,
+                _mm256_fmadd_ps(
+                    _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_srli_si128(ordered_codes, 8))),
+                    step_vec,
+                    lower_vec
+                )
+            );
+        }
+        scalar_computer::DequantizeFromU4(codes + i / 2, num_dimensions - i, lower, step, out + i);
+    }
+
+    static void QuantizeToInt8(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float inverse_scale,
+        int8_t* PDX_RESTRICT out
+    ) {
+        const __m256 inverse_scale_vec = _mm256_set1_ps(inverse_scale);
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            const __m256i rounded_0 =
+                _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_loadu_ps(values + i), inverse_scale_vec));
+            const __m256i rounded_1 =
+                _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_loadu_ps(values + i + 8), inverse_scale_vec));
+            // packs_epi32 interleaves the 128-bit lanes; permute4x64 puts the 16 values back in order
+            const __m256i rounded_s16 =
+                _mm256_permute4x64_epi64(_mm256_packs_epi32(rounded_0, rounded_1), 0xD8);
+            _mm_storeu_si128(
+                reinterpret_cast<__m128i*>(out + i),
+                _mm_packs_epi16(
+                    _mm256_castsi256_si128(rounded_s16), _mm256_extracti128_si256(rounded_s16, 1)
+                )
+            );
+        }
+        scalar_computer::QuantizeToInt8(values + i, num_dimensions - i, inverse_scale, out + i);
+    }
+
+    // TODO(@lkuffo, low): stored vertically, in blocks of 16 centroids whose 64-byte groups hold 4
+    // dimensions of each, the LVQ8 codes would take two _mm256_dpbusd_avx_epi32 per group (against the
+    // 4 query bytes broadcast by _mm256_set1_epi32) for the dots of all 16 centroids, with no
+    // horizontal sums. Measured 1.35x over this kernel on Zen 5 with AVX-VNNI (geomean of 56 cells).
+    // It needs a blocked Centroids layout and a new CentroidQuantization nibble.
+    // Reads padded_size (a multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes
+    static int32_t HorizontalDotInt8WithU8(
+        const int8_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t padded_size
+    ) {
+        __m256i dot_vec_0 = _mm256_setzero_si256();
+        __m256i dot_vec_1 = _mm256_setzero_si256();
+        for (size_t i = 0; i < padded_size; i += 64) {
+#if defined(__AVXVNNI__)
+            dot_vec_0 = _mm256_dpbusd_avx_epi32(
+                dot_vec_0, LoadBytes32(codes + i), LoadBytes32(query + i)
+            );
+            dot_vec_1 = _mm256_dpbusd_avx_epi32(
+                dot_vec_1, LoadBytes32(codes + i + 32), LoadBytes32(query + i + 32)
+            );
+#else
+            // Without VNNI: widen to s16, and madd_epi16 sums each pair of products into s32
+            for (size_t offset = 0; offset < 64; offset += 32) {
+                dot_vec_0 = _mm256_add_epi32(
+                    dot_vec_0,
+                    _mm256_madd_epi16(
+                        _mm256_cvtepu8_epi16(LoadBytes16(codes + i + offset)),
+                        _mm256_cvtepi8_epi16(LoadBytes16(query + i + offset))
+                    )
+                );
+                dot_vec_1 = _mm256_add_epi32(
+                    dot_vec_1,
+                    _mm256_madd_epi16(
+                        _mm256_cvtepu8_epi16(LoadBytes16(codes + i + offset + 16)),
+                        _mm256_cvtepi8_epi16(LoadBytes16(query + i + offset + 16))
+                    )
+                );
+            }
+#endif
+        }
+        return ReduceAdd(_mm256_add_epi32(dot_vec_0, dot_vec_1));
+    }
+
+    // Byte i of codes holds dimension 2i (low nibble) and 2i+1 (high), so even_query[i] and
+    // odd_query[i] are those dimensions of the query. Reads padded_size bytes of each
+    static int32_t HorizontalDotInt8WithU4(
+        const int8_t* PDX_RESTRICT even_query,
+        const int8_t* PDX_RESTRICT odd_query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t padded_size
+    ) {
+        __m256i dot_vec_0 = _mm256_setzero_si256();
+        __m256i dot_vec_1 = _mm256_setzero_si256();
+        const __m256i nibble_mask = _mm256_set1_epi8(0x0F);
+#if !defined(__AVXVNNI__)
+        const __m256i ones_s16 = _mm256_set1_epi16(1);
+#endif
+        for (size_t i = 0; i < padded_size; i += 32) {
+            const __m256i code_pairs = LoadBytes32(codes + i);
+            const __m256i low_nibbles = _mm256_and_si256(code_pairs, nibble_mask);
+            const __m256i high_nibbles =
+                _mm256_and_si256(_mm256_srli_epi16(code_pairs, 4), nibble_mask);
+#if defined(__AVXVNNI__)
+            dot_vec_0 = _mm256_dpbusd_avx_epi32(dot_vec_0, low_nibbles, LoadBytes32(even_query + i));
+            dot_vec_1 = _mm256_dpbusd_avx_epi32(dot_vec_1, high_nibbles, LoadBytes32(odd_query + i));
+#else
+            // Without VNNI: maddubs pairs fit in s16 (15 * 128 * 2 < 2^15), madd with ones widens them
+            dot_vec_0 = _mm256_add_epi32(
+                dot_vec_0,
+                _mm256_madd_epi16(
+                    _mm256_maddubs_epi16(low_nibbles, LoadBytes32(even_query + i)), ones_s16
+                )
+            );
+            dot_vec_1 = _mm256_add_epi32(
+                dot_vec_1,
+                _mm256_madd_epi16(
+                    _mm256_maddubs_epi16(high_nibbles, LoadBytes32(odd_query + i)), ones_s16
+                )
+            );
+#endif
+        }
+        return ReduceAdd(_mm256_add_epi32(dot_vec_0, dot_vec_1));
+    }
+
+  private:
+    static float ReduceAdd(const __m256 vec) {
+        __m128 halves = _mm_add_ps(_mm256_castps256_ps128(vec), _mm256_extractf128_ps(vec, 1));
+        halves = _mm_hadd_ps(halves, halves);
+        return _mm_cvtss_f32(_mm_hadd_ps(halves, halves));
+    }
+
+    static int32_t ReduceAdd(const __m256i vec) {
+        __m128i halves =
+            _mm_add_epi32(_mm256_castsi256_si128(vec), _mm256_extracti128_si256(vec, 1));
+        halves = _mm_hadd_epi32(halves, halves);
+        return _mm_cvtsi128_si32(_mm_hadd_epi32(halves, halves));
+    }
+
+    static __m256i LoadBytes32(const void* address) {
+        return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(address));
+    }
+
+    static __m128i LoadBytes16(const void* address) {
+        return _mm_loadu_si128(reinterpret_cast<const __m128i*>(address));
+    }
+
+    // The codes of 16 values (round to nearest even, clamped to [0, MAX_CODE]); adds the squares of
+    // their dequantized values to squared_norm_vec
+    template <int MAX_CODE>
+    static __m128i Quantize16(
+        const query_t* PDX_RESTRICT values,
+        const __m256 lower_vec,
+        const __m256 inverse_step_vec,
+        const __m256 step_vec,
+        __m256& squared_norm_vec
+    ) {
+        __m256i codes_vec[2];
+        for (size_t half = 0; half < 2; ++half) {
+            const __m256 scaled = _mm256_mul_ps(
+                _mm256_sub_ps(_mm256_loadu_ps(values + 8 * half), lower_vec), inverse_step_vec
+            );
+            codes_vec[half] = _mm256_min_epi32(
+                _mm256_max_epi32(_mm256_cvtps_epi32(scaled), _mm256_setzero_si256()),
+                _mm256_set1_epi32(MAX_CODE)
+            );
+            const __m256 dequantized =
+                _mm256_fmadd_ps(_mm256_cvtepi32_ps(codes_vec[half]), step_vec, lower_vec);
+            squared_norm_vec = _mm256_fmadd_ps(dequantized, dequantized, squared_norm_vec);
+        }
+        // packus_epi32 interleaves the 128-bit lanes; permute4x64 puts the 16 codes back in order
+        const __m256i codes_u16 =
+            _mm256_permute4x64_epi64(_mm256_packus_epi32(codes_vec[0], codes_vec[1]), 0xD8);
+        return _mm_packus_epi16(
+            _mm256_castsi256_si128(codes_u16), _mm256_extracti128_si256(codes_u16, 1)
+        );
     }
 };
 

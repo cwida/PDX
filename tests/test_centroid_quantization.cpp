@@ -119,6 +119,45 @@ TEST(LVQQuantizerTest, ConstantEmbeddingDequantizesExactly) {
     ExpectConstantEmbeddingDequantizesExactly<4>();
 }
 
+template <uint8_t BIT_WIDTH>
+void ExpectInt8QueryDistanceWithinItsBound() {
+    for (size_t d : {1, 7, 16, 33, 128, 384}) {
+        SCOPED_TRACE("bit_width=" + std::to_string(BIT_WIDTH) + ", d=" + std::to_string(d));
+        const auto vectors = skmeans::GenerateRandomVectors(2, d, -1.0f, 1.0f, 42);
+        const float* embedding = vectors.data();
+        const float* query = vectors.data() + d;
+        const PDX::LVQQuantizer<BIT_WIDTH> quantizer(d);
+        std::vector<uint8_t> codes(
+            PDX::LVQQuantizer<BIT_WIDTH>::GetCodesSizeInBytes(d) +
+            PDX::LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES
+        );
+        const PDX::LVQParams params = quantizer.QuantizeEmbedding(embedding, codes.data());
+        std::vector<float> dequantized(d);
+        quantizer.DequantizeEmbedding(codes.data(), params, dequantized.data());
+
+        const PDX::LVQInt8Query int8_query(query, static_cast<uint32_t>(d));
+        float bound = 0.0f;
+        for (size_t j = 0; j < d; ++j) {
+            bound += int8_query.GetScale() * (dequantized[j] - params.quantization_base);
+        }
+        const float exact_distance = quantizer.ComputeL2SQ(
+            query, int8_query.GetSum(), int8_query.GetSquaredNorm(), codes.data(), params
+        );
+        EXPECT_NEAR(
+            quantizer.ComputeL2SQWithInt8Query(int8_query, codes.data(), params),
+            exact_distance,
+            bound + 1e-5f * (int8_query.GetSquaredNorm() + params.dequantized_squared_norm)
+        );
+    }
+}
+
+// Each int8 query value is within half its scale of the float one, so the distance is within
+// scale * sum(dequantized - base) of ComputeL2SQ's.
+TEST(LVQQuantizerTest, Int8QueryDistanceWithinItsBound) {
+    ExpectInt8QueryDistanceWithinItsBound<8>();
+    ExpectInt8QueryDistanceWithinItsBound<4>();
+}
+
 class CentroidQuantizationTest : public ::testing::TestWithParam<std::string> {};
 
 // Ranking by the quantized centroids keeps the recall of ranking by the float32 ones, single-shot
@@ -161,6 +200,65 @@ TEST_P(CentroidQuantizationTest, RecallMatchesF32) {
         EXPECT_GE(
             ComputeCursorRecall(*quantized_index, data.queries.data(), gt),
             f32_cursor_recall - test_case.recall_tolerance
+        );
+    }
+}
+
+// A CentroidRankingQuery built once ranks like the one each index builds, and an index of another
+// encoding or dimensionality rejects it.
+TEST_P(CentroidQuantizationTest, SharedRankingQueryRanksAsTheIndexOwn) {
+    auto data = TestUtils::LoadTestData(D);
+    const float* query = data.queries.data();
+    for (const auto& test_case : TestUtils::QUANTIZED_CENTROIDS) {
+        SCOPED_TRACE(
+            "centroid_quantization=" +
+            std::to_string(static_cast<int>(test_case.centroid_quantization))
+        );
+        auto index = TestUtils::BuildIndexWithConfig(
+            GetParam(),
+            MakeConfig(test_case.centroid_quantization),
+            data.train.data(),
+            TestUtils::N_TRAIN
+        );
+        const PDX::CentroidRankingQuery ranking_query(query, D, test_case.centroid_quantization);
+        const size_t num_clusters = index->GetNumClusters();
+        std::vector<float> own_distances(num_clusters);
+        std::vector<float> shared_distances(num_clusters);
+        index->GetDistancesToCentroids(query, true, own_distances.data());
+        index->GetDistancesToCentroids(query, true, shared_distances.data(), &ranking_query);
+        EXPECT_EQ(shared_distances, own_distances);
+        EXPECT_EQ(
+            index->GetClustersAccessOrder(query, true, &ranking_query),
+            index->GetClustersAccessOrder(query, true)
+        );
+        PDX::TopKHeap own_heap;
+        PDX::TopKHeap shared_heap;
+        index->BeginIterativeSearch(query, TestUtils::KNN, own_heap, nullptr, true)->Next(N_PROBE);
+        index
+            ->BeginIterativeSearch(
+                query, TestUtils::KNN, shared_heap, nullptr, true, nullptr, &ranking_query
+            )
+            ->Next(N_PROBE);
+        const auto own_results = PDX::BuildResultSetFromHeap(TestUtils::KNN, own_heap.heap);
+        const auto shared_results = PDX::BuildResultSetFromHeap(TestUtils::KNN, shared_heap.heap);
+        ASSERT_EQ(shared_results.size(), own_results.size());
+        for (size_t i = 0; i < own_results.size(); ++i) {
+            EXPECT_EQ(shared_results[i].index, own_results[i].index) << "result " << i;
+        }
+
+        const PDX::CentroidRankingQuery f32_ranking_query(query, D, PDX::CentroidQuantization::F32);
+        const PDX::CentroidRankingQuery fewer_dimensions_ranking_query(
+            query, D - 1, test_case.centroid_quantization
+        );
+        EXPECT_THROW(
+            index->GetDistancesToCentroids(query, true, shared_distances.data(), &f32_ranking_query),
+            std::invalid_argument
+        );
+        EXPECT_THROW(
+            index->GetDistancesToCentroids(
+                query, true, shared_distances.data(), &fewer_dimensions_ranking_query
+            ),
+            std::invalid_argument
         );
     }
 }
@@ -248,7 +346,7 @@ INSTANTIATE_TEST_SUITE_P(
 class VanillaCentroidQuantizationTest : public ::testing::TestWithParam<std::string> {};
 
 // One clustering, so the indexes differ only by their centroids: d floats each in F32, the codes
-// and their LVQParams in LVQ.
+// and their LVQParams in LVQ, plus its trailing padding.
 TEST_P(VanillaCentroidQuantizationTest, QuantizedCentroidsSaveTheirBytes) {
     auto data = TestUtils::LoadTestData(D);
     auto f32_index = TestUtils::BuildIndexWithConfig(
@@ -273,7 +371,8 @@ TEST_P(VanillaCentroidQuantizationTest, QuantizedCentroidsSaveTheirBytes) {
             D * sizeof(float) - test_case.encoded_centroid_size_in_bytes(D);
         EXPECT_EQ(
             f32_index->GetInMemorySizeInBytes() - quantized_index->GetInMemorySizeInBytes(),
-            f32_index->GetNumClusters() * saved_bytes_per_centroid
+            f32_index->GetNumClusters() * saved_bytes_per_centroid -
+                test_case.trailing_padding_in_bytes
         );
     }
 }

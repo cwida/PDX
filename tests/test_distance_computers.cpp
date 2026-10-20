@@ -254,4 +254,121 @@ TEST_F(DistanceComputerTest, F32_SelfDistanceIsZero) {
     }
 }
 
+using ScalarF32Computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::F32>;
+using F32Computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::F32>;
+
+const std::vector<size_t> LVQ_KERNEL_DIMENSIONS = {1, 2, 7, 15, 16, 17, 31, 33, 60, 64, 65, 127, 384, 500, 1024};
+
+// MinMax, the LVQ encoders and the LVQ4 decoder match scalar, and the encoders write no byte past
+// the codes.
+TEST_F(DistanceComputerTest, F32_LVQEncodeDecode_SIMD_MatchesScalar) {
+    constexpr uint8_t CANARY = 0xA5;
+    for (size_t d : LVQ_KERNEL_DIMENSIONS) {
+        SCOPED_TRACE("d=" + std::to_string(d));
+        const auto values = skmeans::GenerateRandomVectors(1, d, -3.0f, 5.0f, 42);
+        float scalar_lower, scalar_upper, simd_lower, simd_upper;
+        ScalarF32Computer::MinMax(values.data(), d, scalar_lower, scalar_upper);
+        F32Computer::MinMax(values.data(), d, simd_lower, simd_upper);
+        EXPECT_EQ(simd_lower, scalar_lower);
+        EXPECT_EQ(simd_upper, scalar_upper);
+        const float range = std::max(scalar_upper - scalar_lower, 1e-6f);
+
+        std::vector<uint8_t> scalar_codes(d + 1, CANARY);
+        std::vector<uint8_t> simd_codes(d + 1, CANARY);
+        const float scalar_norm_u8 = ScalarF32Computer::QuantizeToU8(
+            values.data(), d, scalar_lower, range / 255.0f, scalar_codes.data()
+        );
+        const float simd_norm_u8 =
+            F32Computer::QuantizeToU8(values.data(), d, scalar_lower, range / 255.0f, simd_codes.data());
+        EXPECT_EQ(simd_codes, scalar_codes);
+        EXPECT_NEAR(simd_norm_u8, scalar_norm_u8, 1e-5f * scalar_norm_u8);
+
+        const float step_u4 = range / 15.0f;
+        std::vector<uint8_t> scalar_code_pairs((d + 1) / 2 + 1, CANARY);
+        std::vector<uint8_t> simd_code_pairs((d + 1) / 2 + 1, CANARY);
+        const float scalar_norm_u4 = ScalarF32Computer::QuantizeToU4(
+            values.data(), d, scalar_lower, step_u4, scalar_code_pairs.data()
+        );
+        const float simd_norm_u4 =
+            F32Computer::QuantizeToU4(values.data(), d, scalar_lower, step_u4, simd_code_pairs.data());
+        EXPECT_EQ(simd_code_pairs, scalar_code_pairs);
+        EXPECT_NEAR(simd_norm_u4, scalar_norm_u4, 1e-5f * scalar_norm_u4);
+
+        std::vector<float> scalar_decoded(d);
+        std::vector<float> simd_decoded(d);
+        ScalarF32Computer::DequantizeFromU4(
+            scalar_code_pairs.data(), d, scalar_lower, step_u4, scalar_decoded.data()
+        );
+        F32Computer::DequantizeFromU4(
+            scalar_code_pairs.data(), d, scalar_lower, step_u4, simd_decoded.data()
+        );
+        for (size_t i = 0; i < d; ++i) {
+            EXPECT_FLOAT_EQ(simd_decoded[i], scalar_decoded[i]) << "dimension " << i;
+        }
+    }
+}
+
+// QuantizeToInt8 matches scalar, and the int8 dots equal the dot over the d dimensions whatever
+// the bytes past the codes hold.
+TEST_F(DistanceComputerTest, F32_Int8Query_SIMD_MatchesScalar) {
+    std::mt19937 rng(42);
+    for (size_t d : LVQ_KERNEL_DIMENSIONS) {
+        SCOPED_TRACE("d=" + std::to_string(d));
+        const size_t padded_size =
+            PDX::AlignValue<size_t, PDX::LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES>(d);
+        const size_t padded_pairs_size =
+            PDX::AlignValue<size_t, PDX::LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES>((d + 1) / 2);
+        const auto values = skmeans::GenerateRandomVectors(1, d, -1.0f, 1.0f, 7);
+        std::vector<int8_t> scalar_query(padded_size, 0);
+        std::vector<int8_t> query(padded_size, 0);
+        ScalarF32Computer::QuantizeToInt8(values.data(), d, 127.0f, scalar_query.data());
+        F32Computer::QuantizeToInt8(values.data(), d, 127.0f, query.data());
+        EXPECT_EQ(query, scalar_query);
+
+        std::vector<uint8_t> codes(padded_size);
+        for (auto& code : codes) {
+            code = static_cast<uint8_t>(rng() % 256);
+        }
+        int32_t expected_dot_u8 = 0;
+        for (size_t j = 0; j < d; ++j) {
+            expected_dot_u8 += static_cast<int32_t>(query[j]) * static_cast<int32_t>(codes[j]);
+        }
+        EXPECT_EQ(
+            ScalarF32Computer::HorizontalDotInt8WithU8(query.data(), codes.data(), padded_size),
+            expected_dot_u8
+        );
+        EXPECT_EQ(
+            F32Computer::HorizontalDotInt8WithU8(query.data(), codes.data(), padded_size),
+            expected_dot_u8
+        );
+
+        std::vector<int8_t> even_query(padded_pairs_size, 0);
+        std::vector<int8_t> odd_query(padded_pairs_size, 0);
+        for (size_t j = 0; j < d; ++j) {
+            (j % 2 == 0 ? even_query : odd_query)[j / 2] = query[j];
+        }
+        std::vector<uint8_t> code_pairs(padded_pairs_size);
+        for (auto& code_pair : code_pairs) {
+            code_pair = static_cast<uint8_t>(rng() % 256);
+        }
+        int32_t expected_dot_u4 = 0;
+        for (size_t j = 0; j < d; ++j) {
+            const int32_t code = (j % 2 == 0) ? (code_pairs[j / 2] & 0x0F) : (code_pairs[j / 2] >> 4);
+            expected_dot_u4 += static_cast<int32_t>(query[j]) * code;
+        }
+        EXPECT_EQ(
+            ScalarF32Computer::HorizontalDotInt8WithU4(
+                even_query.data(), odd_query.data(), code_pairs.data(), padded_pairs_size
+            ),
+            expected_dot_u4
+        );
+        EXPECT_EQ(
+            F32Computer::HorizontalDotInt8WithU4(
+                even_query.data(), odd_query.data(), code_pairs.data(), padded_pairs_size
+            ),
+            expected_dot_u4
+        );
+    }
+}
+
 } // namespace

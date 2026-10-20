@@ -6,11 +6,45 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <ostream>
 #include <stdexcept>
 #include <string>
 
 namespace PDX {
+
+// A search query, encoded once as the centroids of one CentroidQuantization take it for ranking.
+// For DuckIR, where one query ranks the centroids of many indexes (one per row group, sharing the
+// rotation): build it once per query from the transformed query and pass it to every index's
+// ranking calls (BeginIterativeSearch*, GetDistancesToCentroids, GetClustersAccessOrder), so the
+// query is encoded once instead of once per index.
+class CentroidRankingQuery {
+  public:
+    // transformed_query: normalized if the index needs it, then rotated
+    CentroidRankingQuery(
+        const float* transformed_query,
+        uint32_t num_dimensions,
+        CentroidQuantization quantization
+    )
+        : quantization(quantization) {
+        switch (quantization) {
+        case CentroidQuantization::F32:
+            break;
+        case CentroidQuantization::LVQ8:
+        case CentroidQuantization::LVQ4:
+            lvq_int8_query.emplace(transformed_query, num_dimensions);
+            break;
+        }
+    }
+
+    CentroidQuantization GetQuantization() const { return quantization; }
+    // LVQ8 and LVQ4
+    const LVQInt8Query& GetLVQInt8Query() const { return *lvq_int8_query; }
+
+  private:
+    CentroidQuantization quantization;
+    std::optional<LVQInt8Query> lvq_int8_query;
+};
 
 class Centroids : public skmeans::AllocatorHolder {
   public:
@@ -22,7 +56,8 @@ class Centroids : public skmeans::AllocatorHolder {
         MemoryAllocator* allocator = nullptr
     )
         : quantization(quantization), num_dimensions(num_dimensions),
-          encoded_centroid_size(GetEncodedCentroidSize(quantization, num_dimensions)) {
+          encoded_centroid_size(GetEncodedCentroidSize(quantization, num_dimensions)),
+          trailing_padding_size(GetTrailingPaddingSize(quantization)) {
         SetAllocator(allocator);
     }
 
@@ -72,9 +107,7 @@ class Centroids : public skmeans::AllocatorHolder {
             encoded_centroids.reset();
             return;
         }
-        auto shrunk = skmeans::AllocateBuffer<uint8_t>(
-            GetAllocator(), num_centroids * encoded_centroid_size
-        );
+        auto shrunk = AllocateEncodedCentroids(num_centroids);
         std::memcpy(shrunk.get(), encoded_centroids.get(), num_centroids * encoded_centroid_size);
         encoded_centroids = std::move(shrunk);
     }
@@ -94,6 +127,37 @@ class Centroids : public skmeans::AllocatorHolder {
             break;
         case CentroidQuantization::LVQ4:
             ComputeLVQDistancesToCentroids<4>(query, out);
+            break;
+        }
+    }
+
+    // For the search ranking, with the query encoded as these centroids take it (ranking_query, or
+    // encoded here when null): LVQ centroids take it in int8; F32 centroids are exact
+    void ComputeApproximateDistancesToCentroids(
+        const float* PDX_RESTRICT query,
+        const CentroidRankingQuery* ranking_query,
+        float* PDX_RESTRICT out
+    ) const {
+        if (ranking_query != nullptr && ranking_query->GetQuantization() != quantization) {
+            throw std::invalid_argument(
+                "CentroidRankingQuery encoded for centroid quantization " +
+                std::to_string(static_cast<int>(ranking_query->GetQuantization())) +
+                ", the centroids are " + std::to_string(static_cast<int>(quantization))
+            );
+        }
+        switch (quantization) {
+        case CentroidQuantization::F32:
+            ComputeDistancesToCentroids(query, out);
+            break;
+        case CentroidQuantization::LVQ8:
+            ComputeLVQDistancesToCentroids<8>(
+                query, ranking_query ? &ranking_query->GetLVQInt8Query() : nullptr, out
+            );
+            break;
+        case CentroidQuantization::LVQ4:
+            ComputeLVQDistancesToCentroids<4>(
+                query, ranking_query ? &ranking_query->GetLVQInt8Query() : nullptr, out
+            );
             break;
         }
     }
@@ -194,17 +258,41 @@ class Centroids : public skmeans::AllocatorHolder {
         );
     }
 
+    // The int8-query kernels of LVQ codes read whole chunks past the last centroid's codes
+    static size_t GetTrailingPaddingSize(CentroidQuantization quantization) {
+        switch (quantization) {
+        case CentroidQuantization::F32:
+            return 0;
+        case CentroidQuantization::LVQ8:
+        case CentroidQuantization::LVQ4:
+            return LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES;
+        }
+        throw std::runtime_error(
+            "Unknown PDX centroid quantization: " +
+            std::to_string(static_cast<int>(quantization))
+        );
+    }
+
+    skmeans::AllocatedBuffer<uint8_t> AllocateEncodedCentroids(size_t capacity) const {
+        const size_t size_in_bytes = capacity * encoded_centroid_size + trailing_padding_size;
+        if (trailing_padding_size == 0) {
+            return skmeans::AllocateBuffer<uint8_t>(GetAllocator(), size_in_bytes);
+        }
+        return skmeans::AllocateZeroedBuffer<uint8_t>(GetAllocator(), size_in_bytes);
+    }
+
     size_t GetCapacity() const {
-        return encoded_centroids ? encoded_centroids.get_deleter().Size() / encoded_centroid_size
-                                 : 0;
+        return encoded_centroids
+                   ? (encoded_centroids.get_deleter().Size() - trailing_padding_size) /
+                         encoded_centroid_size
+                   : 0;
     }
 
     void Reserve(size_t capacity) {
         if (capacity <= GetCapacity()) {
             return;
         }
-        auto grown =
-            skmeans::AllocateBuffer<uint8_t>(GetAllocator(), capacity * encoded_centroid_size);
+        auto grown = AllocateEncodedCentroids(capacity);
         if (num_centroids > 0) {
             std::memcpy(
                 grown.get(), encoded_centroids.get(), num_centroids * encoded_centroid_size
@@ -295,9 +383,34 @@ class Centroids : public skmeans::AllocatorHolder {
         }
     }
 
+    // With the query taken in int8: int8_query, or one built from query when null
+    template <uint8_t BIT_WIDTH>
+    void ComputeLVQDistancesToCentroids(
+        const float* PDX_RESTRICT query,
+        const LVQInt8Query* int8_query,
+        float* PDX_RESTRICT out
+    ) const {
+        std::optional<LVQInt8Query> local_int8_query;
+        if (int8_query == nullptr) {
+            int8_query = &local_int8_query.emplace(query, num_dimensions);
+        } else if (int8_query->GetNumDimensions() != num_dimensions) {
+            throw std::invalid_argument(
+                "LVQInt8Query has " + std::to_string(int8_query->GetNumDimensions()) +
+                " dimensions, the centroids " + std::to_string(num_dimensions)
+            );
+        }
+        const LVQQuantizer<BIT_WIDTH> quantizer(num_dimensions);
+        for (size_t centroid_id = 0; centroid_id < num_centroids; ++centroid_id) {
+            out[centroid_id] = quantizer.ComputeL2SQWithInt8Query(
+                *int8_query, GetLVQCodesPtr(centroid_id), ReadLVQParams(centroid_id)
+            );
+        }
+    }
+
     CentroidQuantization quantization = CentroidQuantization::F32;
     uint32_t num_dimensions = 0;
     size_t encoded_centroid_size = 0;
+    size_t trailing_padding_size = 0;
     size_t num_centroids = 0;
     skmeans::AllocatedBuffer<uint8_t> encoded_centroids;
     skmeans::AllocatedBuffer<float> squared_norms;

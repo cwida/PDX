@@ -89,14 +89,16 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
     // share it); passing_row_ids to filter (nullptr: unfiltered). clusters_access_order: the
     // query's GetClustersAccessOrder, so that several searches of one query rank the clusters once
-    // (nullptr: rank).
+    // (nullptr: rank). ranking_query: for DuckIR, the transformed query encoded once for the
+    // centroids of every index it ranks (see CentroidRankingQuery; nullptr: encoded here).
     virtual std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
         const float* query_embedding,
         uint32_t knn,
         TopKHeap& top_k_heap,
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* clusters_access_order = nullptr
+        const std::vector<uint32_t>* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const = 0;
     // Builds the evaluator of passing_row_ids once, for the filtered searches of many queries.
     virtual std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
@@ -110,7 +112,8 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
         TopKHeap& top_k_heap,
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* clusters_access_order = nullptr
+        const std::vector<uint32_t>* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const = 0;
     // Writes the embeddings of row_ids as the index stores them (normalized and rotated; u8
     // dequantized), row-major into out (row_ids.size() x num_dimensions), in the order of row_ids.
@@ -123,12 +126,14 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     virtual void GetDistancesToCentroids(
         const float* query_embedding,
         bool is_query_transformed,
-        float* out
+        float* out,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const = 0;
     // All clusters, nearest centroid to the query first.
     virtual std::vector<uint32_t> GetClustersAccessOrder(
         const float* query_embedding,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const = 0;
 
   protected:
@@ -303,7 +308,8 @@ class PDXIndex : public IPDXIndex {
         TopKHeap& top_k_heap,
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* clusters_access_order = nullptr
+        const std::vector<uint32_t>* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
         const uint32_t* preset_clusters_access_order =
             clusters_access_order ? clusters_access_order->data() : nullptr;
@@ -314,7 +320,8 @@ class PDXIndex : public IPDXIndex {
                     knn,
                     top_k_heap,
                     is_query_transformed,
-                    preset_clusters_access_order
+                    preset_clusters_access_order,
+                    ranking_query
                 )
             );
         }
@@ -327,7 +334,8 @@ class PDXIndex : public IPDXIndex {
                 std::move(evaluator),
                 top_k_heap,
                 is_query_transformed,
-                preset_clusters_access_order
+                preset_clusters_access_order,
+                ranking_query
             )
         );
     }
@@ -344,7 +352,8 @@ class PDXIndex : public IPDXIndex {
         TopKHeap& top_k_heap,
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* clusters_access_order = nullptr
+        const std::vector<uint32_t>* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
         return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
             searcher->BeginFilteredIterativeSearch(
@@ -353,7 +362,8 @@ class PDXIndex : public IPDXIndex {
                 evaluator,
                 top_k_heap,
                 is_query_transformed,
-                clusters_access_order ? clusters_access_order->data() : nullptr
+                clusters_access_order ? clusters_access_order->data() : nullptr,
+                ranking_query
             )
         );
     }
@@ -373,16 +383,18 @@ class PDXIndex : public IPDXIndex {
     void GetDistancesToCentroids(
         const float* query_embedding,
         bool is_query_transformed,
-        float* out
+        float* out,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
-        searcher->GetDistancesToCentroids(query_embedding, is_query_transformed, out);
+        searcher->GetDistancesToCentroids(query_embedding, is_query_transformed, out, ranking_query);
     }
 
     std::vector<uint32_t> GetClustersAccessOrder(
         const float* query_embedding,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
-        return searcher->GetClustersAccessOrder(query_embedding, is_query_transformed);
+        return searcher->GetClustersAccessOrder(query_embedding, is_query_transformed, ranking_query);
     }
 
     void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }

@@ -182,7 +182,8 @@ class FlatIndex : public IPDXIndex {
         TopKHeap& top_k_heap,
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr
+        const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr,
+        const CentroidRankingQuery* /*ranking_query*/ = nullptr
     ) const override {
         if (!passing_row_ids) {
             return std::make_unique<FlatSearcher::IterativeSearch>(searcher->BeginIterativeSearch(
@@ -221,7 +222,8 @@ class FlatIndex : public IPDXIndex {
         TopKHeap& top_k_heap,
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr
+        const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr,
+        const CentroidRankingQuery* /*ranking_query*/ = nullptr
     ) const override {
         auto positions = std::make_unique<std::vector<uint32_t>>();
         positions->reserve(evaluator.total_passing_tuples);
@@ -258,13 +260,18 @@ class FlatIndex : public IPDXIndex {
     void GetDistancesToCentroids(
         const float* query_embedding,
         bool is_query_transformed,
-        float* out
+        float* out,
+        const CentroidRankingQuery* /*ranking_query*/ = nullptr
     ) const override {
         searcher->GetDistancesToCentroids(query_embedding, is_query_transformed, out);
     }
 
     // Its one cluster.
-    std::vector<uint32_t> GetClustersAccessOrder(const float*, bool = false) const override {
+    std::vector<uint32_t> GetClustersAccessOrder(
+        const float*,
+        bool = false,
+        const CentroidRankingQuery* = nullptr
+    ) const override {
         return {0};
     }
 

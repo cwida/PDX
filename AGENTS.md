@@ -50,9 +50,15 @@ Centroids (`Centroids`, `indexes/centroids.hpp`) are stored once, in `PDXIndexCo
 (default), `LVQ8` or `LVQ4` (`LVQQuantizer<BIT_WIDTH>`, `quantizers/lvq.hpp`: d 8-bit codes, or two 4-bit codes per
 byte with dimension 2i in the low nibble, plus `LVQParams` per centroid; no float32 copy kept). A new encoding adds its
 case to `Centroids`' switches (`-Wswitch` lists them) and to `TestUtils::QUANTIZED_CENTROIDS`. Vanilla and tree leaf centroids; the tree's L0 (its centroids and its PDX copies of the leaf centroids)
-stays f32, and Flat ignores the setting. Ranking, `Append`'s nearest centroid and the split's neighbour search use
-`ComputeDistancesToCentroids` (LVQ: the exact L2 to the decoded centroid, through `HorizontalDotWithU8`/`U4`); maintenance
-that needs floats decodes into scratch (`GetF32CentroidPtr`, `DecodeCentroid`, and `GetF32CentroidsPtr` +
+stays f32, and Flat ignores the setting. Search ranking uses `ComputeApproximateDistancesToCentroids`: LVQ centroids
+take the query in int8 (`LVQInt8Query`, scale max|q|/127, through `HorizontalDotInt8WithU8`/`U4`), F32 ones are exact.
+`Append`'s nearest centroid and the split's neighbour search keep the exact `ComputeDistancesToCentroids` (LVQ: the L2
+to the decoded centroid, through `HorizontalDotWithU8`/`U4`). The int8 kernels read whole
+`LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES` (64) chunks: the query is zero-padded, and LVQ centroids keep that many zeroed bytes
+after the last one (`trailing_padding_size`; F32 none). The encoded query travels as a `CentroidRankingQuery` (built for
+one `CentroidQuantization`; a new encoding adds its part to it). LVQ encoding (`MinMax`, `QuantizeToU8`/`U4`) and LVQ4
+decoding (`DequantizeFromU4`) are SIMD kernels, with codes bit-identical to scalar; LVQ8 decoding is an auto-vectorized
+loop. Maintenance that needs floats decodes into scratch (`GetF32CentroidPtr`, `DecodeCentroid`, and `GetF32CentroidsPtr` +
 `GetF32CentroidsSquaredNormsPtr` for the GEMMs). A centroid is encoded only when computed (build, the split's two
 means); merges move encoded centroids as they are.
 
@@ -85,7 +91,10 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 
 ## Resumable search (cursor)
 
-`PDXearch<Q>::IterativeSearch<FILTERED>` allows for: i) concurrent queries on one index, ii) resume a search. The API of a resumable search is: `Next(n)`: probes the next n clusters ranked once at `Begin`; `Done()`: the clusters are exhausted. `GetClustersAccessOrder(query)` returns every cluster, nearest first; passing it as `BeginIterativeSearch`'s `clusters_access_order` lets several cursors of one query (e.g. one per batch of passing rows) skip ranking again (Flat returns `{0}`). A cursor that ranks every cluster itself (no preset order) computes the distances at `Begin` and orders lazily: `EnsureClustersOrder` partial-sorts the queue as far as `Next` probes, at least doubling the ordered prefix, so it probes in the full sort's order without sorting what it never reaches.
+`PDXearch<Q>::IterativeSearch<FILTERED>` allows for: i) concurrent queries on one index, ii) resume a search. The API of a resumable search is: `Next(n)`: probes the next n clusters ranked once at `Begin`; `Done()`: the clusters are exhausted. `GetClustersAccessOrder(query)` returns every cluster, nearest first; passing it as `BeginIterativeSearch`'s `clusters_access_order` lets several cursors of one query (e.g. one per batch of passing rows) skip ranking again (Flat returns `{0}`).
+`BeginIterativeSearch*`, `GetDistancesToCentroids` and `GetClustersAccessOrder` take an optional `CentroidRankingQuery`
+last, so a caller that ranks one query on many indexes (DuckIR: one per row group) encodes it once (null: each index
+encodes it). A cursor that ranks every cluster itself (no preset order) computes the distances at `Begin` and orders lazily: `EnsureClustersOrder` partial-sorts the queue as far as `Next` probes, at least doubling the ordered prefix, so it probes in the full sort's order without sorting what it never reaches.
 
 Cursors may share one `thread_safe` `TopKHeap`. Only merges take its lock (`Start`'s full scan of the first clusters runs unlocked), and each merge ends with `PublishKthDistance(k)`; the pruning thresholds read that atomic `kth_distance` (+inf while fewer than k) without the lock, as a stale value is only looser. Every change to `heap` must be followed by `PublishKthDistance(k)` under the lock, and a heap reused for another query is reset with `Clear()`.
 
@@ -173,7 +182,11 @@ Performance-critical — weigh every copy/allocation.
   tagged by `Quantization` (`F32`/`U8`; `F16`/`BF` exist in the enum but have no kernels). Kernels are
   only specialized for `DistanceMetric::L2SQ` — `IP`/`COSINE` are served by normalizing the data
   (`DistanceMetricRequiresNormalization`) and running L2SQ. The F32 computers also hold `FlipSign` and
-  `HorizontalDotWithU8`/`HorizontalDotWithU4` (float query · 8-bit or packed 4-bit codes, for LVQ centroids).
+  the LVQ centroid kernels: `HorizontalDotWithU8`/`U4` (float query · 8-bit or packed 4-bit codes),
+  `HorizontalDotInt8WithU8`/`U4` (int8 query · codes: VPDPBUSD on AVX-512, and on AVX2 under `__AVXVNNI__`, else a
+  widening `madd_epi16`; on NEON `vusdotq_s32` under i8mm, else `vdotq_s32` for LVQ4 or a widening `vmlal_s16`),
+  `MinMax`, `QuantizeToU8`/`U4`, `DequantizeFromU4` and `QuantizeToInt8`. The SIMD backends hand their scalar
+  remainders to `ScalarComputer` (`scalar_computer`).
   **All** SIMD lives in `include/pdx/distance_computers/` (`neon_computers.hpp`, `avx2_computers.hpp`,
   `avx512_computers.hpp`, `scalar_computers.hpp`) — don't scatter it elsewhere; keep all backends in
   sync when changing a kernel (on ARM the x86 ones aren't compiled or linted). Cover kernels in

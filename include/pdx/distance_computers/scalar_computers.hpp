@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pdx/common.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -93,6 +94,128 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
         if (dimension_idx < num_dimensions) {
             dot += query[dimension_idx] * static_cast<float>(codes[dimension_idx / 2] & 0x0F);
+        }
+        return dot;
+    }
+
+    static void MinMax(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float& lower,
+        float& upper
+    ) {
+        lower = values[0];
+        upper = values[0];
+        for (size_t dimension_idx = 1; dimension_idx < num_dimensions; ++dimension_idx) {
+            lower = std::min(lower, values[dimension_idx]);
+            upper = std::max(upper, values[dimension_idx]);
+        }
+    }
+
+    // Returns the squared norm of the dequantized values
+    static float QuantizeToU8(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        const float inverse_step = 1.0f / step;
+        float dequantized_squared_norm = 0.0f;
+        for (size_t dimension_idx = 0; dimension_idx < num_dimensions; ++dimension_idx) {
+            const float code = std::min(
+                255.0f, std::max(0.0f, std::nearbyint((values[dimension_idx] - lower) * inverse_step))
+            );
+            codes[dimension_idx] = static_cast<uint8_t>(code);
+            const float dequantized = lower + step * code;
+            dequantized_squared_norm += dequantized * dequantized;
+        }
+        return dequantized_squared_norm;
+    }
+
+    // Dimension 2i in the low nibble of byte i. Returns the squared norm of the dequantized values
+    static float QuantizeToU4(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        const float inverse_step = 1.0f / step;
+        float dequantized_squared_norm = 0.0f;
+        for (size_t dimension_idx = 0; dimension_idx < num_dimensions; ++dimension_idx) {
+            const float code = std::min(
+                15.0f, std::max(0.0f, std::nearbyint((values[dimension_idx] - lower) * inverse_step))
+            );
+            if (dimension_idx % 2 == 0) {
+                codes[dimension_idx / 2] = static_cast<uint8_t>(code);
+            } else {
+                codes[dimension_idx / 2] |= static_cast<uint8_t>(static_cast<uint8_t>(code) << 4);
+            }
+            const float dequantized = lower + step * code;
+            dequantized_squared_norm += dequantized * dequantized;
+        }
+        return dequantized_squared_norm;
+    }
+
+    static void DequantizeFromU4(
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        float* PDX_RESTRICT out
+    ) {
+        size_t dimension_idx = 0;
+        for (; dimension_idx + 2 <= num_dimensions; dimension_idx += 2) {
+            const uint8_t code_pair = codes[dimension_idx / 2];
+            out[dimension_idx] = lower + step * static_cast<float>(code_pair & 0x0F);
+            out[dimension_idx + 1] = lower + step * static_cast<float>(code_pair >> 4);
+        }
+        if (dimension_idx < num_dimensions) {
+            out[dimension_idx] = lower + step * static_cast<float>(codes[dimension_idx / 2] & 0x0F);
+        }
+    }
+
+    static void QuantizeToInt8(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float inverse_scale,
+        int8_t* PDX_RESTRICT out
+    ) {
+        for (size_t dimension_idx = 0; dimension_idx < num_dimensions; ++dimension_idx) {
+            out[dimension_idx] =
+                static_cast<int8_t>(std::nearbyint(values[dimension_idx] * inverse_scale));
+        }
+    }
+
+    // Reads padded_size (a multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes
+    static int32_t HorizontalDotInt8WithU8(
+        const int8_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t padded_size
+    ) {
+        int32_t dot = 0;
+        PDX_VECTORIZE_LOOP
+        for (size_t byte_idx = 0; byte_idx < padded_size; ++byte_idx) {
+            dot += static_cast<int32_t>(query[byte_idx]) * static_cast<int32_t>(codes[byte_idx]);
+        }
+        return dot;
+    }
+
+    // Byte i of codes holds dimension 2i (low nibble) and 2i+1 (high), so even_query[i] and
+    // odd_query[i] are those dimensions of the query. Reads padded_size bytes of each
+    static int32_t HorizontalDotInt8WithU4(
+        const int8_t* PDX_RESTRICT even_query,
+        const int8_t* PDX_RESTRICT odd_query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t padded_size
+    ) {
+        int32_t dot = 0;
+        PDX_VECTORIZE_LOOP
+        for (size_t byte_idx = 0; byte_idx < padded_size; ++byte_idx) {
+            dot += static_cast<int32_t>(even_query[byte_idx]) *
+                       static_cast<int32_t>(codes[byte_idx] & 0x0F) +
+                   static_cast<int32_t>(odd_query[byte_idx]) * static_cast<int32_t>(codes[byte_idx] >> 4);
         }
         return dot;
     }
