@@ -147,6 +147,8 @@ enum class PDXIndexType : uint8_t {
     PDX_FLAT = 4
 };
 
+enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1 };
+
 static constexpr uint8_t PDX_SERIALIZATION_VERSION = 4;
 
 template <Quantization Q>

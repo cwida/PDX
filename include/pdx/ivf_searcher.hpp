@@ -246,7 +246,7 @@ class PDXearch {
     ) {
         PDX_PROFILE_SCOPE("Search/GetClustersAccessOrderIVF");
         std::unique_ptr<float[]> distances_to_centroids(new float[data.num_clusters]);
-        data.ComputeDistancesToCentroids(query, distances_to_centroids.get());
+        data.centroids.ComputeDistancesToCentroids(query, distances_to_centroids.get());
         std::iota(clusters_indices, clusters_indices + data.num_clusters, static_cast<uint32_t>(0));
         const CentroidDistanceComparator nearest_first{distances_to_centroids.get()};
         if (nprobe >= data.num_clusters) {
@@ -935,7 +935,7 @@ class PDXearch {
     ) {
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
         TransformQuery(raw_query, is_query_transformed, query.get());
-        pdx_data.ComputeDistancesToCentroids(query.get(), out);
+        pdx_data.centroids.ComputeDistancesToCentroids(query.get(), out);
     }
 
   protected:
@@ -994,7 +994,7 @@ class PDXearch {
         } else if (n_clusters_to_rank == pdx_data.num_clusters) {
             // Next() orders the queue as far as it probes
             search_cursor.distances_to_centroids.reset(new float[pdx_data.num_clusters]);
-            pdx_data.ComputeDistancesToCentroids(
+            pdx_data.centroids.ComputeDistancesToCentroids(
                 search_cursor.query.get(), search_cursor.distances_to_centroids.get()
             );
             std::iota(
