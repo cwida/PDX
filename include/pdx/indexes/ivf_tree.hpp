@@ -99,7 +99,9 @@ class PDXTreeIndex : public IPDXIndex {
         config.normalize = index.is_normalized;
 
         // Create pruner and searchers
-        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(d, matrix.get(), &GetAllocator());
+        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
+            d, matrix.values.get(), matrix.rows, &GetAllocator()
+        );
         pruner = owned_pruner.get();
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);

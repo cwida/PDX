@@ -150,14 +150,19 @@ inline void WriteRotationMatrix(std::ostream& out, const ADSamplingPruner& prune
     );
 }
 
+struct RotationMatrix {
+    uint32_t rows;
+    skmeans::AllocatedBuffer<float> values;
+};
+
 template <class Reader>
-skmeans::AllocatedBuffer<float> ReadRotationMatrix(Reader& reader, MemoryAllocator& allocator) {
+RotationMatrix ReadRotationMatrix(Reader& reader, MemoryAllocator& allocator) {
     const auto rows = ReadValue<uint32_t>(reader);
     const auto cols = ReadValue<uint32_t>(reader);
     const size_t num_values = static_cast<size_t>(rows) * cols;
-    auto matrix = skmeans::AllocateBuffer<float>(allocator, num_values);
-    reader.Read(matrix.get(), sizeof(float) * num_values);
-    return matrix;
+    auto values = skmeans::AllocateBuffer<float>(allocator, num_values);
+    reader.Read(values.get(), sizeof(float) * num_values);
+    return {rows, std::move(values)};
 }
 
 // Dense in row id: PDX assigns row ids by position, so a sparse id space wastes memory here

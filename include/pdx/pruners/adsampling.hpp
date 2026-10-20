@@ -35,7 +35,7 @@ class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::Allocat
         std::mt19937 gen(seed);
         bool matrix_created = false;
 #ifdef HAS_FFTW
-        if (UsesDCTRotation()) {
+        if (UsesDCTRotation(num_dimensions)) {
             matrix = skmeans::AllocateBuffer<float>(GetAllocator(), num_dimensions);
             matrix_rows = 1;
             std::uniform_int_distribution<int> dist(0, 1);
@@ -69,25 +69,49 @@ class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::Allocat
     ADSamplingPruner(
         const uint32_t num_dimensions,
         const float* matrix_p,
+        const uint32_t matrix_rows,
         MemoryAllocator* allocator = nullptr
     )
         : num_dimensions(num_dimensions) {
+        bool is_dct_signs = false;
+#ifdef HAS_FFTW
+        is_dct_signs = matrix_rows == 1 && num_dimensions > 1;
+#endif
+        if (matrix_rows != num_dimensions && !is_dct_signs) {
+            throw std::invalid_argument(
+                "A rotation of " + std::to_string(num_dimensions) + " dimensions needs " +
+                std::to_string(num_dimensions) + " rows (or 1 with FFTW), got " +
+                std::to_string(matrix_rows)
+            );
+        }
         SetAllocator(allocator);
         ratios.resize(num_dimensions);
         for (size_t i = 0; i < num_dimensions; ++i) {
             ratios[i] = GetRatio(i);
         }
-        matrix_rows = UsesDCTRotation() ? 1 : num_dimensions;
+        this->matrix_rows = matrix_rows;
         const size_t matrix_size = static_cast<size_t>(matrix_rows) * num_dimensions;
         matrix = skmeans::AllocateBuffer<float>(GetAllocator(), matrix_size);
         std::memcpy(matrix.get(), matrix_p, matrix_size * sizeof(float));
 #ifdef HAS_FFTW
-        if (UsesDCTRotation()) {
+        if (is_dct_signs) {
             BuildFlipMasks();
             CacheSingleQueryPlan();
         }
 #endif
     }
+
+    ADSamplingPruner(
+        const uint32_t num_dimensions,
+        const float* matrix_p,
+        MemoryAllocator* allocator = nullptr
+    )
+        : ADSamplingPruner(
+              num_dimensions,
+              matrix_p,
+              UsesDCTRotation(num_dimensions) ? 1 : num_dimensions,
+              allocator
+          ) {}
 
     void SetPruningAggresiveness(const float pruning_aggressiveness) {
         ADSamplingPruner::pruning_aggressiveness = pruning_aggressiveness;
@@ -153,7 +177,7 @@ class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::Allocat
     fftwf_plan single_query_plan = nullptr;
 #endif
 
-    bool UsesDCTRotation() const {
+    static bool UsesDCTRotation(const uint32_t num_dimensions) {
 #ifdef HAS_FFTW
 #ifdef __AVX2__
         return num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION && IsPowerOf2(num_dimensions);
@@ -261,7 +285,7 @@ class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::Allocat
         ParallelExecutor& executor
     ) const {
 #ifdef HAS_FFTW
-        if (UsesDCTRotation()) {
+        if (matrix_rows == 1 && num_dimensions > 1) {
             Eigen::Map<matrix_t> out(out_buffer, n, num_dimensions);
             FlipSign(embeddings, out_buffer, n, executor);
             const float s0 = std::sqrt(1.0f / (4.0f * num_dimensions));

@@ -246,7 +246,7 @@ class PDXIndex : public IPDXIndex {
 
         // Create pruner and searcher
         owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
-            index.num_dimensions, matrix.get(), &GetAllocator()
+            index.num_dimensions, matrix.values.get(), matrix.rows, &GetAllocator()
         );
         pruner = owned_pruner.get();
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
