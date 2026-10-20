@@ -314,8 +314,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     // 4 query bytes broadcast by _mm512_set1_epi32) for the dots of all 16 centroids, with no
     // horizontal sums. Measured 1.87x over this kernel on Zen 5 (geomean of 56 cells). It needs a
     // blocked Centroids layout and a new CentroidQuantization nibble. Reads padded_size (a multiple
-    // of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes. query_codes_sum: the sum of the
-    // query's codes (the NEON kernel needs it)
+    // of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes. query_codes_sum: the sum of
+    // the query's codes (the NEON kernel needs it)
     static int32_t HorizontalDotInt8WithU8(
         const int8_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,

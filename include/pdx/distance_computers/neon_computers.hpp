@@ -350,8 +350,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     // query bytes of one lane) for the dots of all 16 centroids, with no horizontal sums. Its i8mm
     // form (vusdotq_laneq_s32) measured 1.67x over this kernel on the M4 (geomean of 56 cells). It
     // needs a blocked Centroids layout and a new CentroidQuantization nibble. Reads padded_size (a
-    // multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes. query_codes_sum: the
-    // sum of the query's codes
+    // multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes. query_codes_sum:
+    // the sum of the query's codes
     static int32_t HorizontalDotInt8WithU8(
         const int8_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,
@@ -371,9 +371,12 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         };
         for (size_t i = 0; i < padded_size; i += 64) {
             dot_vec_0 = vdotq_s32(dot_vec_0, biased_codes(codes + i), vld1q_s8(query + i));
-            dot_vec_1 = vdotq_s32(dot_vec_1, biased_codes(codes + i + 16), vld1q_s8(query + i + 16));
-            dot_vec_2 = vdotq_s32(dot_vec_2, biased_codes(codes + i + 32), vld1q_s8(query + i + 32));
-            dot_vec_3 = vdotq_s32(dot_vec_3, biased_codes(codes + i + 48), vld1q_s8(query + i + 48));
+            dot_vec_1 =
+                vdotq_s32(dot_vec_1, biased_codes(codes + i + 16), vld1q_s8(query + i + 16));
+            dot_vec_2 =
+                vdotq_s32(dot_vec_2, biased_codes(codes + i + 32), vld1q_s8(query + i + 32));
+            dot_vec_3 =
+                vdotq_s32(dot_vec_3, biased_codes(codes + i + 48), vld1q_s8(query + i + 48));
         }
         const int32_t code_bias_correction = 128 * query_codes_sum;
 #else
@@ -454,7 +457,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     }
 
   private:
-    // Without DOTPROD: widens 16 bytes of query and codes to s16, then multiply-accumulates into s32
+    // Without DOTPROD: widens 16 bytes of query and codes to s16, then multiply-accumulates into
+    // s32
     static void AccumulateWideningDotInt8WithU8x16(
         const int8x16_t query_s8,
         const uint8x16_t codes_u8,

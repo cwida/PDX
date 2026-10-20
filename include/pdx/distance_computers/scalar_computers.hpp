@@ -190,8 +190,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
-    // Reads padded_size (a multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes.
-    // query_codes_sum: the sum of the query's codes (the NEON kernel needs it)
+    // Reads padded_size (a multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and
+    // codes. query_codes_sum: the sum of the query's codes (the NEON kernel needs it)
     static int32_t HorizontalDotInt8WithU8(
         const int8_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,
