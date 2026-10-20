@@ -96,8 +96,9 @@ inline bool IsPowerOf2(const uint32_t x) {
 static constexpr size_t PDX_MAX_DIMS = 16384;
 static constexpr size_t H_DIM_SIZE = 64;
 static constexpr size_t U8_INTERLEAVE_SIZE = 4;
-// The int8-query kernels of LVQ centroids read the codes in whole chunks of this many bytes: the query
-// is zero-padded to a multiple of it, and the encoded centroids keep this many bytes after the last one.
+// The int8-query kernels of LVQ centroids read the codes in whole chunks of this many bytes: the
+// query is zero-padded to a multiple of it, and the encoded centroids keep this many bytes after
+// the last one.
 static constexpr size_t LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES = 64;
 static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[20] = {16,  16,  32,  32,   32,   32,   64,
                                                            64,  64,  64,  128,  128,  128,  128,
@@ -152,7 +153,8 @@ enum class PDXIndexType : uint8_t {
 
 enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1, LVQ4 = 2 };
 
-// A saved index's type byte: its PDXIndexType in the low nibble, its CentroidQuantization in the high
+// A saved index's type byte: its PDXIndexType in the low nibble, its CentroidQuantization in the
+// high
 [[nodiscard]] constexpr uint8_t MakeIndexTypeByte(
     PDXIndexType type,
     CentroidQuantization centroid_quantization

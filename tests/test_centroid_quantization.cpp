@@ -84,9 +84,8 @@ void ExpectComputeL2SQMatchesTheDequantizedEmbedding() {
             const float diff = query[j] - dequantized[j];
             expected_distance += diff * diff;
         }
-        const float distance = quantizer.ComputeL2SQ(
-            query, query_sum, query_squared_norm, codes.data(), params
-        );
+        const float distance =
+            quantizer.ComputeL2SQ(query, query_sum, query_squared_norm, codes.data(), params);
         EXPECT_NEAR(
             distance,
             expected_distance,
@@ -251,7 +250,9 @@ TEST_P(CentroidQuantizationTest, SharedRankingQueryRanksAsTheIndexOwn) {
             query, D - 1, test_case.centroid_quantization
         );
         EXPECT_THROW(
-            index->GetDistancesToCentroids(query, true, shared_distances.data(), &f32_ranking_query),
+            index->GetDistancesToCentroids(
+                query, true, shared_distances.data(), &f32_ranking_query
+            ),
             std::invalid_argument
         );
         EXPECT_THROW(

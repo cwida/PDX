@@ -120,12 +120,15 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         size_t i = 0;
         for (; i + 64 <= num_dimensions; i += 64) {
             dot_vec_0 = _mm512_fmadd_ps(_mm512_loadu_ps(query + i), codes_as_floats(i), dot_vec_0);
-            dot_vec_1 =
-                _mm512_fmadd_ps(_mm512_loadu_ps(query + i + 16), codes_as_floats(i + 16), dot_vec_1);
-            dot_vec_2 =
-                _mm512_fmadd_ps(_mm512_loadu_ps(query + i + 32), codes_as_floats(i + 32), dot_vec_2);
-            dot_vec_3 =
-                _mm512_fmadd_ps(_mm512_loadu_ps(query + i + 48), codes_as_floats(i + 48), dot_vec_3);
+            dot_vec_1 = _mm512_fmadd_ps(
+                _mm512_loadu_ps(query + i + 16), codes_as_floats(i + 16), dot_vec_1
+            );
+            dot_vec_2 = _mm512_fmadd_ps(
+                _mm512_loadu_ps(query + i + 32), codes_as_floats(i + 32), dot_vec_2
+            );
+            dot_vec_3 = _mm512_fmadd_ps(
+                _mm512_loadu_ps(query + i + 48), codes_as_floats(i + 48), dot_vec_3
+            );
         }
         for (; i < num_dimensions; i += 16) {
             const auto mask = static_cast<__mmask16>(
@@ -151,19 +154,21 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         __m512 dot_vec_2 = _mm512_setzero_ps();
         __m512 dot_vec_3 = _mm512_setzero_ps();
         const __m128i nibble_mask = _mm_set1_epi8(0x0F);
-        const auto accumulate_32_dimensions = [&](size_t offset, __m512& dot_low, __m512& dot_high) {
+        const auto accumulate_32_dimensions = [&](size_t offset, __m512& dot_low, __m512& dot_high
+                                              ) {
             const __m128i code_pairs =
                 _mm_loadu_si128(reinterpret_cast<const __m128i*>(codes + offset / 2));
             const __m128i low_nibbles = _mm_and_si128(code_pairs, nibble_mask);
             const __m128i high_nibbles = _mm_and_si128(_mm_srli_epi16(code_pairs, 4), nibble_mask);
-            const __m512 codes_low_vec = _mm512_cvtepi32_ps(
-                _mm512_cvtepu8_epi32(_mm_unpacklo_epi8(low_nibbles, high_nibbles))
-            );
-            const __m512 codes_high_vec = _mm512_cvtepi32_ps(
-                _mm512_cvtepu8_epi32(_mm_unpackhi_epi8(low_nibbles, high_nibbles))
-            );
+            const __m512 codes_low_vec =
+                _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_unpacklo_epi8(low_nibbles, high_nibbles)
+                ));
+            const __m512 codes_high_vec =
+                _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_unpackhi_epi8(low_nibbles, high_nibbles)
+                ));
             dot_low = _mm512_fmadd_ps(_mm512_loadu_ps(query + offset), codes_low_vec, dot_low);
-            dot_high = _mm512_fmadd_ps(_mm512_loadu_ps(query + offset + 16), codes_high_vec, dot_high);
+            dot_high =
+                _mm512_fmadd_ps(_mm512_loadu_ps(query + offset + 16), codes_high_vec, dot_high);
         };
         size_t i = 0;
         for (; i + 64 <= num_dimensions; i += 64) {
@@ -254,13 +259,10 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                 reinterpret_cast<__m128i*>(codes + i / 2), _mm_packus_epi16(code_pairs, code_pairs)
             );
         }
-        return _mm512_reduce_add_ps(squared_norm_vec) + scalar_computer::QuantizeToU4(
-                                                            values + i,
-                                                            num_dimensions - i,
-                                                            lower,
-                                                            step,
-                                                            codes + i / 2
-                                                        );
+        return _mm512_reduce_add_ps(squared_norm_vec) +
+               scalar_computer::QuantizeToU4(
+                   values + i, num_dimensions - i, lower, step, codes + i / 2
+               );
     }
 
     static void DequantizeFromU4(
@@ -279,12 +281,12 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                 _mm_loadu_si128(reinterpret_cast<const __m128i*>(codes + i / 2));
             const __m128i low_nibbles = _mm_and_si128(code_pairs, nibble_mask);
             const __m128i high_nibbles = _mm_and_si128(_mm_srli_epi16(code_pairs, 4), nibble_mask);
-            const __m512 codes_low_vec = _mm512_cvtepi32_ps(
-                _mm512_cvtepu8_epi32(_mm_unpacklo_epi8(low_nibbles, high_nibbles))
-            );
-            const __m512 codes_high_vec = _mm512_cvtepi32_ps(
-                _mm512_cvtepu8_epi32(_mm_unpackhi_epi8(low_nibbles, high_nibbles))
-            );
+            const __m512 codes_low_vec =
+                _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_unpacklo_epi8(low_nibbles, high_nibbles)
+                ));
+            const __m512 codes_high_vec =
+                _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_unpackhi_epi8(low_nibbles, high_nibbles)
+                ));
             _mm512_storeu_ps(out + i, _mm512_fmadd_ps(codes_low_vec, step_vec, lower_vec));
             _mm512_storeu_ps(out + i + 16, _mm512_fmadd_ps(codes_high_vec, step_vec, lower_vec));
         }
@@ -308,11 +310,11 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     }
 
     // TODO(@lkuffo, low): stored vertically, in blocks of 16 centroids whose 64-byte groups hold 4
-    // dimensions of each, the LVQ8 codes would take one _mm512_dpbusd_epi32 per group (against the 4
-    // query bytes broadcast by _mm512_set1_epi32) for the dots of all 16 centroids, with no horizontal
-    // sums. Measured 1.87x over this kernel on Zen 5 (geomean of 56 cells). It needs a blocked
-    // Centroids layout and a new CentroidQuantization nibble.
-    // Reads padded_size (a multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes
+    // dimensions of each, the LVQ8 codes would take one _mm512_dpbusd_epi32 per group (against the
+    // 4 query bytes broadcast by _mm512_set1_epi32) for the dots of all 16 centroids, with no
+    // horizontal sums. Measured 1.87x over this kernel on Zen 5 (geomean of 56 cells). It needs a
+    // blocked Centroids layout and a new CentroidQuantization nibble. Reads padded_size (a multiple
+    // of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes
     static int32_t HorizontalDotInt8WithU8(
         const int8_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,
@@ -379,8 +381,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         return static_cast<__mmask16>(_bzhi_u32(0xFFFFFFFF, static_cast<uint32_t>(remaining)));
     }
 
-    // The codes of the 16 values in mask (round to nearest even, clamped to [0, MAX_CODE]), 0 in the
-    // other lanes; adds the squares of their dequantized values to squared_norm_vec
+    // The codes of the 16 values in mask (round to nearest even, clamped to [0, MAX_CODE]), 0 in
+    // the other lanes; adds the squares of their dequantized values to squared_norm_vec
     template <int MAX_CODE>
     static __m128i Quantize16(
         const query_t* PDX_RESTRICT values,

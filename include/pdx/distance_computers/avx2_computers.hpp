@@ -126,10 +126,12 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             dot_vec_0 = _mm256_fmadd_ps(_mm256_loadu_ps(query + i), codes_as_floats(i), dot_vec_0);
             dot_vec_1 =
                 _mm256_fmadd_ps(_mm256_loadu_ps(query + i + 8), codes_as_floats(i + 8), dot_vec_1);
-            dot_vec_2 =
-                _mm256_fmadd_ps(_mm256_loadu_ps(query + i + 16), codes_as_floats(i + 16), dot_vec_2);
-            dot_vec_3 =
-                _mm256_fmadd_ps(_mm256_loadu_ps(query + i + 24), codes_as_floats(i + 24), dot_vec_3);
+            dot_vec_2 = _mm256_fmadd_ps(
+                _mm256_loadu_ps(query + i + 16), codes_as_floats(i + 16), dot_vec_2
+            );
+            dot_vec_3 = _mm256_fmadd_ps(
+                _mm256_loadu_ps(query + i + 24), codes_as_floats(i + 24), dot_vec_3
+            );
         }
         for (; i + 8 <= num_dimensions; i += 8) {
             dot_vec_0 = _mm256_fmadd_ps(_mm256_loadu_ps(query + i), codes_as_floats(i), dot_vec_0);
@@ -156,7 +158,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         __m256 dot_vec_2 = _mm256_setzero_ps();
         __m256 dot_vec_3 = _mm256_setzero_ps();
         const __m128i nibble_mask = _mm_set1_epi8(0x0F);
-        const auto accumulate_16_dimensions = [&](size_t offset, __m256& dot_low, __m256& dot_high) {
+        const auto accumulate_16_dimensions = [&](size_t offset, __m256& dot_low, __m256& dot_high
+                                              ) {
             const __m128i code_pairs =
                 _mm_loadl_epi64(reinterpret_cast<const __m128i*>(codes + offset / 2));
             const __m128i low_nibbles = _mm_and_si128(code_pairs, nibble_mask);
@@ -166,7 +169,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             const __m256 codes_high_vec =
                 _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_srli_si128(ordered_codes, 8)));
             dot_low = _mm256_fmadd_ps(_mm256_loadu_ps(query + offset), codes_low_vec, dot_low);
-            dot_high = _mm256_fmadd_ps(_mm256_loadu_ps(query + offset + 8), codes_high_vec, dot_high);
+            dot_high =
+                _mm256_fmadd_ps(_mm256_loadu_ps(query + offset + 8), codes_high_vec, dot_high);
         };
         size_t i = 0;
         for (; i + 32 <= num_dimensions; i += 32) {
@@ -239,7 +243,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             );
         }
         return ReduceAdd(squared_norm_vec) +
-               scalar_computer::QuantizeToU8(values + i, num_dimensions - i, lower, step, codes + i);
+               scalar_computer::QuantizeToU8(
+                   values + i, num_dimensions - i, lower, step, codes + i
+               );
     }
 
     // Dimension 2i in the low nibble of byte i. Returns the squared norm of the dequantized values
@@ -265,9 +271,10 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                 reinterpret_cast<__m128i*>(codes + i / 2), _mm_packus_epi16(code_pairs, code_pairs)
             );
         }
-        return ReduceAdd(squared_norm_vec) + scalar_computer::QuantizeToU4(
-                                                 values + i, num_dimensions - i, lower, step, codes + i / 2
-                                             );
+        return ReduceAdd(squared_norm_vec) +
+               scalar_computer::QuantizeToU4(
+                   values + i, num_dimensions - i, lower, step, codes + i / 2
+               );
     }
 
     static void DequantizeFromU4(
@@ -318,8 +325,10 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             const __m256i rounded_0 =
                 _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_loadu_ps(values + i), inverse_scale_vec));
             const __m256i rounded_1 =
-                _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_loadu_ps(values + i + 8), inverse_scale_vec));
-            // packs_epi32 interleaves the 128-bit lanes; permute4x64 puts the 16 values back in order
+                _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_loadu_ps(values + i + 8), inverse_scale_vec)
+                );
+            // packs_epi32 interleaves the 128-bit lanes; permute4x64 puts the 16 values back in
+            // order
             const __m256i rounded_s16 =
                 _mm256_permute4x64_epi64(_mm256_packs_epi32(rounded_0, rounded_1), 0xD8);
             _mm_storeu_si128(
@@ -333,11 +342,11 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     }
 
     // TODO(@lkuffo, low): stored vertically, in blocks of 16 centroids whose 64-byte groups hold 4
-    // dimensions of each, the LVQ8 codes would take two _mm256_dpbusd_avx_epi32 per group (against the
-    // 4 query bytes broadcast by _mm256_set1_epi32) for the dots of all 16 centroids, with no
-    // horizontal sums. Measured 1.35x over this kernel on Zen 5 with AVX-VNNI (geomean of 56 cells).
-    // It needs a blocked Centroids layout and a new CentroidQuantization nibble.
-    // Reads padded_size (a multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes
+    // dimensions of each, the LVQ8 codes would take two _mm256_dpbusd_avx_epi32 per group (against
+    // the 4 query bytes broadcast by _mm256_set1_epi32) for the dots of all 16 centroids, with no
+    // horizontal sums. Measured 1.35x over this kernel on Zen 5 with AVX-VNNI (geomean of 56
+    // cells). It needs a blocked Centroids layout and a new CentroidQuantization nibble. Reads
+    // padded_size (a multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes
     static int32_t HorizontalDotInt8WithU8(
         const int8_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,
@@ -347,9 +356,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         __m256i dot_vec_1 = _mm256_setzero_si256();
         for (size_t i = 0; i < padded_size; i += 64) {
 #if defined(__AVXVNNI__)
-            dot_vec_0 = _mm256_dpbusd_avx_epi32(
-                dot_vec_0, LoadBytes32(codes + i), LoadBytes32(query + i)
-            );
+            dot_vec_0 =
+                _mm256_dpbusd_avx_epi32(dot_vec_0, LoadBytes32(codes + i), LoadBytes32(query + i));
             dot_vec_1 = _mm256_dpbusd_avx_epi32(
                 dot_vec_1, LoadBytes32(codes + i + 32), LoadBytes32(query + i + 32)
             );
@@ -396,10 +404,13 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             const __m256i high_nibbles =
                 _mm256_and_si256(_mm256_srli_epi16(code_pairs, 4), nibble_mask);
 #if defined(__AVXVNNI__)
-            dot_vec_0 = _mm256_dpbusd_avx_epi32(dot_vec_0, low_nibbles, LoadBytes32(even_query + i));
-            dot_vec_1 = _mm256_dpbusd_avx_epi32(dot_vec_1, high_nibbles, LoadBytes32(odd_query + i));
+            dot_vec_0 =
+                _mm256_dpbusd_avx_epi32(dot_vec_0, low_nibbles, LoadBytes32(even_query + i));
+            dot_vec_1 =
+                _mm256_dpbusd_avx_epi32(dot_vec_1, high_nibbles, LoadBytes32(odd_query + i));
 #else
-            // Without VNNI: maddubs pairs fit in s16 (15 * 128 * 2 < 2^15), madd with ones widens them
+            // Without VNNI: maddubs pairs fit in s16 (15 * 128 * 2 < 2^15), madd with ones widens
+            // them
             dot_vec_0 = _mm256_add_epi32(
                 dot_vec_0,
                 _mm256_madd_epi16(

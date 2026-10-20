@@ -96,7 +96,9 @@ class LVQQuantizer : public Quantizer {
         uint8_t* PDX_RESTRICT output_codes
     ) const {
         float lower, upper;
-        DistanceComputer<DistanceMetric::L2SQ, F32>::MinMax(embedding, num_dimensions, lower, upper);
+        DistanceComputer<DistanceMetric::L2SQ, F32>::MinMax(
+            embedding, num_dimensions, lower, upper
+        );
         const float range = upper - lower;
         const float step = (range > 0) ? range / static_cast<float>(MAX_VALUE) : 1.0f;
         float dequantized_squared_norm;

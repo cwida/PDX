@@ -109,7 +109,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             const uint16x8_t codes_low_u16 = vmovl_u8(vget_low_u8(codes_u8));
             const uint16x8_t codes_high_u16 = vmovl_high_u8(codes_u8);
             dot_vec_0 = vfmaq_f32(
-                dot_vec_0, vld1q_f32(query + i), vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_low_u16)))
+                dot_vec_0,
+                vld1q_f32(query + i),
+                vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_low_u16)))
             );
             dot_vec_1 = vfmaq_f32(
                 dot_vec_1, vld1q_f32(query + i + 4), vcvtq_f32_u32(vmovl_high_u16(codes_low_u16))
@@ -123,9 +125,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                 dot_vec_3, vld1q_f32(query + i + 12), vcvtq_f32_u32(vmovl_high_u16(codes_high_u16))
             );
         }
-        float dot = vaddvq_f32(
-            vaddq_f32(vaddq_f32(dot_vec_0, dot_vec_1), vaddq_f32(dot_vec_2, dot_vec_3))
-        );
+        float dot =
+            vaddvq_f32(vaddq_f32(vaddq_f32(dot_vec_0, dot_vec_1), vaddq_f32(dot_vec_2, dot_vec_3)));
         for (; i < num_dimensions; ++i) {
             dot += query[i] * static_cast<float>(codes[i]);
         }
@@ -188,9 +189,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                 dot_vec_3
             );
         }
-        float dot = vaddvq_f32(
-            vaddq_f32(vaddq_f32(dot_vec_0, dot_vec_1), vaddq_f32(dot_vec_2, dot_vec_3))
-        );
+        float dot =
+            vaddvq_f32(vaddq_f32(vaddq_f32(dot_vec_0, dot_vec_1), vaddq_f32(dot_vec_2, dot_vec_3)));
         for (; i + 2 <= num_dimensions; i += 2) {
             const uint8_t code_pair = codes[i / 2];
             dot += query[i] * static_cast<float>(code_pair & 0x0F) +
@@ -244,7 +244,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             );
         }
         return vaddvq_f32(squared_norm_vec) +
-               scalar_computer::QuantizeToU8(values + i, num_dimensions - i, lower, step, codes + i);
+               scalar_computer::QuantizeToU8(
+                   values + i, num_dimensions - i, lower, step, codes + i
+               );
     }
 
     // Dimension 2i in the low nibble of byte i. Returns the squared norm of the dequantized values
@@ -268,9 +270,10 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             );
             vst1_u8(codes + i / 2, vget_low_u8(code_pairs));
         }
-        return vaddvq_f32(squared_norm_vec) + scalar_computer::QuantizeToU4(
-                                                  values + i, num_dimensions - i, lower, step, codes + i / 2
-                                              );
+        return vaddvq_f32(squared_norm_vec) +
+               scalar_computer::QuantizeToU4(
+                   values + i, num_dimensions - i, lower, step, codes + i / 2
+               );
     }
 
     static void DequantizeFromU4(
@@ -288,7 +291,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             const uint16x8_t codes_high_u16 = vmovl_high_u8(codes_u8);
             vst1q_f32(
                 destination,
-                vfmaq_f32(lower_vec, vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_low_u16))), step_vec)
+                vfmaq_f32(
+                    lower_vec, vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_low_u16))), step_vec
+                )
             );
             vst1q_f32(
                 destination + 4,
@@ -296,7 +301,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             );
             vst1q_f32(
                 destination + 8,
-                vfmaq_f32(lower_vec, vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_high_u16))), step_vec)
+                vfmaq_f32(
+                    lower_vec, vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_high_u16))), step_vec
+                )
             );
             vst1q_f32(
                 destination + 12,
@@ -326,21 +333,24 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             int32x4_t rounded[4];
             for (size_t quarter = 0; quarter < 4; ++quarter) {
                 rounded[quarter] =
-                    vcvtnq_s32_f32(vmulq_f32(vld1q_f32(values + i + 4 * quarter), inverse_scale_vec));
+                    vcvtnq_s32_f32(vmulq_f32(vld1q_f32(values + i + 4 * quarter), inverse_scale_vec)
+                    );
             }
-            const int16x8_t rounded_low = vcombine_s16(vqmovn_s32(rounded[0]), vqmovn_s32(rounded[1]));
-            const int16x8_t rounded_high = vcombine_s16(vqmovn_s32(rounded[2]), vqmovn_s32(rounded[3]));
+            const int16x8_t rounded_low =
+                vcombine_s16(vqmovn_s32(rounded[0]), vqmovn_s32(rounded[1]));
+            const int16x8_t rounded_high =
+                vcombine_s16(vqmovn_s32(rounded[2]), vqmovn_s32(rounded[3]));
             vst1q_s8(out + i, vcombine_s8(vqmovn_s16(rounded_low), vqmovn_s16(rounded_high)));
         }
         scalar_computer::QuantizeToInt8(values + i, num_dimensions - i, inverse_scale, out + i);
     }
 
     // TODO(@lkuffo, low): stored vertically, in blocks of 16 centroids whose 64-byte groups hold 4
-    // dimensions of each, the LVQ8 codes would take 4 vusdotq_laneq_s32 per group (each against the 4
-    // query bytes of one lane) for the dots of all 16 centroids, with no horizontal sums. Measured
-    // 1.67x over this kernel on the M4 (geomean of 56 cells). It needs a blocked Centroids layout and
-    // a new CentroidQuantization nibble.
-    // Reads padded_size (a multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes
+    // dimensions of each, the LVQ8 codes would take 4 vusdotq_laneq_s32 per group (each against the
+    // 4 query bytes of one lane) for the dots of all 16 centroids, with no horizontal sums.
+    // Measured 1.67x over this kernel on the M4 (geomean of 56 cells). It needs a blocked Centroids
+    // layout and a new CentroidQuantization nibble. Reads padded_size (a multiple of
+    // LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes
     static int32_t HorizontalDotInt8WithU8(
         const int8_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,

@@ -124,7 +124,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         float dequantized_squared_norm = 0.0f;
         for (size_t dimension_idx = 0; dimension_idx < num_dimensions; ++dimension_idx) {
             const float code = std::min(
-                255.0f, std::max(0.0f, std::nearbyint((values[dimension_idx] - lower) * inverse_step))
+                255.0f,
+                std::max(0.0f, std::nearbyint((values[dimension_idx] - lower) * inverse_step))
             );
             codes[dimension_idx] = static_cast<uint8_t>(code);
             const float dequantized = lower + step * code;
@@ -145,7 +146,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         float dequantized_squared_norm = 0.0f;
         for (size_t dimension_idx = 0; dimension_idx < num_dimensions; ++dimension_idx) {
             const float code = std::min(
-                15.0f, std::max(0.0f, std::nearbyint((values[dimension_idx] - lower) * inverse_step))
+                15.0f,
+                std::max(0.0f, std::nearbyint((values[dimension_idx] - lower) * inverse_step))
             );
             if (dimension_idx % 2 == 0) {
                 codes[dimension_idx / 2] = static_cast<uint8_t>(code);
@@ -215,7 +217,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         for (size_t byte_idx = 0; byte_idx < padded_size; ++byte_idx) {
             dot += static_cast<int32_t>(even_query[byte_idx]) *
                        static_cast<int32_t>(codes[byte_idx] & 0x0F) +
-                   static_cast<int32_t>(odd_query[byte_idx]) * static_cast<int32_t>(codes[byte_idx] >> 4);
+                   static_cast<int32_t>(odd_query[byte_idx]) *
+                       static_cast<int32_t>(codes[byte_idx] >> 4);
         }
         return dot;
     }

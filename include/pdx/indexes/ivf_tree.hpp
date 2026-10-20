@@ -249,7 +249,9 @@ class PDXTreeIndex : public IPDXIndex {
         float* out,
         const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
-        searcher->GetDistancesToCentroids(query_embedding, is_query_transformed, out, ranking_query);
+        searcher->GetDistancesToCentroids(
+            query_embedding, is_query_transformed, out, ranking_query
+        );
     }
 
     std::vector<uint32_t> GetClustersAccessOrder(
@@ -257,7 +259,9 @@ class PDXTreeIndex : public IPDXIndex {
         bool is_query_transformed = false,
         const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
-        return searcher->GetClustersAccessOrder(query_embedding, is_query_transformed, ranking_query);
+        return searcher->GetClustersAccessOrder(
+            query_embedding, is_query_transformed, ranking_query
+        );
     }
 
     std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const override {
@@ -417,7 +421,11 @@ class PDXTreeIndex : public IPDXIndex {
             );
         } else {
             index = PDX::IVFTree<Q>(
-                num_dimensions, num_embeddings, num_clusters, normalize, config.centroid_quantization
+                num_dimensions,
+                num_embeddings,
+                num_clusters,
+                normalize,
+                config.centroid_quantization
             );
         }
         index.SetAllocator(&GetAllocator());

@@ -257,7 +257,8 @@ TEST_F(DistanceComputerTest, F32_SelfDistanceIsZero) {
 using ScalarF32Computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::F32>;
 using F32Computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::F32>;
 
-const std::vector<size_t> LVQ_KERNEL_DIMENSIONS = {1, 2, 7, 15, 16, 17, 31, 33, 60, 64, 65, 127, 384, 500, 1024};
+const std::vector<size_t> LVQ_KERNEL_DIMENSIONS =
+    {1, 2, 7, 15, 16, 17, 31, 33, 60, 64, 65, 127, 384, 500, 1024};
 
 // MinMax, the LVQ encoders and the LVQ4 decoder match scalar, and the encoders write no byte past
 // the codes.
@@ -278,8 +279,9 @@ TEST_F(DistanceComputerTest, F32_LVQEncodeDecode_SIMD_MatchesScalar) {
         const float scalar_norm_u8 = ScalarF32Computer::QuantizeToU8(
             values.data(), d, scalar_lower, range / 255.0f, scalar_codes.data()
         );
-        const float simd_norm_u8 =
-            F32Computer::QuantizeToU8(values.data(), d, scalar_lower, range / 255.0f, simd_codes.data());
+        const float simd_norm_u8 = F32Computer::QuantizeToU8(
+            values.data(), d, scalar_lower, range / 255.0f, simd_codes.data()
+        );
         EXPECT_EQ(simd_codes, scalar_codes);
         EXPECT_NEAR(simd_norm_u8, scalar_norm_u8, 1e-5f * scalar_norm_u8);
 
@@ -289,8 +291,9 @@ TEST_F(DistanceComputerTest, F32_LVQEncodeDecode_SIMD_MatchesScalar) {
         const float scalar_norm_u4 = ScalarF32Computer::QuantizeToU4(
             values.data(), d, scalar_lower, step_u4, scalar_code_pairs.data()
         );
-        const float simd_norm_u4 =
-            F32Computer::QuantizeToU4(values.data(), d, scalar_lower, step_u4, simd_code_pairs.data());
+        const float simd_norm_u4 = F32Computer::QuantizeToU4(
+            values.data(), d, scalar_lower, step_u4, simd_code_pairs.data()
+        );
         EXPECT_EQ(simd_code_pairs, scalar_code_pairs);
         EXPECT_NEAR(simd_norm_u4, scalar_norm_u4, 1e-5f * scalar_norm_u4);
 
@@ -353,7 +356,8 @@ TEST_F(DistanceComputerTest, F32_Int8Query_SIMD_MatchesScalar) {
         }
         int32_t expected_dot_u4 = 0;
         for (size_t j = 0; j < d; ++j) {
-            const int32_t code = (j % 2 == 0) ? (code_pairs[j / 2] & 0x0F) : (code_pairs[j / 2] >> 4);
+            const int32_t code =
+                (j % 2 == 0) ? (code_pairs[j / 2] & 0x0F) : (code_pairs[j / 2] >> 4);
             expected_dot_u4 += static_cast<int32_t>(query[j]) * code;
         }
         EXPECT_EQ(
