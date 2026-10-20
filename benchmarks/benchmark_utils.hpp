@@ -69,6 +69,7 @@ inline const std::unordered_map<std::string, RawDatasetInfo> RAW_DATASET_PARAMS 
     {"mxbai", {769382, 1024, 1000, PDX::DistanceMetric::L2SQ, "agnews-mxbai-1024-euclidean"}},
     {"openai", {999000, 1536, 1000, PDX::DistanceMetric::L2SQ, "openai-1536-angular"}},
     {"arxiv", {2253000, 768, 1000, PDX::DistanceMetric::L2SQ, "instructorxl-arxiv-768"}},
+    {"jina", {1374067, 768, 1000, PDX::DistanceMetric::COSINE, "codesearchnet-jina-768-cosine"}},
     {"wiki", {260372, 3072, 1000, PDX::DistanceMetric::L2SQ, "simplewiki-openai-3072-normalized"}},
     {"cohere", {10000000, 1024, 1000, PDX::DistanceMetric::L2SQ, "cohere"}},
 };

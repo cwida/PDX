@@ -378,7 +378,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
 
   private:
     static __mmask16 TailMask(size_t remaining) {
-        return static_cast<__mmask16>(_bzhi_u32(0xFFFFFFFF, static_cast<uint32_t>(remaining)));
+        return remaining >= 16 ? static_cast<__mmask16>(0xFFFF)
+                               : static_cast<__mmask16>((1u << remaining) - 1);
     }
 
     // The codes of the 16 values in mask (round to nearest even, clamped to [0, MAX_CODE]), 0 in
