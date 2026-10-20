@@ -54,8 +54,9 @@ stays f32, and Flat ignores the setting. Search ranking uses `ComputeApproximate
 take the query in int8 (`LVQInt8Query`, scale max|q|/127, through `HorizontalDotInt8WithU8`/`U4`), F32 ones are exact.
 `Append`'s nearest centroid and the split's neighbour search keep the exact `ComputeDistancesToCentroids` (LVQ: the L2
 to the decoded centroid, through `HorizontalDotWithU8`/`U4`). The int8 kernels read whole
-`LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES` (64) chunks: the query is zero-padded, and LVQ centroids keep that many zeroed bytes
-after the last one (`trailing_padding_size`; F32 none). The encoded query travels as a `CentroidRankingQuery` (built for
+`LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES` (64) chunks: the query is zero-padded (so the bytes read past the codes, left
+uninitialized, count for nothing), and LVQ centroids keep that many bytes after the last one (`trailing_padding_size`;
+F32 none). The encoded query travels as a `CentroidRankingQuery` (built for
 one `CentroidQuantization`; a new encoding adds its part to it). LVQ encoding (`MinMax`, `QuantizeToU8`/`U4`) and LVQ4
 decoding (`DequantizeFromU4`) are SIMD kernels, with codes bit-identical to scalar; LVQ8 decoding is an auto-vectorized
 loop. Maintenance that needs floats decodes into scratch (`GetF32CentroidPtr`, `DecodeCentroid`, and `GetF32CentroidsPtr` +
@@ -184,7 +185,8 @@ Performance-critical — weigh every copy/allocation.
   (`DistanceMetricRequiresNormalization`) and running L2SQ. The F32 computers also hold `FlipSign` and
   the LVQ centroid kernels: `HorizontalDotWithU8`/`U4` (float query · 8-bit or packed 4-bit codes),
   `HorizontalDotInt8WithU8`/`U4` (int8 query · codes: VPDPBUSD on AVX-512, and on AVX2 under `__AVXVNNI__`, else a
-  widening `madd_epi16`; on NEON `vusdotq_s32` under i8mm, else `vdotq_s32` for LVQ4 or a widening `vmlal_s16`),
+  widening `madd_epi16`; on NEON `vdotq_s32` under DOTPROD, LVQ8 on its codes XOR 0x80 plus 128·Σq (no i8mm: `-march=native`
+can claim it on CPUs that lack it), else a widening `vmlal_s16`),
   `MinMax`, `QuantizeToU8`/`U4`, `DequantizeFromU4` and `QuantizeToInt8`. The SIMD backends hand their scalar
   remainders to `ScalarComputer` (`scalar_computer`).
   **All** SIMD lives in `include/pdx/distance_computers/` (`neon_computers.hpp`, `avx2_computers.hpp`,

@@ -346,37 +346,49 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     }
 
     // TODO(@lkuffo, low): stored vertically, in blocks of 16 centroids whose 64-byte groups hold 4
-    // dimensions of each, the LVQ8 codes would take 4 vusdotq_laneq_s32 per group (each against the
-    // 4 query bytes of one lane) for the dots of all 16 centroids, with no horizontal sums.
-    // Measured 1.67x over this kernel on the M4 (geomean of 56 cells). It needs a blocked Centroids
-    // layout and a new CentroidQuantization nibble. Reads padded_size (a multiple of
-    // LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes
+    // dimensions of each, the LVQ8 codes would take 4 vdotq_laneq_s32 per group (each against the 4
+    // query bytes of one lane) for the dots of all 16 centroids, with no horizontal sums. Its i8mm
+    // form (vusdotq_laneq_s32) measured 1.67x over this kernel on the M4 (geomean of 56 cells). It
+    // needs a blocked Centroids layout and a new CentroidQuantization nibble. Reads padded_size (a
+    // multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes. query_codes_sum: the
+    // sum of the query's codes
     static int32_t HorizontalDotInt8WithU8(
         const int8_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,
-        size_t padded_size
+        size_t padded_size,
+        int32_t query_codes_sum
     ) {
         int32x4_t dot_vec_0 = vdupq_n_s32(0);
         int32x4_t dot_vec_1 = vdupq_n_s32(0);
         int32x4_t dot_vec_2 = vdupq_n_s32(0);
         int32x4_t dot_vec_3 = vdupq_n_s32(0);
-#if defined(__ARM_FEATURE_MATMUL_INT8)
+#if defined(__ARM_FEATURE_DOTPROD)
+        // SDOT multiplies s8 by s8: the codes XOR 0x80 are c - 128, so the dot lacks 128 times the
+        // sum of the query's codes
+        const uint8x16_t code_bias = vdupq_n_u8(0x80);
+        const auto biased_codes = [code_bias](const uint8_t* address) {
+            return vreinterpretq_s8_u8(veorq_u8(vld1q_u8(address), code_bias));
+        };
         for (size_t i = 0; i < padded_size; i += 64) {
-            dot_vec_0 = vusdotq_s32(dot_vec_0, vld1q_u8(codes + i), vld1q_s8(query + i));
-            dot_vec_1 = vusdotq_s32(dot_vec_1, vld1q_u8(codes + i + 16), vld1q_s8(query + i + 16));
-            dot_vec_2 = vusdotq_s32(dot_vec_2, vld1q_u8(codes + i + 32), vld1q_s8(query + i + 32));
-            dot_vec_3 = vusdotq_s32(dot_vec_3, vld1q_u8(codes + i + 48), vld1q_s8(query + i + 48));
+            dot_vec_0 = vdotq_s32(dot_vec_0, biased_codes(codes + i), vld1q_s8(query + i));
+            dot_vec_1 = vdotq_s32(dot_vec_1, biased_codes(codes + i + 16), vld1q_s8(query + i + 16));
+            dot_vec_2 = vdotq_s32(dot_vec_2, biased_codes(codes + i + 32), vld1q_s8(query + i + 32));
+            dot_vec_3 = vdotq_s32(dot_vec_3, biased_codes(codes + i + 48), vld1q_s8(query + i + 48));
         }
+        const int32_t code_bias_correction = 128 * query_codes_sum;
 #else
         for (size_t i = 0; i < padded_size; i += 16) {
             AccumulateWideningDotInt8WithU8x16(
                 vld1q_s8(query + i), vld1q_u8(codes + i), dot_vec_0, dot_vec_1, dot_vec_2, dot_vec_3
             );
         }
+        static_cast<void>(query_codes_sum);
+        const int32_t code_bias_correction = 0;
 #endif
         return vaddvq_s32(
-            vaddq_s32(vaddq_s32(dot_vec_0, dot_vec_1), vaddq_s32(dot_vec_2, dot_vec_3))
-        );
+                   vaddq_s32(vaddq_s32(dot_vec_0, dot_vec_1), vaddq_s32(dot_vec_2, dot_vec_3))
+               ) +
+               code_bias_correction;
     }
 
     // Byte i of codes holds dimension 2i (low nibble) and 2i+1 (high), so even_query[i] and
@@ -399,12 +411,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             const uint8x16_t high_nibbles_0 = vshrq_n_u8(code_pairs_0, 4);
             const uint8x16_t low_nibbles_1 = vandq_u8(code_pairs_1, nibble_mask);
             const uint8x16_t high_nibbles_1 = vshrq_n_u8(code_pairs_1, 4);
-#if defined(__ARM_FEATURE_MATMUL_INT8)
-            dot_vec_0 = vusdotq_s32(dot_vec_0, low_nibbles_0, vld1q_s8(even_query + i));
-            dot_vec_1 = vusdotq_s32(dot_vec_1, high_nibbles_0, vld1q_s8(odd_query + i));
-            dot_vec_2 = vusdotq_s32(dot_vec_2, low_nibbles_1, vld1q_s8(even_query + i + 16));
-            dot_vec_3 = vusdotq_s32(dot_vec_3, high_nibbles_1, vld1q_s8(odd_query + i + 16));
-#elif defined(__ARM_FEATURE_DOTPROD)
+#if defined(__ARM_FEATURE_DOTPROD)
             // The nibbles fit in s8, so the signed dot product needs no correction
             dot_vec_0 =
                 vdotq_s32(dot_vec_0, vreinterpretq_s8_u8(low_nibbles_0), vld1q_s8(even_query + i));
@@ -447,7 +454,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     }
 
   private:
-    // Without i8mm: widens 16 bytes of query and codes to s16, then multiply-accumulates into s32
+    // Without DOTPROD: widens 16 bytes of query and codes to s16, then multiply-accumulates into s32
     static void AccumulateWideningDotInt8WithU8x16(
         const int8x16_t query_s8,
         const uint8x16_t codes_u8,

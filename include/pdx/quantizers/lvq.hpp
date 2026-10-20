@@ -51,6 +51,7 @@ class LVQInt8Query {
         for (size_t i = 0; i < num_dimensions; ++i) {
             sum += transformed_query[i];
             squared_norm += transformed_query[i] * transformed_query[i];
+            codes_sum += codes[i];
         }
     }
 
@@ -67,6 +68,8 @@ class LVQInt8Query {
     float GetScale() const { return scale; }
     float GetSum() const { return sum; }
     float GetSquaredNorm() const { return squared_norm; }
+    // The sum of the int8 codes, which the NEON LVQ8 kernel needs to undo its code bias
+    int32_t GetCodesSum() const { return codes_sum; }
 
   private:
     uint32_t num_dimensions;
@@ -76,6 +79,7 @@ class LVQInt8Query {
     float scale = 1.0f;
     float sum = 0.0f;
     float squared_norm = 0.0f;
+    int32_t codes_sum = 0;
 };
 
 template <uint8_t BIT_WIDTH = 8>
@@ -167,7 +171,7 @@ class LVQQuantizer : public Quantizer {
         int32_t dot;
         if constexpr (BIT_WIDTH == 8) {
             dot = DistanceComputer<DistanceMetric::L2SQ, F32>::HorizontalDotInt8WithU8(
-                query.GetCodesPtr(), codes, query.GetPaddedCodesSize()
+                query.GetCodesPtr(), codes, query.GetPaddedCodesSize(), query.GetCodesSum()
             );
         } else {
             dot = DistanceComputer<DistanceMetric::L2SQ, F32>::HorizontalDotInt8WithU4(

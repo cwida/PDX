@@ -340,15 +340,21 @@ TEST_F(DistanceComputerTest, F32_Int8Query_SIMD_MatchesScalar) {
             code = static_cast<uint8_t>(rng() % 256);
         }
         int32_t expected_dot_u8 = 0;
+        int32_t query_codes_sum = 0;
         for (size_t j = 0; j < d; ++j) {
             expected_dot_u8 += static_cast<int32_t>(query[j]) * static_cast<int32_t>(codes[j]);
+            query_codes_sum += query[j];
         }
         EXPECT_EQ(
-            ScalarF32Computer::HorizontalDotInt8WithU8(query.data(), codes.data(), padded_size),
+            ScalarF32Computer::HorizontalDotInt8WithU8(
+                query.data(), codes.data(), padded_size, query_codes_sum
+            ),
             expected_dot_u8
         );
         EXPECT_EQ(
-            F32Computer::HorizontalDotInt8WithU8(query.data(), codes.data(), padded_size),
+            F32Computer::HorizontalDotInt8WithU8(
+                query.data(), codes.data(), padded_size, query_codes_sum
+            ),
             expected_dot_u8
         );
 
