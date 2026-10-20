@@ -106,6 +106,29 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             out_bits[j] = data_bits[j] ^ masks[j];
         }
     }
+
+    static float HorizontalDotWithU8(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        __m256 dot_vec = _mm256_setzero_ps();
+        size_t i = 0;
+        for (; i + 8 <= num_dimensions; i += 8) {
+            const __m256 codes_vec = _mm256_cvtepi32_ps(
+                _mm256_cvtepu8_epi32(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(codes + i)))
+            );
+            dot_vec = _mm256_fmadd_ps(_mm256_loadu_ps(query + i), codes_vec, dot_vec);
+        }
+        __m128 dot_halves =
+            _mm_add_ps(_mm256_castps256_ps128(dot_vec), _mm256_extractf128_ps(dot_vec, 1));
+        dot_halves = _mm_hadd_ps(dot_halves, dot_halves);
+        float dot = _mm_cvtss_f32(_mm_hadd_ps(dot_halves, dot_halves));
+        for (; i < num_dimensions; ++i) {
+            dot += query[i] * static_cast<float>(codes[i]);
+        }
+        return dot;
+    }
 };
 
 template <>

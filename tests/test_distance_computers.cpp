@@ -40,6 +40,38 @@ TEST_F(DistanceComputerTest, F32_Horizontal_SIMD_MatchesScalar) {
     }
 }
 
+TEST_F(DistanceComputerTest, F32_HorizontalDotWithU8_SIMD_MatchesScalar) {
+    std::vector<size_t> dimensions = {1, 7, 8, 15, 16, 17, 31, 32, 33, 64, 384, 1024};
+    const size_t n_pairs = 100;
+    std::mt19937 rng(42);
+
+    for (size_t d : dimensions) {
+        SCOPED_TRACE("d=" + std::to_string(d));
+        auto queries = skmeans::GenerateRandomVectors(n_pairs, d, 0.0f, 10.0f, 42);
+
+        for (size_t i = 0; i < n_pairs; ++i) {
+            const float* query = queries.data() + i * d;
+            std::vector<uint8_t> codes(d);
+            for (size_t j = 0; j < d; ++j) {
+                codes[j] = rng() % 256;
+            }
+
+            float scalar =
+                PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::F32>::HorizontalDotWithU8(
+                    query, codes.data(), d
+                );
+            float simd =
+                PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::F32>::HorizontalDotWithU8(
+                    query, codes.data(), d
+                );
+
+            float rel_error = std::abs(scalar - simd) / std::max(scalar, 1e-6f);
+            EXPECT_LT(rel_error, 1e-5f)
+                << "pair " << i << ": scalar=" << scalar << ", simd=" << simd;
+        }
+    }
+}
+
 TEST_F(DistanceComputerTest, F32_Vertical_SIMD_MatchesScalar) {
     std::vector<size_t> dimensions = {64, 128, 256, 384};
     std::vector<size_t> vector_counts = {32, 64, 128};

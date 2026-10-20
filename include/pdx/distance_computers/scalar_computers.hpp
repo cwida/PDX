@@ -65,6 +65,19 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
             out_bits[j] = data_bits[j] ^ masks[j];
         }
     }
+
+    static float HorizontalDotWithU8(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        float dot = 0.0f;
+        PDX_VECTORIZE_LOOP
+        for (size_t dimension_idx = 0; dimension_idx < num_dimensions; ++dimension_idx) {
+            dot += query[dimension_idx] * static_cast<float>(codes[dimension_idx]);
+        }
+        return dot;
+    }
 };
 
 template <>

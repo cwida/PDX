@@ -90,6 +90,44 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             out_bits[j] = data_bits[j] ^ masks[j];
         }
     }
+
+    static float HorizontalDotWithU8(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        float32x4_t dot_vec_0 = vdupq_n_f32(0);
+        float32x4_t dot_vec_1 = vdupq_n_f32(0);
+        float32x4_t dot_vec_2 = vdupq_n_f32(0);
+        float32x4_t dot_vec_3 = vdupq_n_f32(0);
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            const uint8x16_t codes_u8 = vld1q_u8(codes + i);
+            const uint16x8_t codes_low_u16 = vmovl_u8(vget_low_u8(codes_u8));
+            const uint16x8_t codes_high_u16 = vmovl_high_u8(codes_u8);
+            dot_vec_0 = vfmaq_f32(
+                dot_vec_0, vld1q_f32(query + i), vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_low_u16)))
+            );
+            dot_vec_1 = vfmaq_f32(
+                dot_vec_1, vld1q_f32(query + i + 4), vcvtq_f32_u32(vmovl_high_u16(codes_low_u16))
+            );
+            dot_vec_2 = vfmaq_f32(
+                dot_vec_2,
+                vld1q_f32(query + i + 8),
+                vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_high_u16)))
+            );
+            dot_vec_3 = vfmaq_f32(
+                dot_vec_3, vld1q_f32(query + i + 12), vcvtq_f32_u32(vmovl_high_u16(codes_high_u16))
+            );
+        }
+        float dot = vaddvq_f32(
+            vaddq_f32(vaddq_f32(dot_vec_0, dot_vec_1), vaddq_f32(dot_vec_2, dot_vec_3))
+        );
+        for (; i < num_dimensions; ++i) {
+            dot += query[i] * static_cast<float>(codes[i]);
+        }
+        return dot;
+    }
 };
 
 // Equivalent of vdotq_u32(acc, a, a) for squared accumulation.
