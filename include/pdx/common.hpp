@@ -197,6 +197,13 @@ struct VectorComparator {
 
 using Heap = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>;
 
+struct CentroidDistanceComparator {
+    const float* distances_to_centroids;
+    bool operator()(uint32_t a, uint32_t b) const {
+        return distances_to_centroids[a] < distances_to_centroids[b];
+    }
+};
+
 struct PDXDimensionSplit {
     const uint32_t horizontal_dimensions;
     const uint32_t vertical_dimensions;

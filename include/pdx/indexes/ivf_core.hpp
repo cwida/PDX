@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pdx/common.hpp"
+#include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/indexes/cluster.hpp"
 #include "pdx/utils.hpp"
 #include <algorithm>
@@ -114,6 +115,15 @@ class IVF : public skmeans::AllocatorHolder {
             centroid_norms_stale = false;
         }
         return centroid_norms.get();
+    }
+
+    void ComputeDistancesToCentroids(const float* PDX_RESTRICT query, float* PDX_RESTRICT out)
+        const {
+        for (size_t cluster_idx = 0; cluster_idx < num_clusters; cluster_idx++) {
+            out[cluster_idx] = DistanceComputer<DistanceMetric::L2SQ, F32>::Horizontal(
+                query, centroids.data() + cluster_idx * num_dimensions, num_dimensions
+            );
+        }
     }
 
     void Load(char* input) {
