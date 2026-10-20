@@ -67,6 +67,7 @@ class Centroids : public skmeans::AllocatorHolder {
     }
 
     CentroidQuantization GetQuantization() const { return quantization; }
+    size_t GetNumCentroids() const { return num_centroids; }
 
     void StoreCentroids(const float* centroids, size_t num_new_centroids) {
         num_centroids = 0;

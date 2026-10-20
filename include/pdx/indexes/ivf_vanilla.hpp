@@ -740,7 +740,8 @@ class PDXIndex : public IPDXIndex {
 
     // Scan over all centroids (embedding is already normalized + rotated)
     uint32_t FindNearestCentroid(const float* embedding) const {
-        std::unique_ptr<float[]> distances_to_centroids(new float[index.num_clusters]);
+        std::unique_ptr<float[]> distances_to_centroids(new float[index.centroids.GetNumCentroids()]
+        );
         // TODO(@lkuffo, med): We might consider using ComputeApproximateDistancesToCentroids
         // here to speedup appends even more.
         index.centroids.ComputeDistancesToCentroids(embedding, distances_to_centroids.get());
@@ -760,7 +761,8 @@ class PDXIndex : public IPDXIndex {
         size_t max_neighbors = SPLIT_MAX_NEIGHBOR_CLUSTERS
     ) const {
         PDX_PROFILE_SCOPE("GetNeighboringClusters");
-        std::unique_ptr<float[]> distances_to_centroids(new float[index.num_clusters]);
+        std::unique_ptr<float[]> distances_to_centroids(new float[index.centroids.GetNumCentroids()]
+        );
         index.centroids.ComputeDistancesToCentroids(centroid, distances_to_centroids.get());
         std::vector<std::pair<float, uint32_t>> neighbor_dists;
         neighbor_dists.reserve(index.num_clusters);
