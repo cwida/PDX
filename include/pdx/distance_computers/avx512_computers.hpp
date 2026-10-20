@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pdx/common.hpp"
+#include "pdx/distance_computers/scalar_computers.hpp"
 #include <cassert>
 #include <cstdint>
 #include <immintrin.h>
@@ -16,6 +17,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     using distance_t = pdx_distance_t<F32>;
     using query_t = pdx_quantized_embedding_t<F32>;
     using data_t = pdx_data_t<F32>;
+    using scalar_computer = ScalarComputer<DistanceMetric::L2SQ, Quantization::F32>;
 
     template <bool SKIP_PRUNED>
     static void Vertical(
@@ -99,6 +101,314 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         for (; j < d; ++j) {
             out_bits[j] = data_bits[j] ^ masks[j];
         }
+    }
+
+    static float HorizontalDotWithU8(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        __m512 dot_vec_0 = _mm512_setzero_ps();
+        __m512 dot_vec_1 = _mm512_setzero_ps();
+        __m512 dot_vec_2 = _mm512_setzero_ps();
+        __m512 dot_vec_3 = _mm512_setzero_ps();
+        const auto codes_as_floats = [codes](size_t offset) {
+            return _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(codes + offset))
+            ));
+        };
+        size_t i = 0;
+        for (; i + 64 <= num_dimensions; i += 64) {
+            dot_vec_0 = _mm512_fmadd_ps(_mm512_loadu_ps(query + i), codes_as_floats(i), dot_vec_0);
+            dot_vec_1 = _mm512_fmadd_ps(
+                _mm512_loadu_ps(query + i + 16), codes_as_floats(i + 16), dot_vec_1
+            );
+            dot_vec_2 = _mm512_fmadd_ps(
+                _mm512_loadu_ps(query + i + 32), codes_as_floats(i + 32), dot_vec_2
+            );
+            dot_vec_3 = _mm512_fmadd_ps(
+                _mm512_loadu_ps(query + i + 48), codes_as_floats(i + 48), dot_vec_3
+            );
+        }
+        for (; i < num_dimensions; i += 16) {
+            const auto mask = static_cast<__mmask16>(
+                _bzhi_u32(0xFFFFFFFF, static_cast<uint32_t>(num_dimensions - i))
+            );
+            const __m512 codes_vec =
+                _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_maskz_loadu_epi8(mask, codes + i)));
+            dot_vec_0 =
+                _mm512_fmadd_ps(_mm512_maskz_loadu_ps(mask, query + i), codes_vec, dot_vec_0);
+        }
+        return _mm512_reduce_add_ps(
+            _mm512_add_ps(_mm512_add_ps(dot_vec_0, dot_vec_1), _mm512_add_ps(dot_vec_2, dot_vec_3))
+        );
+    }
+
+    static float HorizontalDotWithU4(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        __m512 dot_vec_0 = _mm512_setzero_ps();
+        __m512 dot_vec_1 = _mm512_setzero_ps();
+        __m512 dot_vec_2 = _mm512_setzero_ps();
+        __m512 dot_vec_3 = _mm512_setzero_ps();
+        const __m128i nibble_mask = _mm_set1_epi8(0x0F);
+        const auto accumulate_32_dimensions = [&](size_t offset, __m512& dot_low, __m512& dot_high
+                                              ) {
+            const __m128i code_pairs =
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(codes + offset / 2));
+            const __m128i low_nibbles = _mm_and_si128(code_pairs, nibble_mask);
+            const __m128i high_nibbles = _mm_and_si128(_mm_srli_epi16(code_pairs, 4), nibble_mask);
+            const __m512 codes_low_vec =
+                _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_unpacklo_epi8(low_nibbles, high_nibbles)
+                ));
+            const __m512 codes_high_vec =
+                _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_unpackhi_epi8(low_nibbles, high_nibbles)
+                ));
+            dot_low = _mm512_fmadd_ps(_mm512_loadu_ps(query + offset), codes_low_vec, dot_low);
+            dot_high =
+                _mm512_fmadd_ps(_mm512_loadu_ps(query + offset + 16), codes_high_vec, dot_high);
+        };
+        size_t i = 0;
+        for (; i + 64 <= num_dimensions; i += 64) {
+            accumulate_32_dimensions(i, dot_vec_0, dot_vec_1);
+            accumulate_32_dimensions(i + 32, dot_vec_2, dot_vec_3);
+        }
+        for (; i + 32 <= num_dimensions; i += 32) {
+            accumulate_32_dimensions(i, dot_vec_0, dot_vec_1);
+        }
+        float dot = _mm512_reduce_add_ps(
+            _mm512_add_ps(_mm512_add_ps(dot_vec_0, dot_vec_1), _mm512_add_ps(dot_vec_2, dot_vec_3))
+        );
+        for (; i + 2 <= num_dimensions; i += 2) {
+            const uint8_t code_pair = codes[i / 2];
+            dot += query[i] * static_cast<float>(code_pair & 0x0F) +
+                   query[i + 1] * static_cast<float>(code_pair >> 4);
+        }
+        if (i < num_dimensions) {
+            dot += query[i] * static_cast<float>(codes[i / 2] & 0x0F);
+        }
+        return dot;
+    }
+
+    static void MinMax(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float& lower,
+        float& upper
+    ) {
+        __m512 lower_vec = _mm512_set1_ps(std::numeric_limits<float>::infinity());
+        __m512 upper_vec = _mm512_set1_ps(-std::numeric_limits<float>::infinity());
+        for (size_t i = 0; i < num_dimensions; i += 16) {
+            const __mmask16 mask = TailMask(num_dimensions - i);
+            const __m512 values_vec = _mm512_maskz_loadu_ps(mask, values + i);
+            lower_vec = _mm512_mask_min_ps(lower_vec, mask, lower_vec, values_vec);
+            upper_vec = _mm512_mask_max_ps(upper_vec, mask, upper_vec, values_vec);
+        }
+        lower = _mm512_reduce_min_ps(lower_vec);
+        upper = _mm512_reduce_max_ps(upper_vec);
+    }
+
+    // Returns the squared norm of the dequantized values
+    static float QuantizeToU8(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        const __m512 lower_vec = _mm512_set1_ps(lower);
+        const __m512 inverse_step_vec = _mm512_set1_ps(1.0f / step);
+        const __m512 step_vec = _mm512_set1_ps(step);
+        __m512 squared_norm_vec = _mm512_setzero_ps();
+        for (size_t i = 0; i < num_dimensions; i += 16) {
+            const __mmask16 mask = TailMask(num_dimensions - i);
+            _mm_mask_storeu_epi8(
+                codes + i,
+                mask,
+                Quantize16<255>(
+                    values + i, mask, lower_vec, inverse_step_vec, step_vec, squared_norm_vec
+                )
+            );
+        }
+        return _mm512_reduce_add_ps(squared_norm_vec);
+    }
+
+    // Dimension 2i in the low nibble of byte i. Returns the squared norm of the dequantized values
+    static float QuantizeToU4(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        const __m512 lower_vec = _mm512_set1_ps(lower);
+        const __m512 inverse_step_vec = _mm512_set1_ps(1.0f / step);
+        const __m512 step_vec = _mm512_set1_ps(step);
+        // maddubs with these weights packs each pair of codes as even | odd << 4
+        const __m128i code_pair_weights = _mm_set1_epi16(0x1001);
+        __m512 squared_norm_vec = _mm512_setzero_ps();
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            const __m128i codes_vec = Quantize16<15>(
+                values + i, 0xFFFF, lower_vec, inverse_step_vec, step_vec, squared_norm_vec
+            );
+            const __m128i code_pairs = _mm_maddubs_epi16(codes_vec, code_pair_weights);
+            _mm_storel_epi64(
+                reinterpret_cast<__m128i*>(codes + i / 2), _mm_packus_epi16(code_pairs, code_pairs)
+            );
+        }
+        return _mm512_reduce_add_ps(squared_norm_vec) +
+               scalar_computer::QuantizeToU4(
+                   values + i, num_dimensions - i, lower, step, codes + i / 2
+               );
+    }
+
+    static void DequantizeFromU4(
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        float* PDX_RESTRICT out
+    ) {
+        const __m512 lower_vec = _mm512_set1_ps(lower);
+        const __m512 step_vec = _mm512_set1_ps(step);
+        const __m128i nibble_mask = _mm_set1_epi8(0x0F);
+        size_t i = 0;
+        for (; i + 32 <= num_dimensions; i += 32) {
+            const __m128i code_pairs =
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(codes + i / 2));
+            const __m128i low_nibbles = _mm_and_si128(code_pairs, nibble_mask);
+            const __m128i high_nibbles = _mm_and_si128(_mm_srli_epi16(code_pairs, 4), nibble_mask);
+            const __m512 codes_low_vec =
+                _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_unpacklo_epi8(low_nibbles, high_nibbles)
+                ));
+            const __m512 codes_high_vec =
+                _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm_unpackhi_epi8(low_nibbles, high_nibbles)
+                ));
+            _mm512_storeu_ps(out + i, _mm512_fmadd_ps(codes_low_vec, step_vec, lower_vec));
+            _mm512_storeu_ps(out + i + 16, _mm512_fmadd_ps(codes_high_vec, step_vec, lower_vec));
+        }
+        scalar_computer::DequantizeFromU4(codes + i / 2, num_dimensions - i, lower, step, out + i);
+    }
+
+    static void QuantizeToInt8(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float inverse_scale,
+        int8_t* PDX_RESTRICT out
+    ) {
+        const __m512 inverse_scale_vec = _mm512_set1_ps(inverse_scale);
+        for (size_t i = 0; i < num_dimensions; i += 16) {
+            const __mmask16 mask = TailMask(num_dimensions - i);
+            const __m512i rounded = _mm512_cvtps_epi32(
+                _mm512_mul_ps(_mm512_maskz_loadu_ps(mask, values + i), inverse_scale_vec)
+            );
+            _mm_mask_storeu_epi8(out + i, mask, _mm512_cvtsepi32_epi8(rounded));
+        }
+    }
+
+    // TODO(@lkuffo, low): stored vertically, in blocks of 16 centroids whose 64-byte groups hold 4
+    // dimensions of each, the LVQ8 codes would take one _mm512_dpbusd_epi32 per group (against the
+    // 4 query bytes broadcast by _mm512_set1_epi32) for the dots of all 16 centroids, with no
+    // horizontal sums. Measured 1.87x over this kernel on Zen 5 (geomean of 56 cells). It needs a
+    // blocked Centroids layout and a new CentroidQuantization nibble. Reads padded_size (a multiple
+    // of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes. query_codes_sum: the sum of
+    // the query's codes (the NEON kernel needs it)
+    static int32_t HorizontalDotInt8WithU8(
+        const int8_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t padded_size,
+        int32_t /*query_codes_sum*/
+    ) {
+        __m512i dot_vec_0 = _mm512_setzero_si512();
+        __m512i dot_vec_1 = _mm512_setzero_si512();
+        __m512i dot_vec_2 = _mm512_setzero_si512();
+        __m512i dot_vec_3 = _mm512_setzero_si512();
+        size_t i = 0;
+        for (; i + 256 <= padded_size; i += 256) {
+            dot_vec_0 = _mm512_dpbusd_epi32(
+                dot_vec_0, _mm512_loadu_si512(codes + i), _mm512_loadu_si512(query + i)
+            );
+            dot_vec_1 = _mm512_dpbusd_epi32(
+                dot_vec_1, _mm512_loadu_si512(codes + i + 64), _mm512_loadu_si512(query + i + 64)
+            );
+            dot_vec_2 = _mm512_dpbusd_epi32(
+                dot_vec_2, _mm512_loadu_si512(codes + i + 128), _mm512_loadu_si512(query + i + 128)
+            );
+            dot_vec_3 = _mm512_dpbusd_epi32(
+                dot_vec_3, _mm512_loadu_si512(codes + i + 192), _mm512_loadu_si512(query + i + 192)
+            );
+        }
+        for (; i < padded_size; i += 64) {
+            dot_vec_0 = _mm512_dpbusd_epi32(
+                dot_vec_0, _mm512_loadu_si512(codes + i), _mm512_loadu_si512(query + i)
+            );
+        }
+        return _mm512_reduce_add_epi32(_mm512_add_epi32(
+            _mm512_add_epi32(dot_vec_0, dot_vec_1), _mm512_add_epi32(dot_vec_2, dot_vec_3)
+        ));
+    }
+
+    // Byte i of codes holds dimension 2i (low nibble) and 2i+1 (high), so even_query[i] and
+    // odd_query[i] are those dimensions of the query. Reads padded_size bytes of each
+    static int32_t HorizontalDotInt8WithU4(
+        const int8_t* PDX_RESTRICT even_query,
+        const int8_t* PDX_RESTRICT odd_query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t padded_size
+    ) {
+        __m512i dot_vec_0 = _mm512_setzero_si512();
+        __m512i dot_vec_1 = _mm512_setzero_si512();
+        const __m512i nibble_mask = _mm512_set1_epi8(0x0F);
+        for (size_t i = 0; i < padded_size; i += 64) {
+            const __m512i code_pairs = _mm512_loadu_si512(codes + i);
+            dot_vec_0 = _mm512_dpbusd_epi32(
+                dot_vec_0,
+                _mm512_and_si512(code_pairs, nibble_mask),
+                _mm512_loadu_si512(even_query + i)
+            );
+            dot_vec_1 = _mm512_dpbusd_epi32(
+                dot_vec_1,
+                _mm512_and_si512(_mm512_srli_epi16(code_pairs, 4), nibble_mask),
+                _mm512_loadu_si512(odd_query + i)
+            );
+        }
+        return _mm512_reduce_add_epi32(_mm512_add_epi32(dot_vec_0, dot_vec_1));
+    }
+
+  private:
+    static __mmask16 TailMask(size_t remaining) {
+        return remaining >= 16 ? static_cast<__mmask16>(0xFFFF)
+                               : static_cast<__mmask16>((1u << remaining) - 1);
+    }
+
+    // The codes of the 16 values in mask (round to nearest even, clamped to [0, MAX_CODE]), 0 in
+    // the other lanes; adds the squares of their dequantized values to squared_norm_vec
+    template <int MAX_CODE>
+    static __m128i Quantize16(
+        const query_t* PDX_RESTRICT values,
+        const __mmask16 mask,
+        const __m512 lower_vec,
+        const __m512 inverse_step_vec,
+        const __m512 step_vec,
+        __m512& squared_norm_vec
+    ) {
+        const __m512 scaled = _mm512_mul_ps(
+            _mm512_sub_ps(_mm512_maskz_loadu_ps(mask, values), lower_vec), inverse_step_vec
+        );
+        const __m512i codes_vec = _mm512_maskz_mov_epi32(
+            mask,
+            _mm512_min_epi32(
+                _mm512_max_epi32(_mm512_cvtps_epi32(scaled), _mm512_setzero_si512()),
+                _mm512_set1_epi32(MAX_CODE)
+            )
+        );
+        const __m512 dequantized =
+            _mm512_fmadd_ps(_mm512_cvtepi32_ps(codes_vec), step_vec, lower_vec);
+        squared_norm_vec = _mm512_mask3_fmadd_ps(dequantized, dequantized, squared_norm_vec, mask);
+        return _mm512_cvtepi32_epi8(codes_vec);
     }
 };
 

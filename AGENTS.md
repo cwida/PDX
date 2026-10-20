@@ -46,11 +46,32 @@ All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`) and shar
   searches a slice of the rows instead and the slices' top-k merge per query. Tombstones get an
   infinite norm. Unfiltered.
 
+Centroids (`Centroids`, `indexes/centroids.hpp`) are stored once, in `PDXIndexConfig::centroid_quantization`: `F32`
+(default), `LVQ8` or `LVQ4` (`LVQQuantizer<BIT_WIDTH>`, `quantizers/lvq.hpp`: d 8-bit codes, or two 4-bit codes per
+byte with dimension 2i in the low nibble, plus `LVQParams` per centroid; no float32 copy kept). A new encoding adds its
+case to `Centroids`' switches (`-Wswitch` lists them) and to `TestUtils::QUANTIZED_CENTROIDS`. Vanilla and tree leaf centroids; the tree's L0 (its centroids and its PDX copies of the leaf centroids)
+stays f32, and Flat ignores the setting. Search ranking uses `ComputeApproximateDistancesToCentroids`: LVQ centroids
+take the query in int8 (`LVQInt8Query`, scale max|q|/127, through `HorizontalDotInt8WithU8`/`U4`), F32 ones are exact.
+`Append`'s nearest centroid and the split's neighbour search keep the exact `ComputeDistancesToCentroids` (LVQ: the L2
+to the decoded centroid, through `HorizontalDotWithU8`/`U4`). The int8 kernels read whole
+`LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES` (64) chunks: the query is zero-padded (so the bytes read past the codes, left
+uninitialized, count for nothing), and LVQ centroids keep that many bytes after the last one (`trailing_padding_size`;
+F32 none). The encoded query travels as a `CentroidRankingQuery` (built for
+one `CentroidQuantization`; a new encoding adds its part to it). LVQ encoding (`MinMax`, `QuantizeToU8`/`U4`) and LVQ4
+decoding (`DequantizeFromU4`) are SIMD kernels, with codes bit-identical to scalar; LVQ8 decoding is an auto-vectorized
+loop. Maintenance that needs floats decodes into scratch (`GetF32CentroidPtr`, `DecodeCentroid`, and `GetF32CentroidsPtr` +
+`GetF32CentroidsSquaredNormsPtr` for the GEMMs). A float centroid compared with decoded ones goes through
+`RoundTripThroughEncoding` first, so both sides carry the encoding's error. A centroid is encoded only when computed (build, the split's two
+means); merges move encoded centroids as they are.
+
 Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`;
 `PDX_FLAT` is serialization only).
-- File: `Save(path)` / `LoadPDXIndex(path)` write and read the type, the rotation matrix (`WriteRotationMatrix` /
+- File: `Save(path)` / `LoadPDXIndex(path)` write and read the type byte, the rotation matrix (`WriteRotationMatrix` /
   `ReadRotationMatrix`) and the payload, but no `PDXIndexConfig`: a restored index has the default config (e.g. no
-  `max_cluster_size`).
+  `max_cluster_size`) but its centroid quantization.
+- The type byte (file and stream, `MakeIndexTypeByte`) holds the `PDXIndexType` in its low nibble and the
+  `CentroidQuantization` in its high one (F32 = 0, so F32 indexes keep the bytes they had; Flat always writes 0). The
+  payload holds the centroids in that encoding; an unknown one throws `std::runtime_error`.
 - Stream (for indexes that share one rotation, e.g. one index per partition of a table): `SaveToStream(out)` writes
   `[PDX_SERIALIZATION_VERSION][type][PDXIndexConfig]` (`WriteStreamHeader`) and the payload, no rotation, tombstones
   compacted; `LoadPDXIndexFromStream(in, pruner)` constructs the index on `pruner` (which must hold the saving
@@ -73,6 +94,9 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 ## Resumable search (cursor)
 
 `PDXearch<Q>::IterativeSearch<FILTERED>` allows for: i) concurrent queries on one index, ii) resume a search. The API of a resumable search is: `Next(n)`: probes the next n clusters ranked once at `Begin`; `Done()`: the clusters are exhausted. `GetClustersAccessOrder(query)` returns every cluster, nearest first; passing it as `BeginIterativeSearch`'s `clusters_access_order` lets several cursors of one query (e.g. one per batch of passing rows) skip ranking again (Flat returns `{0}`).
+`BeginIterativeSearch*`, `GetDistancesToCentroids` and `GetClustersAccessOrder` take an optional `CentroidRankingQuery`
+last, so a caller that ranks one query on many indexes (DuckIR: one per row group) encodes it once (null: each index
+encodes it). A cursor that ranks every cluster itself (no preset order) computes the distances at `Begin` and orders lazily: `EnsureClustersOrder` partial-sorts the queue as far as `Next` probes, at least doubling the ordered prefix, so it probes in the full sort's order without sorting what it never reaches.
 
 Cursors may share one `thread_safe` `TopKHeap`. Only merges take its lock (`Start`'s full scan of the first clusters runs unlocked), and each merge ends with `PublishKthDistance(k)`; the pruning thresholds read that atomic `kth_distance` (+inf while fewer than k) without the lock, as a stale value is only looser. Every change to `heap` must be followed by `PublishKthDistance(k)` under the lock, and a heap reused for another query is reset with `Clear()`.
 
@@ -83,7 +107,7 @@ Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopK
 ## Maintenance (SPFresh-like appends/deletes)
 
 Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIndex` additionally keeps the meso-cluster layer (L0) in sync. The leaf-level helpers they share live in `indexes/ivf_utils.hpp`; operations on one cluster's own data (`StoreEmbeddings`, `Grow`, `CompactCluster`) are `Cluster` members (`indexes/cluster.hpp`).
-- **Append**: normalize+rotate → nearest centroid (vanilla: exact scan of all centroids; tree: PDX search over L0). Centroids never move on a plain append.
+- **Append**: normalize+rotate → nearest centroid (vanilla: `ComputeDistancesToCentroids` over all centroids; tree: PDX search over L0). Centroids never move on a plain append.
 - **BulkAppend** (`row_ids, embeddings, n`): validates every id first (live, repeated in the batch, outside
   [base_row_id, uint32]) and throws before any change. Transforms the batch with one `NormalizeAndRotate`, then runs
   rounds: assign the pending rows with one GEMM (`IVFUtils::AssignToNearestCentroids`; the tree assigns exactly over
@@ -95,7 +119,7 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
 - **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`, `CheckClusterHealth`. Search masks tombstones and never lets them into the heap, also while the heap is not yet full (`k` above the live count); `Save()` compacts them away.
 - **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM) with merges disabled to avoid cascades.
 - **SplitCluster**: 2-means into A and B; points closer to one of the `SPLIT_MAX_NEIGHBOR_CLUSTERS` nearest centroids go to a "rest" group that is reassigned, and neighbour points closer to A or B are stolen. If the 2-means leaves A or B empty (identical embeddings cannot be separated), the cluster is not split: `Cluster::Grow()` re-lays it out in `CAPACITY_THRESHOLD` times as many slots (same slots, row ids and centroid). The rest group's reassignment can split other clusters recursively; past `SPLIT_CASCADE_MAX_DEPTH` nested levels a full cluster grows instead of splitting.
-- **Size limit**: `Cluster::CapacityFor(n, PDXIndexConfig::max_cluster_size)` sizes the leaf clusters of a build and of a split. With 0 (default) it is `CAPACITY_THRESHOLD` times the creation size (at least 256), and a cluster splits when its slots fill. With a limit, it is `CAPACITY_THRESHOLD` times the rows (at least one free slot), capped at the limit: a full cluster below the limit grows instead (`Cluster::GrowTo`, which moves the used slots into a larger stride and keeps slots and tombstones; `BulkAppend` grows each cluster for its batch first, `Cluster::GrowToFit`), and splits once it holds the limit. `PDXIndexConfig::expect_appends = false` (build-time, not serialized) builds the leaf clusters with one free slot; appends still grow them (with a limit) or split them (without). `IPDXIndex::ShrinkToFit()` leaves one free slot after each leaf cluster's used slots, for an index that stops receiving appends. Streams save each cluster's capacity, and loads restore it. With a limit, `BuildIndex` also splits the k-means clusters above it (`IVFUtils::SplitClustersAboveMaxClusterSize`: k-means on each cluster's own embeddings into splits of half the limit, repeated until they fit) before populating, so the tree's L0 is built over them. Clusters k-means can't separate (identical embeddings) stay above the limit, at build and on append. L0 clusters and the merge threshold ignore the limit.
+- **Size limit**: `Cluster::CapacityFor(n, PDXIndexConfig::max_cluster_size)` sizes the leaf clusters of a build and of a split. With 0 (default) it is `CAPACITY_THRESHOLD` times the creation size (at least 256), and a cluster splits when its slots fill. With a limit, it is `CAPACITY_THRESHOLD` times the rows (at least one free slot), capped at the limit: a full cluster below the limit grows instead (`Cluster::GrowTo`, which moves the used slots into a larger stride and keeps slots and tombstones; `BulkAppend` grows each cluster for its batch first, `Cluster::GrowToFit`), and splits once it holds the limit. `PDXIndexConfig::expect_appends = false` (build-time, not serialized) builds the leaf clusters with one free slot; appends still grow them (with a limit) or split them (without). `IPDXIndex::ShrinkToFit()` leaves one free slot after each leaf cluster's used slots, for an index that stops receiving appends (vanilla also trims the centroids, which splits grow by doubling). Streams save each cluster's capacity, and loads restore it. With a limit, `BuildIndex` also splits the k-means clusters above it (`IVFUtils::SplitClustersAboveMaxClusterSize`: k-means on each cluster's own embeddings into splits of half the limit, repeated until they fit) before populating, so the tree's L0 is built over them. Clusters k-means can't separate (identical embeddings) stay above the limit, at build and on append. L0 clusters and the merge threshold ignore the limit.
 - **ReassignEmbeddings** (also used by `SplitCluster` for the "rest" group) always runs with merges disabled: it snapshots the nearest-centroid assignments before its loop, and a merge inside the loop would swap-and-pop cluster ids from under it (see the TODO at its definition for the root fix). Clusters drained by `StealNeighborEmbeddings` therefore merge only when a later Append/Delete touches them.
 - **Invariants**: `ReserveClusterSlotIfNeeded()` before holding a `cluster_t&` (splits `push_back`); every structural change, a cluster re-layout included, ends with `ComputeClusterOffsets()` (the searcher sizes its buffers from `max_cluster_capacity` on each query); single writer thread.
 - **Row id mapping**: `RowIdClusterMapping` (`ivf_utils.hpp`) is a dense vector indexed by row id holding `(cluster, index_in_cluster)`, `DELETED_MARKER` (`common.hpp`) for absent/deleted ids; exposed as `IPDXIndex::GetRowIdMapping`. Row ids are expected dense (PDX assigns them by position); the vector grows to the largest appended id, counted from `PDXIndexConfig::base_row_id` (for an index that holds one row-id range of a larger table). `Delete` returns whether the id was in the index (an absent id is a no-op), `Contains` whether it is; `Append` of a live id throws.
@@ -159,7 +183,13 @@ Performance-critical — weigh every copy/allocation.
   dispatched at compile time (`base_computers.hpp`, on `__ARM_NEON`/`__AVX2__`/`__AVX512F__`) and
   tagged by `Quantization` (`F32`/`U8`; `F16`/`BF` exist in the enum but have no kernels). Kernels are
   only specialized for `DistanceMetric::L2SQ` — `IP`/`COSINE` are served by normalizing the data
-  (`DistanceMetricRequiresNormalization`) and running L2SQ.
+  (`DistanceMetricRequiresNormalization`) and running L2SQ. The F32 computers also hold `FlipSign` and
+  the LVQ centroid kernels: `HorizontalDotWithU8`/`U4` (float query · 8-bit or packed 4-bit codes),
+  `HorizontalDotInt8WithU8`/`U4` (int8 query · codes: VPDPBUSD on AVX-512, and on AVX2 under `__AVXVNNI__`, else a
+  widening `madd_epi16`; on NEON `vdotq_s32` under DOTPROD, LVQ8 on its codes XOR 0x80 plus 128·Σq (no i8mm: `-march=native`
+can claim it on CPUs that lack it), else a widening `vmlal_s16`),
+  `MinMax`, `QuantizeToU8`/`U4`, `DequantizeFromU4` and `QuantizeToInt8`. The SIMD backends hand their scalar
+  remainders to `ScalarComputer` (`scalar_computer`).
   **All** SIMD lives in `include/pdx/distance_computers/` (`neon_computers.hpp`, `avx2_computers.hpp`,
   `avx512_computers.hpp`, `scalar_computers.hpp`) — don't scatter it elsewhere; keep all backends in
   sync when changing a kernel (on ARM the x86 ones aren't compiled or linted). Cover kernels in
@@ -178,19 +208,20 @@ Performance-critical — weigh every copy/allocation.
 - **Memory allocator.** Large buffers come from SuperKMeans' `MemoryAllocator` (aliased in
   `common.hpp`), borrowed: it must outlive the index; unbound means the `VanillaAllocator`.
   `IPDXIndex` is a `skmeans::AllocatorHolder` bound to `PDXIndexConfig::allocator` (not serialized),
-  and binds its `IVF` storage too (`IVFTree::SetAllocator` also binds L0; `Restore` and `BuildIndex`,
-  which replace it, rebind it). It
+  and binds its `IVF` storage too (`IVF::SetAllocator` also binds its `Centroids`, `IVFTree::SetAllocator`
+  L0; `Restore` and `BuildIndex`, which replace it, rebind it). It
   hands the allocator to its owned pruner, to `IVFUtils(executor, &allocator)` (which passes it to
   SuperKMeans' k-means) and to new clusters; each `Cluster` keeps it for `Grow`.
   `LoadPDXIndex`/`LoadPDXIndexFromStream` take it as a parameter, since loading allocates the clusters.
   Routed: cluster `data`/`indices`, the pruner's rotation (an `AllocatedBuffer` behind an `Eigen::Map`),
-  `IVF::centroid_norms`, `NormalizeAndRotate`, the population gathers, split/merge/reassign scratch
+  the centroids (`Centroids`: the encoded centroids and their squared norms) and their decode scratch,
+  `NormalizeAndRotate`, the population gathers, split/merge/reassign scratch
   (the split's A/B embeddings and ids, sized up front by `CountRowsToSteal`), `BulkAppend`'s row-id
-  arrays, `ReadRotationMatrix`, `FlatIndex::GetEmbeddings`. On the heap: centroids (SuperKMeans'
-  `Train` vector), `RowIdClusterMapping`, tombstones, `Flat` storage, per-query searcher buffers, the
+  arrays, `ReadRotationMatrix`, `FlatIndex::GetEmbeddings`. On the heap: the k-means centroids
+  (SuperKMeans' `Train` vector, until stored), `RowIdClusterMapping`, tombstones, `Flat` storage, per-query searcher buffers, the
   single-embedding transform in `Append`, d-sized and per-cluster (k-sized) arrays, the split's
   `SplitPartition` positions and k=2 assignments, `MmapFile` and Eigen's QR internals.
-  `IPDXIndex::GetAllocatedSizeInBytes()` counts the routed buffers an index keeps (cluster data, norms,
+  `IPDXIndex::GetAllocatedSizeInBytes()` counts the routed buffers an index keeps (cluster data, centroids,
   an owned pruner's rotation); `GetSelfManagedMemorySizeInBytes()` is the rest of
   `GetInMemorySizeInBytes()` (what the index allocates itself, outside the allocator), for a caller whose
   allocator already charges the routed bytes.

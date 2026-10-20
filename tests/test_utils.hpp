@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -253,5 +254,49 @@ inline size_t CountEmptyClusters(const PDX::IPDXIndex& index) {
     }
     return num_empty;
 }
+
+// The centroid quantizations under test: the recall that ranking by them may lose against float32,
+// the bytes of one encoded centroid, and the bytes the centroids keep after the last one
+struct QuantizedCentroidsTestCase {
+    PDX::CentroidQuantization centroid_quantization;
+    float recall_tolerance;
+    size_t (*encoded_centroid_size_in_bytes)(size_t num_dimensions);
+    size_t trailing_padding_in_bytes;
+};
+
+static constexpr float LVQ8_RECALL_TOLERANCE = 0.01f;
+static constexpr float LVQ4_RECALL_TOLERANCE = 0.02f;
+
+inline constexpr QuantizedCentroidsTestCase QUANTIZED_CENTROIDS[] = {
+    {PDX::CentroidQuantization::LVQ8,
+     LVQ8_RECALL_TOLERANCE,
+     [](size_t num_dimensions) {
+         return sizeof(PDX::LVQParams) + PDX::LVQQuantizer<8>::GetCodesSizeInBytes(num_dimensions);
+     },
+     PDX::LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES},
+    {PDX::CentroidQuantization::LVQ4,
+     LVQ4_RECALL_TOLERANCE,
+     [](size_t num_dimensions) {
+         return sizeof(PDX::LVQParams) + PDX::LVQQuantizer<4>::GetCodesSizeInBytes(num_dimensions);
+     },
+     PDX::LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES},
+};
+
+class CountingAllocator final : public PDX::MemoryAllocator {
+  public:
+    void* Allocate(const size_t bytes) override {
+        live_bytes += bytes;
+        return vanilla.Allocate(bytes);
+    }
+    void Free(void* const ptr, const size_t bytes) override {
+        live_bytes -= bytes;
+        vanilla.Free(ptr, bytes);
+    }
+
+    std::atomic<size_t> live_bytes{0};
+
+  private:
+    skmeans::VanillaAllocator vanilla;
+};
 
 } // namespace TestUtils

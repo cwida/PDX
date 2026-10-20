@@ -38,6 +38,7 @@ struct PDXIndexConfig {
     size_t base_row_id = 0;
     uint32_t max_cluster_size = 0; // Clusters split at this size (0 = at 1.3x their initial size)
     bool expect_appends = true;    // false: built clusters get one free slot (not serialized)
+    CentroidQuantization centroid_quantization = CentroidQuantization::F32;
     // Runs the parallel loops (not owned, not serialized). nullptr: the index creates a default
     // one.
     ParallelExecutor* executor = nullptr;
@@ -124,9 +125,14 @@ struct PDXIndexConfig {
 
 // The start of every SaveToStream stream, which LoadPDXIndexFromStream reads to construct the
 // index.
-inline void WriteStreamHeader(std::ostream& out, PDXIndexType type, const PDXIndexConfig& config) {
+inline void WriteStreamHeader(
+    std::ostream& out,
+    PDXIndexType type,
+    CentroidQuantization centroid_quantization,
+    const PDXIndexConfig& config
+) {
     WriteValue(out, PDX_SERIALIZATION_VERSION);
-    WriteValue(out, static_cast<uint8_t>(type));
+    WriteValue(out, MakeIndexTypeByte(type, centroid_quantization));
     config.Save(out);
 }
 
@@ -929,6 +935,9 @@ inline SplitPartition PartitionClusterForSplit(
         std::memcpy(
             partition.centroid_b.get(), split_result.centroids.data() + d, d * sizeof(float)
         );
+        // A and B are compared with decoded centroids below, so they carry the same error
+        index.centroids.RoundTripThroughEncoding(partition.centroid_a.get());
+        index.centroids.RoundTripThroughEncoding(partition.centroid_b.get());
         partition.group_a_idx.reserve(split_result.assignments[0].size());
         partition.group_b_idx.reserve(split_result.assignments[1].size());
     }
@@ -938,10 +947,20 @@ inline SplitPartition PartitionClusterForSplit(
         PDX_PROFILE_SCOPE("Split/Partition");
         const float* centroid_a = partition.centroid_a.get();
         const float* centroid_b = partition.centroid_b.get();
+        const size_t num_neighbors = neighboring_clusters_ids.size();
+        std::unique_ptr<float[]> decoded_neighbor_centroids(new float[num_neighbors * d]);
+        std::unique_ptr<const float*[]> neighbor_centroids(new const float*[num_neighbors]);
+        // TODO(@lkuffo, low): We might consider avoiding decompression if we
+        // compute the distances on the quantized domain
+        for (size_t j = 0; j < num_neighbors; j++) {
+            neighbor_centroids[j] = index.centroids.GetF32CentroidPtr(
+                neighboring_clusters_ids[j], decoded_neighbor_centroids.get() + j * d
+            );
+        }
         for (size_t i = 0; i < num_embeddings; i++) {
             const float* emb = cluster_embeddings + i * d;
             float dist_old = distance_computer_f32_t::Horizontal(emb, centroid_to_split, d);
-            // TODO(@lkuffo, med): We could avoid one of these
+            // TODO(@lkuffo, low): We could avoid one of these
             // since we have the distance from k-means, we just need to bring it here
             float dist_a = distance_computer_f32_t::Horizontal(emb, centroid_a, d);
             float dist_b = distance_computer_f32_t::Horizontal(emb, centroid_b, d);
@@ -952,10 +971,8 @@ inline SplitPartition PartitionClusterForSplit(
                 continue;
             }
             bool closer_elsewhere = false;
-            for (uint32_t c : neighboring_clusters_ids) {
-                float dist = distance_computer_f32_t::Horizontal(
-                    emb, index.centroids.data() + static_cast<size_t>(c) * d, d
-                );
+            for (size_t j = 0; j < num_neighbors; j++) {
+                float dist = distance_computer_f32_t::Horizontal(emb, neighbor_centroids[j], d);
                 if (dist < min_ab) {
                     closer_elsewhere = true;
                     break;
@@ -1013,13 +1030,11 @@ inline NeighborRowsToSteal FindNeighborRowsToSteal(
         for (size_t j = begin; j < end; j++) {
             const uint32_t neighbor_id = neighboring_clusters_ids[j];
             const Cluster<Q>& neighbor = index.clusters[neighbor_id];
-            const float* own_centroid =
-                index.centroids.data() + static_cast<size_t>(neighbor_id) * d;
             const size_t n = neighbor.used_capacity;
             if (n == 0) {
                 continue;
             }
-            std::memcpy(centroids.get(), own_centroid, d * sizeof(float));
+            index.centroids.DecodeCentroid(neighbor_id, centroids.get());
             auto dots = skmeans::AllocateBuffer<float>(allocator, n * 3);
             if constexpr (Q == U8) {
                 auto rows = skmeans::AllocateBuffer<float>(allocator, n * d);
@@ -1088,7 +1103,8 @@ inline NeighborRowsToSteal FindNeighborRowsToSteal(
                 }
             }
             // |x|^2 is common to the three distances of a row, so it is left out
-            const float norm_own = Eigen::Map<const Eigen::VectorXf>(own_centroid, d).squaredNorm();
+            const float norm_own =
+                Eigen::Map<const Eigen::VectorXf>(centroids.get(), d).squaredNorm();
             for (size_t p = 0; p < n; p++) {
                 const auto slot = static_cast<uint32_t>(p);
                 if (neighbor.HasTombstone(slot)) {

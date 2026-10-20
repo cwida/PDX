@@ -242,35 +242,24 @@ class PDXearch {
         const float* PDX_RESTRICT query,
         const index_t& data,
         size_t nprobe,
-        uint32_t* clusters_indices
+        uint32_t* clusters_indices,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) {
         PDX_PROFILE_SCOPE("Search/GetClustersAccessOrderIVF");
         std::unique_ptr<float[]> distances_to_centroids(new float[data.num_clusters]);
-        for (size_t cluster_idx = 0; cluster_idx < data.num_clusters; cluster_idx++) {
-            distances_to_centroids[cluster_idx] =
-                DistanceComputer<DistanceMetric::L2SQ, F32>::Horizontal(
-                    query,
-                    data.centroids.data() + cluster_idx * data.num_dimensions,
-                    data.num_dimensions
-                );
-        }
+        data.centroids.ComputeApproximateDistancesToCentroids(
+            query, ranking_query, distances_to_centroids.get()
+        );
         std::iota(clusters_indices, clusters_indices + data.num_clusters, static_cast<uint32_t>(0));
+        const CentroidDistanceComparator nearest_first{distances_to_centroids.get()};
         if (nprobe >= data.num_clusters) {
-            std::sort(
-                clusters_indices,
-                clusters_indices + data.num_clusters,
-                [&distances_to_centroids](size_t i1, size_t i2) {
-                    return distances_to_centroids[i1] < distances_to_centroids[i2];
-                }
-            );
+            std::sort(clusters_indices, clusters_indices + data.num_clusters, nearest_first);
         } else {
             std::partial_sort(
                 clusters_indices,
                 clusters_indices + static_cast<int64_t>(nprobe),
                 clusters_indices + data.num_clusters,
-                [&distances_to_centroids](size_t i1, size_t i2) {
-                    return distances_to_centroids[i1] < distances_to_centroids[i2];
-                }
+                nearest_first
             );
         }
     }
@@ -673,6 +662,9 @@ class PDXearch {
         IterativeSearch(IterativeSearch&&) noexcept = default;
 
         size_t Next(size_t n_clusters) override {
+            if (distances_to_centroids) {
+                EnsureClustersOrder(n_probed_clusters + std::min(n_clusters, ClustersRemaining()));
+            }
             size_t n_probed_this_call = 0;
             for (; n_probed_this_call < n_clusters && n_probed_clusters < queued_clusters_size;
                  ++n_probed_this_call, ++n_probed_clusters) {
@@ -699,6 +691,28 @@ class PDXearch {
             const PredicateEvaluator* evaluator
         )
             : searcher(&searcher), top_k_heap(&top_k_heap), k(k), evaluator(evaluator) {}
+
+        void EnsureClustersOrder(size_t num_clusters_needed) {
+            if (num_clusters_needed <= num_ordered_clusters) {
+                return;
+            }
+            const size_t target = std::min(
+                std::max(num_clusters_needed, 2 * num_ordered_clusters), queued_clusters_size
+            );
+            const CentroidDistanceComparator nearest_first{distances_to_centroids.get()};
+            uint32_t* queue = queued_clusters.get();
+            if (target == queued_clusters_size) {
+                std::sort(queue + num_ordered_clusters, queue + target, nearest_first);
+            } else {
+                std::partial_sort(
+                    queue + num_ordered_clusters,
+                    queue + target,
+                    queue + queued_clusters_size,
+                    nearest_first
+                );
+            }
+            num_ordered_clusters = target;
+        }
 
         // A cluster without data (LoadResidentDataFromStream) comes from the cluster source: its
         // row ids, then its PDX data with the stride of the embeddings it was saved with.
@@ -833,6 +847,8 @@ class PDXearch {
         std::unique_ptr<uint32_t[]> queued_clusters;
         size_t queued_clusters_size = 0;
         size_t n_probed_clusters = 0;
+        std::unique_ptr<float[]> distances_to_centroids;
+        size_t num_ordered_clusters = 0;
         std::unique_ptr<distance_t[]> pruning_distances;
         std::unique_ptr<uint32_t[]> pruning_positions;
     };
@@ -844,7 +860,8 @@ class PDXearch {
         uint32_t k,
         TopKHeap& top_k_heap,
         bool is_query_transformed = false,
-        const uint32_t* clusters_access_order = nullptr
+        const uint32_t* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) {
         IterativeSearch<false> search_cursor(*this, k, top_k_heap, nullptr);
         InitializeSearchCursor(
@@ -852,7 +869,8 @@ class PDXearch {
             raw_query,
             is_query_transformed,
             pdx_data.num_clusters,
-            clusters_access_order
+            clusters_access_order,
+            ranking_query
         );
         return search_cursor;
     }
@@ -863,7 +881,8 @@ class PDXearch {
         std::unique_ptr<PredicateEvaluator> evaluator,
         TopKHeap& top_k_heap,
         bool is_query_transformed = false,
-        const uint32_t* clusters_access_order = nullptr
+        const uint32_t* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) {
         assert(evaluator);
         IterativeSearch<true> search_cursor(*this, k, top_k_heap, evaluator.get());
@@ -873,7 +892,8 @@ class PDXearch {
             raw_query,
             is_query_transformed,
             pdx_data.num_clusters,
-            clusters_access_order
+            clusters_access_order,
+            ranking_query
         );
         return search_cursor;
     }
@@ -886,7 +906,8 @@ class PDXearch {
         const PredicateEvaluator& evaluator,
         TopKHeap& top_k_heap,
         bool is_query_transformed = false,
-        const uint32_t* clusters_access_order = nullptr
+        const uint32_t* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) {
         IterativeSearch<true> search_cursor(*this, k, top_k_heap, &evaluator);
         InitializeSearchCursor(
@@ -894,7 +915,8 @@ class PDXearch {
             raw_query,
             is_query_transformed,
             pdx_data.num_clusters,
-            clusters_access_order
+            clusters_access_order,
+            ranking_query
         );
         return search_cursor;
     }
@@ -902,13 +924,18 @@ class PDXearch {
     // All clusters, nearest centroid to the query first. Searches of the same query can share it.
     [[nodiscard]] std::vector<uint32_t> GetClustersAccessOrder(
         const float* PDX_RESTRICT raw_query,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) {
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
         TransformQuery(raw_query, is_query_transformed, query.get());
         std::vector<uint32_t> clusters_access_order(pdx_data.num_clusters);
         GetClustersAccessOrderIVF(
-            query.get(), pdx_data, pdx_data.num_clusters, clusters_access_order.data()
+            query.get(),
+            pdx_data,
+            pdx_data.num_clusters,
+            clusters_access_order.data(),
+            ranking_query
         );
         return clusters_access_order;
     }
@@ -918,17 +945,12 @@ class PDXearch {
     void GetDistancesToCentroids(
         const float* PDX_RESTRICT raw_query,
         bool is_query_transformed,
-        float* PDX_RESTRICT out
+        float* PDX_RESTRICT out,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) {
         std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
         TransformQuery(raw_query, is_query_transformed, query.get());
-        for (size_t cluster_idx = 0; cluster_idx < pdx_data.num_clusters; cluster_idx++) {
-            out[cluster_idx] = DistanceComputer<DistanceMetric::L2SQ, F32>::Horizontal(
-                query.get(),
-                pdx_data.centroids.data() + cluster_idx * pdx_data.num_dimensions,
-                pdx_data.num_dimensions
-            );
-        }
+        pdx_data.centroids.ComputeApproximateDistancesToCentroids(query.get(), ranking_query, out);
     }
 
   protected:
@@ -957,7 +979,8 @@ class PDXearch {
         const float* PDX_RESTRICT raw_query,
         bool is_query_transformed,
         size_t n_clusters_to_rank,
-        const uint32_t* preset_clusters_access_order = nullptr
+        const uint32_t* preset_clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) {
         const size_t d = pdx_data.num_dimensions;
         search_cursor.query.reset(new float[d]);
@@ -984,12 +1007,24 @@ class PDXearch {
                 preset_clusters_access_order + n_clusters_to_rank,
                 search_cursor.queued_clusters.get()
             );
+        } else if (n_clusters_to_rank == pdx_data.num_clusters) {
+            // Next() orders the queue as far as it probes
+            search_cursor.distances_to_centroids.reset(new float[pdx_data.num_clusters]);
+            pdx_data.centroids.ComputeApproximateDistancesToCentroids(
+                search_cursor.query.get(), ranking_query, search_cursor.distances_to_centroids.get()
+            );
+            std::iota(
+                search_cursor.queued_clusters.get(),
+                search_cursor.queued_clusters.get() + pdx_data.num_clusters,
+                static_cast<uint32_t>(0)
+            );
         } else {
             GetClustersAccessOrderIVF(
                 search_cursor.query.get(),
                 pdx_data,
                 n_clusters_to_rank,
-                search_cursor.queued_clusters.get()
+                search_cursor.queued_clusters.get(),
+                ranking_query
             );
         }
         search_cursor.queued_clusters_size = 0;

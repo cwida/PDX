@@ -89,14 +89,16 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
     // share it); passing_row_ids to filter (nullptr: unfiltered). clusters_access_order: the
     // query's GetClustersAccessOrder, so that several searches of one query rank the clusters once
-    // (nullptr: rank).
+    // (nullptr: rank). ranking_query: for DuckIR, the transformed query encoded once for the
+    // centroids of every index it ranks (see CentroidRankingQuery; nullptr: encoded here).
     virtual std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
         const float* query_embedding,
         uint32_t knn,
         TopKHeap& top_k_heap,
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* clusters_access_order = nullptr
+        const std::vector<uint32_t>* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const = 0;
     // Builds the evaluator of passing_row_ids once, for the filtered searches of many queries.
     virtual std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
@@ -110,7 +112,8 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
         TopKHeap& top_k_heap,
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* clusters_access_order = nullptr
+        const std::vector<uint32_t>* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const = 0;
     // Writes the embeddings of row_ids as the index stores them (normalized and rotated; u8
     // dequantized), row-major into out (row_ids.size() x num_dimensions), in the order of row_ids.
@@ -123,12 +126,14 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     virtual void GetDistancesToCentroids(
         const float* query_embedding,
         bool is_query_transformed,
-        float* out
+        float* out,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const = 0;
     // All clusters, nearest centroid to the query first.
     virtual std::vector<uint32_t> GetClustersAccessOrder(
         const float* query_embedding,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const = 0;
 
   protected:
@@ -179,7 +184,6 @@ class PDXIndex : public IPDXIndex {
   public:
     using embedding_storage_t = PDX::pdx_data_t<Q>;
     using cluster_t = PDX::Cluster<Q>;
-    using distance_computer_f32_t = DistanceComputer<DistanceMetric::L2SQ, F32>;
     using batch_computer =
         skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
@@ -222,7 +226,7 @@ class PDXIndex : public IPDXIndex {
         CompactClusters();
 
         std::ofstream out(path, std::ios::binary);
-        WriteValue(out, static_cast<uint8_t>(GetIndexType()));
+        WriteValue(out, MakeIndexTypeByte(GetIndexType(), config.centroid_quantization));
         WriteRotationMatrix(out, *pruner);
         index.Save(out);
     }
@@ -233,10 +237,10 @@ class PDXIndex : public IPDXIndex {
         BufferReader reader{ptr};
 
         // Index type flag
-        ReadValue<uint8_t>(reader);
+        config.centroid_quantization = GetCentroidQuantizationFromByte(ReadValue<uint8_t>(reader));
         const auto matrix = ReadRotationMatrix(reader, GetAllocator());
         index.SetAllocator(&GetAllocator());
-        index.Load(reader);
+        index.Load(reader, config.centroid_quantization);
         config.num_dimensions = index.num_dimensions;
         config.normalize = index.is_normalized;
 
@@ -251,7 +255,7 @@ class PDXIndex : public IPDXIndex {
 
     void SaveToStream(std::ostream& out) override {
         CompactClusters();
-        WriteStreamHeader(out, GetIndexType(), config);
+        WriteStreamHeader(out, GetIndexType(), config.centroid_quantization, config);
         index.SaveResidentData(out);
         row_id_cluster_mapping.Save(out);
         index.SaveClusterData(out);
@@ -259,7 +263,7 @@ class PDXIndex : public IPDXIndex {
 
     void LoadFromStream(std::istream& in) override {
         StreamReader reader{in};
-        index.LoadResidentData(reader);
+        index.LoadResidentData(reader, config.centroid_quantization);
         row_id_cluster_mapping.Load(reader);
         index.LoadClusterData(reader);
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
@@ -267,7 +271,9 @@ class PDXIndex : public IPDXIndex {
 
     void LoadResidentDataFromStream(std::istream& in, IClusterSource& cluster_source) override {
         StreamReader reader{in};
-        index.LoadResidentData(reader, /*allocate_cluster_data=*/false);
+        index.LoadResidentData(
+            reader, config.centroid_quantization, /*allocate_cluster_data=*/false
+        );
         row_id_cluster_mapping.Load(reader);
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         searcher->cluster_source = &cluster_source;
@@ -302,7 +308,8 @@ class PDXIndex : public IPDXIndex {
         TopKHeap& top_k_heap,
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* clusters_access_order = nullptr
+        const std::vector<uint32_t>* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
         const uint32_t* preset_clusters_access_order =
             clusters_access_order ? clusters_access_order->data() : nullptr;
@@ -313,7 +320,8 @@ class PDXIndex : public IPDXIndex {
                     knn,
                     top_k_heap,
                     is_query_transformed,
-                    preset_clusters_access_order
+                    preset_clusters_access_order,
+                    ranking_query
                 )
             );
         }
@@ -326,7 +334,8 @@ class PDXIndex : public IPDXIndex {
                 std::move(evaluator),
                 top_k_heap,
                 is_query_transformed,
-                preset_clusters_access_order
+                preset_clusters_access_order,
+                ranking_query
             )
         );
     }
@@ -343,7 +352,8 @@ class PDXIndex : public IPDXIndex {
         TopKHeap& top_k_heap,
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
-        const std::vector<uint32_t>* clusters_access_order = nullptr
+        const std::vector<uint32_t>* clusters_access_order = nullptr,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
         return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
             searcher->BeginFilteredIterativeSearch(
@@ -352,7 +362,8 @@ class PDXIndex : public IPDXIndex {
                 evaluator,
                 top_k_heap,
                 is_query_transformed,
-                clusters_access_order ? clusters_access_order->data() : nullptr
+                clusters_access_order ? clusters_access_order->data() : nullptr,
+                ranking_query
             )
         );
     }
@@ -372,16 +383,22 @@ class PDXIndex : public IPDXIndex {
     void GetDistancesToCentroids(
         const float* query_embedding,
         bool is_query_transformed,
-        float* out
+        float* out,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
-        searcher->GetDistancesToCentroids(query_embedding, is_query_transformed, out);
+        searcher->GetDistancesToCentroids(
+            query_embedding, is_query_transformed, out, ranking_query
+        );
     }
 
     std::vector<uint32_t> GetClustersAccessOrder(
         const float* query_embedding,
-        bool is_query_transformed = false
+        bool is_query_transformed = false,
+        const CentroidRankingQuery* ranking_query = nullptr
     ) const override {
-        return searcher->GetClustersAccessOrder(query_embedding, is_query_transformed);
+        return searcher->GetClustersAccessOrder(
+            query_embedding, is_query_transformed, ranking_query
+        );
     }
 
     void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }
@@ -496,10 +513,17 @@ class PDXIndex : public IPDXIndex {
                 num_clusters,
                 normalize,
                 quantization_scale,
-                quantization_base
+                quantization_base,
+                config.centroid_quantization
             );
         } else {
-            index = PDX::IVF<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
+            index = PDX::IVF<Q>(
+                num_dimensions,
+                num_embeddings,
+                num_clusters,
+                normalize,
+                config.centroid_quantization
+            );
         }
         index.SetAllocator(&GetAllocator());
 
@@ -528,7 +552,7 @@ class PDXIndex : public IPDXIndex {
             num_clusters = static_cast<uint32_t>(kmeans_result.assignments.size());
             index.num_clusters = num_clusters;
         }
-        index.centroids = std::move(kmeans_result.centroids);
+        index.centroids.StoreCentroids(kmeans_result.centroids.data(), num_clusters);
 
         ivf_utils.PopulateIVFClusters<Q>(
             index,
@@ -658,6 +682,7 @@ class PDXIndex : public IPDXIndex {
             }
             cluster.ShrinkToFit();
         }
+        index.centroids.ShrinkToFit();
         index.ComputeClusterOffsets();
     }
 
@@ -713,21 +738,19 @@ class PDXIndex : public IPDXIndex {
         }
     }
 
-    // Exact scan over all centroids (embedding is already normalized + rotated)
+    // Scan over all centroids (embedding is already normalized + rotated)
     uint32_t FindNearestCentroid(const float* embedding) const {
-        const uint32_t d = index.num_dimensions;
-        uint32_t best_cluster = 0;
-        float best_distance = std::numeric_limits<float>::max();
-        for (uint32_t c = 0; c < index.num_clusters; c++) {
-            float distance = distance_computer_f32_t::Horizontal(
-                embedding, index.centroids.data() + static_cast<size_t>(c) * d, d
-            );
-            if (distance < best_distance) {
-                best_distance = distance;
-                best_cluster = c;
-            }
-        }
-        return best_cluster;
+        std::unique_ptr<float[]> distances_to_centroids(new float[index.centroids.GetNumCentroids()]
+        );
+        // TODO(@lkuffo, med): We might consider using ComputeApproximateDistancesToCentroids
+        // here to speedup appends even more.
+        index.centroids.ComputeDistancesToCentroids(embedding, distances_to_centroids.get());
+        return static_cast<uint32_t>(
+            std::min_element(
+                distances_to_centroids.get(), distances_to_centroids.get() + index.num_clusters
+            ) -
+            distances_to_centroids.get()
+        );
     }
 
     // Ids of the max_neighbors clusters whose centroids are nearest to `centroid`, excluding
@@ -738,16 +761,15 @@ class PDXIndex : public IPDXIndex {
         size_t max_neighbors = SPLIT_MAX_NEIGHBOR_CLUSTERS
     ) const {
         PDX_PROFILE_SCOPE("GetNeighboringClusters");
-        const uint32_t d = index.num_dimensions;
+        std::unique_ptr<float[]> distances_to_centroids(new float[index.centroids.GetNumCentroids()]
+        );
+        index.centroids.ComputeDistancesToCentroids(centroid, distances_to_centroids.get());
         std::vector<std::pair<float, uint32_t>> neighbor_dists;
         neighbor_dists.reserve(index.num_clusters);
         for (uint32_t c = 0; c < index.num_clusters; c++) {
             if (c == cluster_id)
                 continue;
-            float dist = distance_computer_f32_t::Horizontal(
-                centroid, index.centroids.data() + static_cast<size_t>(c) * d, d
-            );
-            neighbor_dists.emplace_back(dist, c);
+            neighbor_dists.emplace_back(distances_to_centroids[c], c);
         }
         if (neighbor_dists.size() > max_neighbors) {
             std::nth_element(
@@ -797,7 +819,6 @@ class PDXIndex : public IPDXIndex {
         cluster.CompactCluster();
         const uint32_t cluster_id = cluster.id;
         const uint32_t n_emb = cluster.num_embeddings;
-        const uint32_t d = index.num_dimensions;
 
         auto raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
         auto cluster_indices = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_emb);
@@ -813,11 +834,6 @@ class PDXIndex : public IPDXIndex {
             index.clusters[cluster_id].id = cluster_id;
 
             auto& moved_cluster = index.clusters[cluster_id];
-            std::memcpy(
-                index.centroids.data() + static_cast<size_t>(cluster_id) * d,
-                index.centroids.data() + static_cast<size_t>(last_id) * d,
-                d * sizeof(float)
-            );
             for (uint32_t i = 0; i < moved_cluster.used_capacity; i++) {
                 if (!moved_cluster.HasTombstone(i)) {
                     SetRowIdMapping(moved_cluster.indices[i], cluster_id, i);
@@ -827,7 +843,7 @@ class PDXIndex : public IPDXIndex {
 
         // Pop the dead cluster and its centroid (ensured to be at the end)
         index.clusters.pop_back();
-        index.centroids.resize(index.centroids.size() - d);
+        index.centroids.RemoveCentroidBySwapWithLast(cluster_id);
         index.num_clusters--;
 
         index.ComputeClusterOffsets();
@@ -847,7 +863,9 @@ class PDXIndex : public IPDXIndex {
             index, searcher->quantizer, raw_embeddings.get(), cluster.num_embeddings, GetAllocator()
         );
 
-        auto centroid_to_split = index.centroids.data() + static_cast<size_t>(cluster_id) * d;
+        std::unique_ptr<float[]> decoded_centroid_to_split(new float[d]);
+        const float* centroid_to_split =
+            index.centroids.GetF32CentroidPtr(cluster_id, decoded_centroid_to_split.get());
         auto neighboring_clusters_ids = GetNearestNeighborClusterIds(cluster_id, centroid_to_split);
 
         // 2-means split: each embedding goes to A, B, or rest (closer to a neighboring cluster)
@@ -995,14 +1013,8 @@ class PDXIndex : public IPDXIndex {
             index.clusters.push_back(std::move(new_cluster_b));
             index.num_clusters++;
             // Update centroids
-            std::memcpy(
-                index.centroids.data() + static_cast<size_t>(cluster_id) * d,
-                true_centroid_a.get(),
-                d * sizeof(float)
-            );
-            index.centroids.insert(
-                index.centroids.end(), true_centroid_b.get(), true_centroid_b.get() + d
-            );
+            index.centroids.StoreCentroid(cluster_id, true_centroid_a.get());
+            index.centroids.AppendCentroid(true_centroid_b.get());
             // Update row_id_cluster_mapping (includes both original and stolen-neighbor points)
             for (size_t i = 0; i < count_a; i++) {
                 SetRowIdMapping(ids_a[i], cluster_id, static_cast<uint32_t>(i));
@@ -1047,11 +1059,12 @@ class PDXIndex : public IPDXIndex {
         auto assignments = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_rows);
         {
             PDX_PROFILE_SCOPE("BulkAppend/Assign");
+            skmeans::AllocatedBuffer<float> decoded_centroids;
             ivf_utils.AssignToNearestCentroids(
                 embeddings,
                 num_rows,
-                index.centroids.data(),
-                index.GetCentroidNorms(),
+                index.centroids.GetF32CentroidsPtr(decoded_centroids),
+                index.centroids.GetF32CentroidsSquaredNormsPtr(),
                 index.num_clusters,
                 d,
                 assignments.get()
@@ -1170,7 +1183,7 @@ class PDXIndex : public IPDXIndex {
             return;
         }
         const uint32_t d = index.num_dimensions;
-        const float* centroids = index.centroids.data();
+        const float* centroids = nullptr;
         uint32_t n_clusters = index.num_clusters;
         skmeans::AllocatedBuffer<float> candidate_centroids;
         if (candidate_cluster_ids != nullptr) {
@@ -1178,13 +1191,13 @@ class PDXIndex : public IPDXIndex {
             candidate_centroids =
                 skmeans::AllocateBuffer<float>(GetAllocator(), static_cast<size_t>(n_clusters) * d);
             for (size_t i = 0; i < n_clusters; i++) {
-                std::memcpy(
-                    candidate_centroids.get() + i * d,
-                    index.centroids.data() + static_cast<size_t>((*candidate_cluster_ids)[i]) * d,
-                    d * sizeof(float)
+                index.centroids.DecodeCentroid(
+                    (*candidate_cluster_ids)[i], candidate_centroids.get() + i * d
                 );
             }
             centroids = candidate_centroids.get();
+        } else {
+            centroids = index.centroids.GetF32CentroidsPtr(candidate_centroids);
         }
 
         auto assignments = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), num_embeddings);

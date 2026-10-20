@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pdx/common.hpp"
+#include "pdx/indexes/centroids.hpp"
 #include "pdx/indexes/cluster.hpp"
 #include "pdx/utils.hpp"
 #include <algorithm>
@@ -42,9 +43,7 @@ class IVF : public skmeans::AllocatorHolder {
     std::unique_ptr<size_t[]> cluster_offsets;
     std::vector<uint64_t> cluster_data_offsets;
     bool is_normalized{};
-    std::vector<float> centroids;
-    skmeans::AllocatedBuffer<float> centroid_norms; // |c|^2 per centroid, see GetCentroidNorms
-    bool centroid_norms_stale = true;
+    Centroids centroids;
 
     // U8-specific quantization parameters
     float quantization_scale = 1.0f;
@@ -60,12 +59,13 @@ class IVF : public skmeans::AllocatorHolder {
     IVF(uint32_t num_dimensions,
         uint64_t total_num_embeddings,
         uint32_t num_clusters,
-        bool is_normalized)
+        bool is_normalized,
+        CentroidQuantization centroid_quantization = CentroidQuantization::F32)
         : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings),
           num_clusters(num_clusters),
           num_vertical_dimensions(GetPDXDimensionSplit(num_dimensions).vertical_dimensions),
           num_horizontal_dimensions(GetPDXDimensionSplit(num_dimensions).horizontal_dimensions),
-          is_normalized(is_normalized) {
+          is_normalized(is_normalized), centroids(centroid_quantization, num_dimensions) {
         clusters.reserve(num_clusters);
     }
 
@@ -74,12 +74,14 @@ class IVF : public skmeans::AllocatorHolder {
         uint32_t num_clusters,
         bool is_normalized,
         float quantization_scale,
-        float quantization_base)
+        float quantization_base,
+        CentroidQuantization centroid_quantization = CentroidQuantization::F32)
         : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings),
           num_clusters(num_clusters),
           num_vertical_dimensions(GetPDXDimensionSplit(num_dimensions).vertical_dimensions),
           num_horizontal_dimensions(GetPDXDimensionSplit(num_dimensions).horizontal_dimensions),
-          is_normalized(is_normalized), quantization_scale(quantization_scale),
+          is_normalized(is_normalized), centroids(centroid_quantization, num_dimensions),
+          quantization_scale(quantization_scale),
           quantization_scale_squared(quantization_scale * quantization_scale),
           inverse_quantization_scale_squared(1.0f / (quantization_scale * quantization_scale)),
           quantization_base(quantization_base) {
@@ -100,25 +102,16 @@ class IVF : public skmeans::AllocatorHolder {
             max_cluster_capacity =
                 std::max(max_cluster_capacity, static_cast<size_t>(clusters[i].max_capacity));
         }
-        centroid_norms_stale = true;
     }
 
-    // Recomputed after a structural change: every change ends with ComputeClusterOffsets
-    const float* GetCentroidNorms() {
-        if (centroid_norms_stale) {
-            skmeans::EnsureBufferSize(centroid_norms, GetAllocator(), num_clusters);
-            Eigen::Map<Eigen::VectorXf>(centroid_norms.get(), num_clusters).noalias() =
-                Eigen::Map<const eigen_matrix_t>(centroids.data(), num_clusters, num_dimensions)
-                    .rowwise()
-                    .squaredNorm();
-            centroid_norms_stale = false;
-        }
-        return centroid_norms.get();
+    void SetAllocator(MemoryAllocator* allocator) {
+        skmeans::AllocatorHolder::SetAllocator(allocator);
+        centroids.SetAllocator(allocator);
     }
 
-    void Load(char* input) {
+    void Load(char* input, CentroidQuantization centroid_quantization) {
         BufferReader reader{input};
-        Load(reader);
+        Load(reader, centroid_quantization);
     }
 
     // Reads the num_clusters clusters of num_dimensions as Save writes them: the (num_embeddings,
@@ -145,7 +138,7 @@ class IVF : public skmeans::AllocatorHolder {
     }
 
     template <class Reader>
-    void Load(Reader& reader) {
+    void Load(Reader& reader, CentroidQuantization centroid_quantization) {
         num_dimensions = ReadValue<uint32_t>(reader);
         num_vertical_dimensions = ReadValue<uint32_t>(reader);
         num_horizontal_dimensions = ReadValue<uint32_t>(reader);
@@ -154,8 +147,8 @@ class IVF : public skmeans::AllocatorHolder {
 
         is_normalized = ReadValue<char>(reader) != 0;
 
-        centroids.resize(static_cast<size_t>(num_clusters) * num_dimensions);
-        reader.Read(centroids.data(), sizeof(float) * num_clusters * num_dimensions);
+        centroids = Centroids(centroid_quantization, num_dimensions, &GetAllocator());
+        centroids.Load(reader, num_clusters);
 
         if constexpr (Q == U8) {
             quantization_base = ReadValue<float>(reader);
@@ -189,10 +182,7 @@ class IVF : public skmeans::AllocatorHolder {
         char norm = is_normalized;
         out.write(&norm, sizeof(char));
 
-        out.write(
-            reinterpret_cast<const char*>(centroids.data()),
-            sizeof(float) * num_clusters * num_dimensions
-        );
+        centroids.Save(out);
 
         if constexpr (Q == U8) {
             out.write(reinterpret_cast<const char*>(&quantization_base), sizeof(float));
@@ -220,10 +210,7 @@ class IVF : public skmeans::AllocatorHolder {
             cluster_data_offset += GetClusterDataSizeInBytes(clusters[i].num_embeddings);
         }
         WriteValue(out, static_cast<char>(is_normalized));
-        out.write(
-            reinterpret_cast<const char*>(centroids.data()),
-            static_cast<std::streamsize>(sizeof(float) * num_clusters * num_dimensions)
-        );
+        centroids.Save(out);
         if constexpr (Q == U8) {
             WriteValue(out, quantization_base);
             WriteValue(out, quantization_scale);
@@ -242,7 +229,11 @@ class IVF : public skmeans::AllocatorHolder {
     }
 
     template <class Reader>
-    void LoadResidentData(Reader& reader, const bool allocate_cluster_data = true) {
+    void LoadResidentData(
+        Reader& reader,
+        CentroidQuantization centroid_quantization,
+        const bool allocate_cluster_data = true
+    ) {
         num_dimensions = ReadValue<uint32_t>(reader);
         num_vertical_dimensions = ReadValue<uint32_t>(reader);
         num_horizontal_dimensions = ReadValue<uint32_t>(reader);
@@ -259,8 +250,8 @@ class IVF : public skmeans::AllocatorHolder {
             cluster_data_offsets[i] = ReadValue<uint64_t>(reader);
         }
         is_normalized = ReadValue<char>(reader) != 0;
-        centroids.resize(static_cast<size_t>(num_clusters) * num_dimensions);
-        reader.Read(centroids.data(), sizeof(float) * centroids.size());
+        centroids = Centroids(centroid_quantization, num_dimensions, &GetAllocator());
+        centroids.Load(reader, num_clusters);
         if constexpr (Q == U8) {
             quantization_base = ReadValue<float>(reader);
             quantization_scale = ReadValue<float>(reader);
@@ -300,12 +291,8 @@ class IVF : public skmeans::AllocatorHolder {
         }
     }
 
-    size_t GetCentroidNormsSizeInBytes() const {
-        return centroid_norms ? centroid_norms.get_deleter().Size() * sizeof(float) : 0;
-    }
-
     size_t GetAllocatedSizeInBytes() const {
-        size_t size = GetCentroidNormsSizeInBytes();
+        size_t size = centroids.GetAllocatedSizeInBytes();
         for (const auto& cluster : clusters) {
             size += cluster.GetAllocatedSizeInBytes();
         }
@@ -320,8 +307,7 @@ class IVF : public skmeans::AllocatorHolder {
         }
         in_memory_size_in_bytes +=
             (clusters.capacity() - clusters.size()) * sizeof(*clusters.data());
-        in_memory_size_in_bytes += centroids.capacity() * sizeof(*centroids.data());
-        in_memory_size_in_bytes += GetCentroidNormsSizeInBytes();
+        in_memory_size_in_bytes += centroids.GetAllocatedSizeInBytes();
         in_memory_size_in_bytes += num_clusters * sizeof(size_t); // cluster_offsets
         in_memory_size_in_bytes += cluster_data_offsets.capacity() * sizeof(uint64_t);
         return in_memory_size_in_bytes;
@@ -344,9 +330,16 @@ class IVFTree : public IVF<Q> {
         uint32_t num_dimensions,
         uint64_t total_num_embeddings,
         uint32_t num_clusters,
-        bool is_normalized
+        bool is_normalized,
+        CentroidQuantization centroid_quantization = CentroidQuantization::F32
     )
-        : IVF<Q>(num_dimensions, total_num_embeddings, num_clusters, is_normalized) {}
+        : IVF<Q>(
+              num_dimensions,
+              total_num_embeddings,
+              num_clusters,
+              is_normalized,
+              centroid_quantization
+          ) {}
 
     IVFTree(
         uint32_t num_dimensions,
@@ -354,7 +347,8 @@ class IVFTree : public IVF<Q> {
         uint32_t num_clusters,
         bool is_normalized,
         float quantization_scale,
-        float quantization_base
+        float quantization_base,
+        CentroidQuantization centroid_quantization = CentroidQuantization::F32
     )
         : IVF<Q>(
               num_dimensions,
@@ -362,7 +356,8 @@ class IVFTree : public IVF<Q> {
               num_clusters,
               is_normalized,
               quantization_scale,
-              quantization_base
+              quantization_base,
+              centroid_quantization
           ) {}
 
     // Binds L0 too
@@ -371,13 +366,13 @@ class IVFTree : public IVF<Q> {
         l0.SetAllocator(allocator);
     }
 
-    void Load(char* input) {
+    void Load(char* input, CentroidQuantization centroid_quantization) {
         BufferReader reader{input};
-        Load(reader);
+        Load(reader, centroid_quantization);
     }
 
     template <class Reader>
-    void Load(Reader& reader) {
+    void Load(Reader& reader, CentroidQuantization centroid_quantization) {
         // Header
         const auto dims = ReadValue<uint32_t>(reader);
         const auto v_dims = ReadValue<uint32_t>(reader);
@@ -405,12 +400,12 @@ class IVFTree : public IVF<Q> {
         l0.is_normalized = normalized;
 
         // === L0 centroids (centroids_pdx from file) ===
-        l0.centroids.resize(static_cast<size_t>(n_clusters_l0) * dims);
-        reader.Read(l0.centroids.data(), sizeof(float) * n_clusters_l0 * dims);
+        l0.centroids = Centroids(CentroidQuantization::F32, dims, &this->GetAllocator());
+        l0.centroids.Load(reader, n_clusters_l0);
 
         // === L1 centroids ===
-        this->centroids.resize(static_cast<size_t>(n_clusters_l1) * dims);
-        reader.Read(this->centroids.data(), sizeof(float) * n_clusters_l1 * dims);
+        this->centroids = Centroids(centroid_quantization, dims, &this->GetAllocator());
+        this->centroids.Load(reader, n_clusters_l1);
 
         // === U8 quantization params ===
         if constexpr (Q == U8) {
@@ -487,16 +482,10 @@ class IVFTree : public IVF<Q> {
         out.write(&norm, sizeof(char));
 
         // L0 centroids
-        out.write(
-            reinterpret_cast<const char*>(l0.centroids.data()),
-            sizeof(float) * n_clusters_l0 * this->num_dimensions
-        );
+        l0.centroids.Save(out);
 
         // L1 centroids
-        out.write(
-            reinterpret_cast<const char*>(this->centroids.data()),
-            sizeof(float) * this->num_clusters * this->num_dimensions
-        );
+        this->centroids.Save(out);
 
         // === U8 quantization params ===
         if constexpr (Q == U8) {
@@ -517,8 +506,7 @@ class IVFTree : public IVF<Q> {
             size += cluster.GetInMemorySizeInBytes();
         }
         size += (this->clusters.capacity() - this->clusters.size()) * sizeof(Cluster<Q>);
-        size += this->centroids.capacity() * sizeof(float);
-        size += this->GetCentroidNormsSizeInBytes();
+        size += this->centroids.GetAllocatedSizeInBytes();
         size += this->num_clusters * sizeof(size_t); // cluster_offsets
         size += this->cluster_data_offsets.capacity() * sizeof(uint64_t);
 
@@ -527,8 +515,7 @@ class IVFTree : public IVF<Q> {
             size += cluster.GetInMemorySizeInBytes();
         }
         size += (l0.clusters.capacity() - l0.clusters.size()) * sizeof(Cluster<F32>);
-        size += l0.centroids.capacity() * sizeof(float);
-        size += l0.GetCentroidNormsSizeInBytes();
+        size += l0.centroids.GetAllocatedSizeInBytes();
         size += l0.num_clusters * sizeof(size_t); // cluster_offsets
         size += l0.cluster_data_offsets.capacity() * sizeof(uint64_t);
 

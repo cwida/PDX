@@ -96,6 +96,10 @@ inline bool IsPowerOf2(const uint32_t x) {
 static constexpr size_t PDX_MAX_DIMS = 16384;
 static constexpr size_t H_DIM_SIZE = 64;
 static constexpr size_t U8_INTERLEAVE_SIZE = 4;
+// The int8-query kernels of LVQ centroids read the codes in whole chunks of this many bytes: the
+// query is zero-padded to a multiple of it, and the encoded centroids keep this many bytes after
+// the last one.
+static constexpr size_t LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES = 64;
 static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[20] = {16,  16,  32,  32,   32,   32,   64,
                                                            64,  64,  64,  128,  128,  128,  128,
                                                            256, 256, 512, 1024, 2048, 16384};
@@ -147,6 +151,27 @@ enum class PDXIndexType : uint8_t {
     PDX_FLAT = 4
 };
 
+enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1, LVQ4 = 2 };
+
+// A saved index's type byte: its PDXIndexType in the low nibble, its CentroidQuantization in the
+// high
+[[nodiscard]] constexpr uint8_t MakeIndexTypeByte(
+    PDXIndexType type,
+    CentroidQuantization centroid_quantization
+) {
+    return static_cast<uint8_t>(
+        static_cast<uint8_t>(type) | (static_cast<uint8_t>(centroid_quantization) << 4)
+    );
+}
+
+[[nodiscard]] constexpr PDXIndexType GetIndexTypeFromByte(uint8_t type_byte) {
+    return static_cast<PDXIndexType>(type_byte & 0x0F);
+}
+
+[[nodiscard]] constexpr CentroidQuantization GetCentroidQuantizationFromByte(uint8_t type_byte) {
+    return static_cast<CentroidQuantization>(type_byte >> 4);
+}
+
 static constexpr uint8_t PDX_SERIALIZATION_VERSION = 4;
 
 template <Quantization Q>
@@ -196,6 +221,13 @@ struct VectorComparator {
 };
 
 using Heap = std::priority_queue<KNNCandidate, std::vector<KNNCandidate>, VectorComparator>;
+
+struct CentroidDistanceComparator {
+    const float* distances_to_centroids;
+    bool operator()(uint32_t a, uint32_t b) const {
+        return distances_to_centroids[a] < distances_to_centroids[b];
+    }
+};
 
 struct PDXDimensionSplit {
     const uint32_t horizontal_dimensions;

@@ -40,6 +40,15 @@ class DistanceComputer<DistanceMetric::L2SQ, Quantization::F32> {
 
     constexpr static auto Horizontal = computer::Horizontal;
     constexpr static auto FlipSign = computer::FlipSign;
+    constexpr static auto HorizontalDotWithU8 = computer::HorizontalDotWithU8;
+    constexpr static auto HorizontalDotWithU4 = computer::HorizontalDotWithU4;
+    constexpr static auto MinMax = computer::MinMax;
+    constexpr static auto QuantizeToU8 = computer::QuantizeToU8;
+    constexpr static auto QuantizeToU4 = computer::QuantizeToU4;
+    constexpr static auto DequantizeFromU4 = computer::DequantizeFromU4;
+    constexpr static auto QuantizeToInt8 = computer::QuantizeToInt8;
+    constexpr static auto HorizontalDotInt8WithU8 = computer::HorizontalDotInt8WithU8;
+    constexpr static auto HorizontalDotInt8WithU4 = computer::HorizontalDotInt8WithU4;
 };
 
 template <>

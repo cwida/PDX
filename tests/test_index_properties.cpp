@@ -83,23 +83,6 @@ TEST(ClusterTest, InMemorySizeCountsAllocatedSlotsAndTombstones) {
     EXPECT_GT(cluster.GetInMemorySizeInBytes(), size_before_delete);
 }
 
-class CountingAllocator final : public PDX::MemoryAllocator {
-  public:
-    void* Allocate(const size_t bytes) override {
-        live_bytes += bytes;
-        return vanilla.Allocate(bytes);
-    }
-    void Free(void* const ptr, const size_t bytes) override {
-        live_bytes -= bytes;
-        vanilla.Free(ptr, bytes);
-    }
-
-    std::atomic<size_t> live_bytes{0};
-
-  private:
-    skmeans::VanillaAllocator vanilla;
-};
-
 PDX::PDXIndexConfig MakeConfigWithAllocator(const size_t d, PDX::MemoryAllocator* allocator) {
     return PDX::PDXIndexConfig{
         .num_dimensions = static_cast<uint32_t>(d),
@@ -118,7 +101,7 @@ TEST_P(IndexPropertiesTest, SelfManagedMemoryExcludesAllocatedBytes) {
     const std::string index_type = GetParam();
     const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
-    CountingAllocator allocator;
+    TestUtils::CountingAllocator allocator;
     auto index = TestUtils::BuildIndexWithConfig(
         index_type, MakeConfigWithAllocator(d, &allocator), data.train.data(), TestUtils::N_TRAIN
     );
@@ -142,7 +125,7 @@ TEST_P(IndexPropertiesTest, SelfManagedMemoryExcludesAllocatedBytes) {
 TEST(FlatIndexSizeTest, SelfManagedMemoryExcludesAllocatedBytes) {
     const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
-    CountingAllocator allocator;
+    TestUtils::CountingAllocator allocator;
     PDX::FlatIndex index(MakeConfigWithAllocator(d, &allocator));
     index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
     EXPECT_EQ(

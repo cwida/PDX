@@ -2,6 +2,8 @@
 
 #include "arm_neon.h"
 #include "pdx/common.hpp"
+#include "pdx/distance_computers/scalar_computers.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 
@@ -16,6 +18,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     using distance_t = pdx_distance_t<F32>;
     using query_t = pdx_quantized_embedding_t<F32>;
     using data_t = pdx_data_t<F32>;
+    using scalar_computer = ScalarComputer<DistanceMetric::L2SQ, Quantization::F32>;
 
     template <bool SKIP_PRUNED>
     static void Vertical(
@@ -89,6 +92,417 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         for (; j < d; ++j) {
             out_bits[j] = data_bits[j] ^ masks[j];
         }
+    }
+
+    static float HorizontalDotWithU8(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        float32x4_t dot_vec_0 = vdupq_n_f32(0);
+        float32x4_t dot_vec_1 = vdupq_n_f32(0);
+        float32x4_t dot_vec_2 = vdupq_n_f32(0);
+        float32x4_t dot_vec_3 = vdupq_n_f32(0);
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            const uint8x16_t codes_u8 = vld1q_u8(codes + i);
+            const uint16x8_t codes_low_u16 = vmovl_u8(vget_low_u8(codes_u8));
+            const uint16x8_t codes_high_u16 = vmovl_high_u8(codes_u8);
+            dot_vec_0 = vfmaq_f32(
+                dot_vec_0,
+                vld1q_f32(query + i),
+                vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_low_u16)))
+            );
+            dot_vec_1 = vfmaq_f32(
+                dot_vec_1, vld1q_f32(query + i + 4), vcvtq_f32_u32(vmovl_high_u16(codes_low_u16))
+            );
+            dot_vec_2 = vfmaq_f32(
+                dot_vec_2,
+                vld1q_f32(query + i + 8),
+                vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_high_u16)))
+            );
+            dot_vec_3 = vfmaq_f32(
+                dot_vec_3, vld1q_f32(query + i + 12), vcvtq_f32_u32(vmovl_high_u16(codes_high_u16))
+            );
+        }
+        float dot =
+            vaddvq_f32(vaddq_f32(vaddq_f32(dot_vec_0, dot_vec_1), vaddq_f32(dot_vec_2, dot_vec_3)));
+        for (; i < num_dimensions; ++i) {
+            dot += query[i] * static_cast<float>(codes[i]);
+        }
+        return dot;
+    }
+
+    static void AccumulateDotWithU8x16(
+        const query_t* PDX_RESTRICT query,
+        const uint8x16_t codes_u8,
+        float32x4_t& dot_vec_0,
+        float32x4_t& dot_vec_1,
+        float32x4_t& dot_vec_2,
+        float32x4_t& dot_vec_3
+    ) {
+        const uint16x8_t codes_low_u16 = vmovl_u8(vget_low_u8(codes_u8));
+        const uint16x8_t codes_high_u16 = vmovl_high_u8(codes_u8);
+        dot_vec_0 = vfmaq_f32(
+            dot_vec_0, vld1q_f32(query), vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_low_u16)))
+        );
+        dot_vec_1 = vfmaq_f32(
+            dot_vec_1, vld1q_f32(query + 4), vcvtq_f32_u32(vmovl_high_u16(codes_low_u16))
+        );
+        dot_vec_2 = vfmaq_f32(
+            dot_vec_2, vld1q_f32(query + 8), vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_high_u16)))
+        );
+        dot_vec_3 = vfmaq_f32(
+            dot_vec_3, vld1q_f32(query + 12), vcvtq_f32_u32(vmovl_high_u16(codes_high_u16))
+        );
+    }
+
+    static float HorizontalDotWithU4(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        float32x4_t dot_vec_0 = vdupq_n_f32(0);
+        float32x4_t dot_vec_1 = vdupq_n_f32(0);
+        float32x4_t dot_vec_2 = vdupq_n_f32(0);
+        float32x4_t dot_vec_3 = vdupq_n_f32(0);
+        const uint8x16_t nibble_mask = vdupq_n_u8(0x0F);
+        size_t i = 0;
+        for (; i + 32 <= num_dimensions; i += 32) {
+            const uint8x16_t code_pairs = vld1q_u8(codes + i / 2);
+            const uint8x16_t low_nibbles = vandq_u8(code_pairs, nibble_mask);
+            const uint8x16_t high_nibbles = vshrq_n_u8(code_pairs, 4);
+            AccumulateDotWithU8x16(
+                query + i,
+                vzip1q_u8(low_nibbles, high_nibbles),
+                dot_vec_0,
+                dot_vec_1,
+                dot_vec_2,
+                dot_vec_3
+            );
+            AccumulateDotWithU8x16(
+                query + i + 16,
+                vzip2q_u8(low_nibbles, high_nibbles),
+                dot_vec_0,
+                dot_vec_1,
+                dot_vec_2,
+                dot_vec_3
+            );
+        }
+        float dot =
+            vaddvq_f32(vaddq_f32(vaddq_f32(dot_vec_0, dot_vec_1), vaddq_f32(dot_vec_2, dot_vec_3)));
+        for (; i + 2 <= num_dimensions; i += 2) {
+            const uint8_t code_pair = codes[i / 2];
+            dot += query[i] * static_cast<float>(code_pair & 0x0F) +
+                   query[i + 1] * static_cast<float>(code_pair >> 4);
+        }
+        if (i < num_dimensions) {
+            dot += query[i] * static_cast<float>(codes[i / 2] & 0x0F);
+        }
+        return dot;
+    }
+
+    static void MinMax(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float& lower,
+        float& upper
+    ) {
+        float32x4_t lower_vec = vdupq_n_f32(std::numeric_limits<float>::infinity());
+        float32x4_t upper_vec = vdupq_n_f32(-std::numeric_limits<float>::infinity());
+        size_t i = 0;
+        for (; i + 4 <= num_dimensions; i += 4) {
+            const float32x4_t values_vec = vld1q_f32(values + i);
+            lower_vec = vminq_f32(lower_vec, values_vec);
+            upper_vec = vmaxq_f32(upper_vec, values_vec);
+        }
+        lower = vminvq_f32(lower_vec);
+        upper = vmaxvq_f32(upper_vec);
+        for (; i < num_dimensions; ++i) {
+            lower = std::min(lower, values[i]);
+            upper = std::max(upper, values[i]);
+        }
+    }
+
+    // Returns the squared norm of the dequantized values
+    static float QuantizeToU8(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        const float32x4_t lower_vec = vdupq_n_f32(lower);
+        const float32x4_t inverse_step_vec = vdupq_n_f32(1.0f / step);
+        const float32x4_t step_vec = vdupq_n_f32(step);
+        float32x4_t squared_norm_vec = vdupq_n_f32(0.0f);
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            vst1q_u8(
+                codes + i,
+                Quantize16<255>(values + i, lower_vec, inverse_step_vec, step_vec, squared_norm_vec)
+            );
+        }
+        return vaddvq_f32(squared_norm_vec) +
+               scalar_computer::QuantizeToU8(
+                   values + i, num_dimensions - i, lower, step, codes + i
+               );
+    }
+
+    // Dimension 2i in the low nibble of byte i. Returns the squared norm of the dequantized values
+    static float QuantizeToU4(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        const float32x4_t lower_vec = vdupq_n_f32(lower);
+        const float32x4_t inverse_step_vec = vdupq_n_f32(1.0f / step);
+        const float32x4_t step_vec = vdupq_n_f32(step);
+        float32x4_t squared_norm_vec = vdupq_n_f32(0.0f);
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            const uint8x16_t codes_vec =
+                Quantize16<15>(values + i, lower_vec, inverse_step_vec, step_vec, squared_norm_vec);
+            const uint8x16_t code_pairs = vorrq_u8(
+                vuzp1q_u8(codes_vec, codes_vec), vshlq_n_u8(vuzp2q_u8(codes_vec, codes_vec), 4)
+            );
+            vst1_u8(codes + i / 2, vget_low_u8(code_pairs));
+        }
+        return vaddvq_f32(squared_norm_vec) +
+               scalar_computer::QuantizeToU4(
+                   values + i, num_dimensions - i, lower, step, codes + i / 2
+               );
+    }
+
+    static void DequantizeFromU4(
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions,
+        float lower,
+        float step,
+        float* PDX_RESTRICT out
+    ) {
+        const float32x4_t lower_vec = vdupq_n_f32(lower);
+        const float32x4_t step_vec = vdupq_n_f32(step);
+        const uint8x16_t nibble_mask = vdupq_n_u8(0x0F);
+        const auto store_16_dequantized = [&](const uint8x16_t codes_u8, float* destination) {
+            const uint16x8_t codes_low_u16 = vmovl_u8(vget_low_u8(codes_u8));
+            const uint16x8_t codes_high_u16 = vmovl_high_u8(codes_u8);
+            vst1q_f32(
+                destination,
+                vfmaq_f32(
+                    lower_vec, vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_low_u16))), step_vec
+                )
+            );
+            vst1q_f32(
+                destination + 4,
+                vfmaq_f32(lower_vec, vcvtq_f32_u32(vmovl_high_u16(codes_low_u16)), step_vec)
+            );
+            vst1q_f32(
+                destination + 8,
+                vfmaq_f32(
+                    lower_vec, vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_high_u16))), step_vec
+                )
+            );
+            vst1q_f32(
+                destination + 12,
+                vfmaq_f32(lower_vec, vcvtq_f32_u32(vmovl_high_u16(codes_high_u16)), step_vec)
+            );
+        };
+        size_t i = 0;
+        for (; i + 32 <= num_dimensions; i += 32) {
+            const uint8x16_t code_pairs = vld1q_u8(codes + i / 2);
+            const uint8x16_t low_nibbles = vandq_u8(code_pairs, nibble_mask);
+            const uint8x16_t high_nibbles = vshrq_n_u8(code_pairs, 4);
+            store_16_dequantized(vzip1q_u8(low_nibbles, high_nibbles), out + i);
+            store_16_dequantized(vzip2q_u8(low_nibbles, high_nibbles), out + i + 16);
+        }
+        scalar_computer::DequantizeFromU4(codes + i / 2, num_dimensions - i, lower, step, out + i);
+    }
+
+    static void QuantizeToInt8(
+        const query_t* PDX_RESTRICT values,
+        size_t num_dimensions,
+        float inverse_scale,
+        int8_t* PDX_RESTRICT out
+    ) {
+        const float32x4_t inverse_scale_vec = vdupq_n_f32(inverse_scale);
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            int32x4_t rounded[4];
+            for (size_t quarter = 0; quarter < 4; ++quarter) {
+                rounded[quarter] =
+                    vcvtnq_s32_f32(vmulq_f32(vld1q_f32(values + i + 4 * quarter), inverse_scale_vec)
+                    );
+            }
+            const int16x8_t rounded_low =
+                vcombine_s16(vqmovn_s32(rounded[0]), vqmovn_s32(rounded[1]));
+            const int16x8_t rounded_high =
+                vcombine_s16(vqmovn_s32(rounded[2]), vqmovn_s32(rounded[3]));
+            vst1q_s8(out + i, vcombine_s8(vqmovn_s16(rounded_low), vqmovn_s16(rounded_high)));
+        }
+        scalar_computer::QuantizeToInt8(values + i, num_dimensions - i, inverse_scale, out + i);
+    }
+
+    // TODO(@lkuffo, low): stored vertically, in blocks of 16 centroids whose 64-byte groups hold 4
+    // dimensions of each, the LVQ8 codes would take 4 vdotq_laneq_s32 per group (each against the 4
+    // query bytes of one lane) for the dots of all 16 centroids, with no horizontal sums. Its i8mm
+    // form (vusdotq_laneq_s32) measured 1.67x over this kernel on the M4 (geomean of 56 cells). It
+    // needs a blocked Centroids layout and a new CentroidQuantization nibble. Reads padded_size (a
+    // multiple of LVQ_INT8_QUERY_CHUNK_SIZE_IN_BYTES) bytes of query and codes. query_codes_sum:
+    // the sum of the query's codes
+    static int32_t HorizontalDotInt8WithU8(
+        const int8_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t padded_size,
+        int32_t query_codes_sum
+    ) {
+        int32x4_t dot_vec_0 = vdupq_n_s32(0);
+        int32x4_t dot_vec_1 = vdupq_n_s32(0);
+        int32x4_t dot_vec_2 = vdupq_n_s32(0);
+        int32x4_t dot_vec_3 = vdupq_n_s32(0);
+#if defined(__ARM_FEATURE_DOTPROD)
+        // SDOT multiplies s8 by s8: the codes XOR 0x80 are c - 128, so the dot lacks 128 times the
+        // sum of the query's codes
+        const uint8x16_t code_bias = vdupq_n_u8(0x80);
+        const auto biased_codes = [code_bias](const uint8_t* address) {
+            return vreinterpretq_s8_u8(veorq_u8(vld1q_u8(address), code_bias));
+        };
+        for (size_t i = 0; i < padded_size; i += 64) {
+            dot_vec_0 = vdotq_s32(dot_vec_0, biased_codes(codes + i), vld1q_s8(query + i));
+            dot_vec_1 =
+                vdotq_s32(dot_vec_1, biased_codes(codes + i + 16), vld1q_s8(query + i + 16));
+            dot_vec_2 =
+                vdotq_s32(dot_vec_2, biased_codes(codes + i + 32), vld1q_s8(query + i + 32));
+            dot_vec_3 =
+                vdotq_s32(dot_vec_3, biased_codes(codes + i + 48), vld1q_s8(query + i + 48));
+        }
+        const int32_t code_bias_correction = 128 * query_codes_sum;
+#else
+        for (size_t i = 0; i < padded_size; i += 16) {
+            AccumulateWideningDotInt8WithU8x16(
+                vld1q_s8(query + i), vld1q_u8(codes + i), dot_vec_0, dot_vec_1, dot_vec_2, dot_vec_3
+            );
+        }
+        static_cast<void>(query_codes_sum);
+        const int32_t code_bias_correction = 0;
+#endif
+        return vaddvq_s32(
+                   vaddq_s32(vaddq_s32(dot_vec_0, dot_vec_1), vaddq_s32(dot_vec_2, dot_vec_3))
+               ) +
+               code_bias_correction;
+    }
+
+    // Byte i of codes holds dimension 2i (low nibble) and 2i+1 (high), so even_query[i] and
+    // odd_query[i] are those dimensions of the query. Reads padded_size bytes of each
+    static int32_t HorizontalDotInt8WithU4(
+        const int8_t* PDX_RESTRICT even_query,
+        const int8_t* PDX_RESTRICT odd_query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t padded_size
+    ) {
+        int32x4_t dot_vec_0 = vdupq_n_s32(0);
+        int32x4_t dot_vec_1 = vdupq_n_s32(0);
+        int32x4_t dot_vec_2 = vdupq_n_s32(0);
+        int32x4_t dot_vec_3 = vdupq_n_s32(0);
+        const uint8x16_t nibble_mask = vdupq_n_u8(0x0F);
+        for (size_t i = 0; i < padded_size; i += 32) {
+            const uint8x16_t code_pairs_0 = vld1q_u8(codes + i);
+            const uint8x16_t code_pairs_1 = vld1q_u8(codes + i + 16);
+            const uint8x16_t low_nibbles_0 = vandq_u8(code_pairs_0, nibble_mask);
+            const uint8x16_t high_nibbles_0 = vshrq_n_u8(code_pairs_0, 4);
+            const uint8x16_t low_nibbles_1 = vandq_u8(code_pairs_1, nibble_mask);
+            const uint8x16_t high_nibbles_1 = vshrq_n_u8(code_pairs_1, 4);
+#if defined(__ARM_FEATURE_DOTPROD)
+            // The nibbles fit in s8, so the signed dot product needs no correction
+            dot_vec_0 =
+                vdotq_s32(dot_vec_0, vreinterpretq_s8_u8(low_nibbles_0), vld1q_s8(even_query + i));
+            dot_vec_1 =
+                vdotq_s32(dot_vec_1, vreinterpretq_s8_u8(high_nibbles_0), vld1q_s8(odd_query + i));
+            dot_vec_2 = vdotq_s32(
+                dot_vec_2, vreinterpretq_s8_u8(low_nibbles_1), vld1q_s8(even_query + i + 16)
+            );
+            dot_vec_3 = vdotq_s32(
+                dot_vec_3, vreinterpretq_s8_u8(high_nibbles_1), vld1q_s8(odd_query + i + 16)
+            );
+#else
+            AccumulateWideningDotInt8WithU8x16(
+                vld1q_s8(even_query + i), low_nibbles_0, dot_vec_0, dot_vec_1, dot_vec_2, dot_vec_3
+            );
+            AccumulateWideningDotInt8WithU8x16(
+                vld1q_s8(odd_query + i), high_nibbles_0, dot_vec_0, dot_vec_1, dot_vec_2, dot_vec_3
+            );
+            AccumulateWideningDotInt8WithU8x16(
+                vld1q_s8(even_query + i + 16),
+                low_nibbles_1,
+                dot_vec_0,
+                dot_vec_1,
+                dot_vec_2,
+                dot_vec_3
+            );
+            AccumulateWideningDotInt8WithU8x16(
+                vld1q_s8(odd_query + i + 16),
+                high_nibbles_1,
+                dot_vec_0,
+                dot_vec_1,
+                dot_vec_2,
+                dot_vec_3
+            );
+#endif
+        }
+        return vaddvq_s32(
+            vaddq_s32(vaddq_s32(dot_vec_0, dot_vec_1), vaddq_s32(dot_vec_2, dot_vec_3))
+        );
+    }
+
+  private:
+    // Without DOTPROD: widens 16 bytes of query and codes to s16, then multiply-accumulates into
+    // s32
+    static void AccumulateWideningDotInt8WithU8x16(
+        const int8x16_t query_s8,
+        const uint8x16_t codes_u8,
+        int32x4_t& dot_vec_0,
+        int32x4_t& dot_vec_1,
+        int32x4_t& dot_vec_2,
+        int32x4_t& dot_vec_3
+    ) {
+        const int16x8_t codes_low = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(codes_u8)));
+        const int16x8_t codes_high = vreinterpretq_s16_u16(vmovl_high_u8(codes_u8));
+        const int16x8_t query_low = vmovl_s8(vget_low_s8(query_s8));
+        const int16x8_t query_high = vmovl_high_s8(query_s8);
+        dot_vec_0 = vmlal_s16(dot_vec_0, vget_low_s16(codes_low), vget_low_s16(query_low));
+        dot_vec_1 = vmlal_high_s16(dot_vec_1, codes_low, query_low);
+        dot_vec_2 = vmlal_s16(dot_vec_2, vget_low_s16(codes_high), vget_low_s16(query_high));
+        dot_vec_3 = vmlal_high_s16(dot_vec_3, codes_high, query_high);
+    }
+
+    // The codes of 16 values (round to nearest even, clamped to [0, MAX_CODE]); adds the squares of
+    // their dequantized values to squared_norm_vec
+    template <int MAX_CODE>
+    static uint8x16_t Quantize16(
+        const query_t* PDX_RESTRICT values,
+        const float32x4_t lower_vec,
+        const float32x4_t inverse_step_vec,
+        const float32x4_t step_vec,
+        float32x4_t& squared_norm_vec
+    ) {
+        int32x4_t codes_vec[4];
+        for (size_t quarter = 0; quarter < 4; ++quarter) {
+            const int32x4_t rounded = vcvtnq_s32_f32(
+                vmulq_f32(vsubq_f32(vld1q_f32(values + 4 * quarter), lower_vec), inverse_step_vec)
+            );
+            codes_vec[quarter] =
+                vminq_s32(vmaxq_s32(rounded, vdupq_n_s32(0)), vdupq_n_s32(MAX_CODE));
+            const float32x4_t dequantized =
+                vfmaq_f32(lower_vec, vcvtq_f32_s32(codes_vec[quarter]), step_vec);
+            squared_norm_vec = vfmaq_f32(squared_norm_vec, dequantized, dequantized);
+        }
+        const uint16x8_t codes_low_u16 =
+            vcombine_u16(vqmovun_s32(codes_vec[0]), vqmovun_s32(codes_vec[1]));
+        const uint16x8_t codes_high_u16 =
+            vcombine_u16(vqmovun_s32(codes_vec[2]), vqmovun_s32(codes_vec[3]));
+        return vcombine_u8(vqmovn_u16(codes_low_u16), vqmovn_u16(codes_high_u16));
     }
 };
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <gtest/gtest.h>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <string>
@@ -92,6 +93,25 @@ TEST_P(IterativeSearchTest, ChunkedExhaustiveMatchesSingleShot) {
         auto search_cursor =
             index->BeginIterativeSearch(query, TestUtils::KNN, top_k_heap, nullptr);
         ExpectSameResults(expected, Drain(*search_cursor, top_k_heap, TestUtils::KNN, 7));
+    }
+}
+
+// A step past the remaining clusters probes all of them, nearest first.
+TEST_P(IterativeSearchTest, NextWithHugeStepDrainsInOrder) {
+    auto data = TestUtils::LoadTestData(D);
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    index->SetNProbe(0);
+    for (size_t q = 0; q < N_QUERIES; ++q) {
+        const float* query = data.queries.data() + q * D;
+        auto expected = index->Search(query, TestUtils::KNN);
+        PDX::TopKHeap top_k_heap;
+        auto search_cursor =
+            index->BeginIterativeSearch(query, TestUtils::KNN, top_k_heap, nullptr);
+        EXPECT_EQ(search_cursor->Next(1), 1u);
+        ExpectSameResults(
+            expected,
+            Drain(*search_cursor, top_k_heap, TestUtils::KNN, std::numeric_limits<size_t>::max())
+        );
     }
 }
 
