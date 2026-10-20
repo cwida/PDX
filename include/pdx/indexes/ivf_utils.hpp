@@ -947,6 +947,8 @@ inline SplitPartition PartitionClusterForSplit(
         const size_t num_neighbors = neighboring_clusters_ids.size();
         std::unique_ptr<float[]> decoded_neighbor_centroids(new float[num_neighbors * d]);
         std::unique_ptr<const float*[]> neighbor_centroids(new const float*[num_neighbors]);
+        // TODO(@lkuffo, low): We might consider avoiding decompression if we
+        // compute the distances on the quantized domain
         for (size_t j = 0; j < num_neighbors; j++) {
             neighbor_centroids[j] = index.centroids.GetF32CentroidPtr(
                 neighboring_clusters_ids[j], decoded_neighbor_centroids.get() + j * d
@@ -955,7 +957,7 @@ inline SplitPartition PartitionClusterForSplit(
         for (size_t i = 0; i < num_embeddings; i++) {
             const float* emb = cluster_embeddings + i * d;
             float dist_old = distance_computer_f32_t::Horizontal(emb, centroid_to_split, d);
-            // TODO(@lkuffo, med): We could avoid one of these
+            // TODO(@lkuffo, low): We could avoid one of these
             // since we have the distance from k-means, we just need to bring it here
             float dist_a = distance_computer_f32_t::Horizontal(emb, centroid_a, d);
             float dist_b = distance_computer_f32_t::Horizontal(emb, centroid_b, d);

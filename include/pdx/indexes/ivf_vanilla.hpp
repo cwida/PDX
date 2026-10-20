@@ -741,6 +741,8 @@ class PDXIndex : public IPDXIndex {
     // Scan over all centroids (embedding is already normalized + rotated)
     uint32_t FindNearestCentroid(const float* embedding) const {
         std::unique_ptr<float[]> distances_to_centroids(new float[index.num_clusters]);
+        // TODO(@lkuffo, med): We might consider using ComputeApproximateDistancesToCentroids
+        // here to speedup appends even more.
         index.centroids.ComputeDistancesToCentroids(embedding, distances_to_centroids.get());
         return static_cast<uint32_t>(
             std::min_element(
