@@ -305,8 +305,15 @@ TEST_F(DistanceComputerTest, F32_LVQEncodeDecode_SIMD_MatchesScalar) {
         F32Computer::DequantizeFromU4(
             scalar_code_pairs.data(), d, scalar_lower, step_u4, simd_decoded.data()
         );
+        // The SIMD decode fuses lower + step * code; a compiler may not (MSVC), and near zero the
+        // two roundings differ by more ulps of the result than of the operands
         for (size_t i = 0; i < d; ++i) {
-            EXPECT_FLOAT_EQ(simd_decoded[i], scalar_decoded[i]) << "dimension " << i;
+            EXPECT_NEAR(
+                simd_decoded[i],
+                scalar_decoded[i],
+                1e-6f * (std::abs(scalar_lower) + 15.0f * step_u4)
+            ) << "dimension "
+              << i;
         }
     }
 }
