@@ -32,12 +32,12 @@ class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::Allocat
         for (size_t i = 0; i < num_dimensions; ++i) {
             ratios[i] = GetRatio(i);
         }
-        std::mt19937 gen(seed);
         bool matrix_created = false;
 #ifdef HAS_FFTW
         if (UsesDCTRotation(num_dimensions)) {
             matrix = skmeans::AllocateBuffer<float>(GetAllocator(), num_dimensions);
             matrix_rows = 1;
+            std::mt19937 gen(seed);
             std::uniform_int_distribution<int> dist(0, 1);
             for (size_t i = 0; i < num_dimensions; ++i) {
                 matrix[i] = dist(gen) ? 1.0f : -1.0f;
@@ -52,17 +52,7 @@ class ADSamplingPruner : public skmeans::ExecutorHolder, public skmeans::Allocat
                 GetAllocator(), static_cast<size_t>(num_dimensions) * num_dimensions
             );
             matrix_rows = num_dimensions;
-            Eigen::Map<matrix_t> rotation(matrix.get(), num_dimensions, num_dimensions);
-            std::normal_distribution<float> normal_dist;
-            for (size_t i = 0; i < num_dimensions; ++i) {
-                for (size_t j = 0; j < num_dimensions; ++j) {
-                    rotation(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j)) =
-                        normal_dist(gen);
-                }
-            }
-            const Eigen::HouseholderQR<Eigen::MatrixXf> qr(rotation);
-            rotation =
-                qr.householderQ() * Eigen::MatrixXf::Identity(num_dimensions, num_dimensions);
+            GenerateRotationMatrix(num_dimensions, static_cast<uint32_t>(seed), matrix.get());
         }
     }
 

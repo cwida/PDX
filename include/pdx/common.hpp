@@ -1,11 +1,14 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <memory>
+#include <numkong/cast.h>
 #include <queue>
 #include <random>
 
@@ -107,6 +110,13 @@ static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[20] = {16,  16,  32,  32,   
 static constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 static constexpr size_t FLAT_SEARCHER_BULK_SEARCH_SIZE_THRESHOLD = 512;
 
+static constexpr uint32_t SAQ_MIN_BITS_PER_DIMENSION = 3;
+static constexpr uint32_t SAQ_MAX_BITS_PER_DIMENSION = 4;
+static constexpr uint32_t SAQ_CHUNK_SIZE = H_DIM_SIZE;
+static constexpr uint32_t SAQ_MIN_DIMENSIONS = SAQ_CHUNK_SIZE;
+static constexpr uint32_t SAQ_MAX_CODE_WIDTH = 8;
+static constexpr size_t SAQ_FIT_SAMPLE_SIZE = 122880;
+
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most
 // SPLIT_MAX_NEIGHBOR_CLUSTERS
@@ -140,16 +150,39 @@ static constexpr uint32_t AlignValue(T n) {
     return ((n + (val - 1)) / val) * val;
 }
 
+template <class T>
+std::unique_ptr<T[]> CopyArray(const std::unique_ptr<T[]>& source, size_t size) {
+    std::unique_ptr<T[]> copy(new T[size]);
+    std::copy(source.get(), source.get() + size, copy.get());
+    return copy;
+}
+
+// TODO(@lkuffo, low): Convert the factors of many embeddings at once (nk_cast)
+inline void WriteHalf(float value, uint8_t* out) {
+    nk_f16_t half;
+    nk_f32_to_f16(&value, &half);
+    std::memcpy(out, &half, sizeof(half));
+}
+
+inline float ReadHalf(const uint8_t* in) {
+    nk_f16_t half;
+    std::memcpy(&half, in, sizeof(half));
+    nk_f32_t value;
+    nk_f16_to_f32(&half, &value);
+    return value;
+}
+
 enum class DistanceMetric : uint8_t { L2SQ, COSINE, IP };
 
-enum Quantization : uint8_t { F32, U8, F16, BF };
+enum Quantization : uint8_t { F32, U8, F16, BF, SAQ };
 
 enum class PDXIndexType : uint8_t {
     PDX_F32 = 0,
     PDX_U8 = 1,
     PDX_TREE_F32 = 2,
     PDX_TREE_U8 = 3,
-    PDX_FLAT = 4
+    PDX_FLAT = 4,
+    PDX_SAQ = 5
 };
 
 enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1, LVQ4 = 2 };
@@ -185,6 +218,10 @@ template <>
 struct DistanceType<F32> {
     using type = float;
 };
+template <>
+struct DistanceType<SAQ> {
+    using type = float;
+};
 template <Quantization Q>
 using pdx_distance_t = typename DistanceType<Q>::type;
 
@@ -211,6 +248,31 @@ template <Quantization Q>
 using pdx_quantized_embedding_t = typename QuantizedVectorType<Q>::type;
 
 using eigen_matrix_t = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+
+inline void GenerateRotationMatrix(
+    uint32_t num_dimensions,
+    uint32_t seed,
+    float* out,
+    bool fix_signs = false
+) {
+    std::mt19937 gen(seed);
+    Eigen::Map<eigen_matrix_t> rotation(out, num_dimensions, num_dimensions);
+    std::normal_distribution<float> normal_dist;
+    for (size_t i = 0; i < num_dimensions; ++i) {
+        for (size_t j = 0; j < num_dimensions; ++j) {
+            rotation(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j)) = normal_dist(gen);
+        }
+    }
+    const Eigen::HouseholderQR<Eigen::MatrixXf> qr(rotation);
+    rotation = qr.householderQ() * Eigen::MatrixXf::Identity(num_dimensions, num_dimensions);
+    if (fix_signs) {
+        for (Eigen::Index j = 0; j < num_dimensions; ++j) {
+            if (qr.matrixQR()(j, j) < 0) {
+                rotation.col(j) *= -1;
+            }
+        }
+    }
+}
 
 struct KNNCandidate {
     uint32_t index;

@@ -41,6 +41,8 @@ struct PDXIndexConfig {
     bool expect_appends = true;    // false: built clusters get one free slot (not serialized)
     CentroidQuantization centroid_quantization = CentroidQuantization::F32;
     ClusterStorageOrder cluster_storage_order = ClusterStorageOrder::NEAREST_CENTROID_CHAIN;
+    uint32_t saq_bits_per_dimension = 3;
+    float saq_pruning_significance = 0.01f;
     // Runs the parallel loops (not owned, not serialized). nullptr: the index creates a default
     // one.
     ParallelExecutor* executor = nullptr;
@@ -111,6 +113,21 @@ struct PDXIndexConfig {
                 "max_cluster_size must be 0 or at least " +
                 std::to_string(MAX_CLUSTER_SIZE_LOWER_BOUND) + ", got " +
                 std::to_string(max_cluster_size)
+            );
+        }
+        if (saq_bits_per_dimension < SAQ_MIN_BITS_PER_DIMENSION ||
+            saq_bits_per_dimension > SAQ_MAX_BITS_PER_DIMENSION) {
+            throw std::invalid_argument(
+                "saq_bits_per_dimension must be between " +
+                std::to_string(SAQ_MIN_BITS_PER_DIMENSION) + " and " +
+                std::to_string(SAQ_MAX_BITS_PER_DIMENSION) + ", got " +
+                std::to_string(saq_bits_per_dimension)
+            );
+        }
+        if (!(saq_pruning_significance > 0.0f && saq_pruning_significance < 1.0f)) {
+            throw std::invalid_argument(
+                "saq_pruning_significance must be between 0 and 1 (exclusive), got " +
+                std::to_string(saq_pruning_significance)
             );
         }
     }
