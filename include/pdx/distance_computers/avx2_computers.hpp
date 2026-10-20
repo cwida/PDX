@@ -129,6 +129,44 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
         return dot;
     }
+
+    static float HorizontalDotWithU4(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        __m256 dot_vec_low = _mm256_setzero_ps();
+        __m256 dot_vec_high = _mm256_setzero_ps();
+        const __m128i nibble_mask = _mm_set1_epi8(0x0F);
+        size_t i = 0;
+        for (; i + 16 <= num_dimensions; i += 16) {
+            const __m128i code_pairs =
+                _mm_loadl_epi64(reinterpret_cast<const __m128i*>(codes + i / 2));
+            const __m128i low_nibbles = _mm_and_si128(code_pairs, nibble_mask);
+            const __m128i high_nibbles = _mm_and_si128(_mm_srli_epi16(code_pairs, 4), nibble_mask);
+            const __m128i ordered_codes = _mm_unpacklo_epi8(low_nibbles, high_nibbles);
+            const __m256 codes_low_vec = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(ordered_codes));
+            const __m256 codes_high_vec =
+                _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_srli_si128(ordered_codes, 8)));
+            dot_vec_low = _mm256_fmadd_ps(_mm256_loadu_ps(query + i), codes_low_vec, dot_vec_low);
+            dot_vec_high =
+                _mm256_fmadd_ps(_mm256_loadu_ps(query + i + 8), codes_high_vec, dot_vec_high);
+        }
+        const __m256 dot_vec = _mm256_add_ps(dot_vec_low, dot_vec_high);
+        __m128 dot_halves =
+            _mm_add_ps(_mm256_castps256_ps128(dot_vec), _mm256_extractf128_ps(dot_vec, 1));
+        dot_halves = _mm_hadd_ps(dot_halves, dot_halves);
+        float dot = _mm_cvtss_f32(_mm_hadd_ps(dot_halves, dot_halves));
+        for (; i + 2 <= num_dimensions; i += 2) {
+            const uint8_t code_pair = codes[i / 2];
+            dot += query[i] * static_cast<float>(code_pair & 0x0F) +
+                   query[i + 1] * static_cast<float>(code_pair >> 4);
+        }
+        if (i < num_dimensions) {
+            dot += query[i] * static_cast<float>(codes[i / 2] & 0x0F);
+        }
+        return dot;
+    }
 };
 
 template <>

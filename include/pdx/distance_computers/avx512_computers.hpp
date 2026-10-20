@@ -120,6 +120,42 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
         return dot;
     }
+
+    static float HorizontalDotWithU4(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        __m512 dot_vec_low = _mm512_setzero_ps();
+        __m512 dot_vec_high = _mm512_setzero_ps();
+        const __m128i nibble_mask = _mm_set1_epi8(0x0F);
+        size_t i = 0;
+        for (; i + 32 <= num_dimensions; i += 32) {
+            const __m128i code_pairs =
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(codes + i / 2));
+            const __m128i low_nibbles = _mm_and_si128(code_pairs, nibble_mask);
+            const __m128i high_nibbles = _mm_and_si128(_mm_srli_epi16(code_pairs, 4), nibble_mask);
+            const __m512 codes_low_vec = _mm512_cvtepi32_ps(
+                _mm512_cvtepu8_epi32(_mm_unpacklo_epi8(low_nibbles, high_nibbles))
+            );
+            const __m512 codes_high_vec = _mm512_cvtepi32_ps(
+                _mm512_cvtepu8_epi32(_mm_unpackhi_epi8(low_nibbles, high_nibbles))
+            );
+            dot_vec_low = _mm512_fmadd_ps(_mm512_loadu_ps(query + i), codes_low_vec, dot_vec_low);
+            dot_vec_high =
+                _mm512_fmadd_ps(_mm512_loadu_ps(query + i + 16), codes_high_vec, dot_vec_high);
+        }
+        float dot = _mm512_reduce_add_ps(_mm512_add_ps(dot_vec_low, dot_vec_high));
+        for (; i + 2 <= num_dimensions; i += 2) {
+            const uint8_t code_pair = codes[i / 2];
+            dot += query[i] * static_cast<float>(code_pair & 0x0F) +
+                   query[i + 1] * static_cast<float>(code_pair >> 4);
+        }
+        if (i < num_dimensions) {
+            dot += query[i] * static_cast<float>(codes[i / 2] & 0x0F);
+        }
+        return dot;
+    }
 };
 
 template <>

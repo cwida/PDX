@@ -147,7 +147,7 @@ enum class PDXIndexType : uint8_t {
     PDX_FLAT = 4
 };
 
-enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1 };
+enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1, LVQ4 = 2 };
 
 // A saved index's type byte: its PDXIndexType in the low nibble, its CentroidQuantization in the high
 [[nodiscard]] constexpr uint8_t MakeIndexTypeByte(

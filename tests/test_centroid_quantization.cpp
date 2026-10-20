@@ -18,7 +18,6 @@ namespace {
 static constexpr size_t D = 128;
 static constexpr size_t N_QUERIES = 100;
 static constexpr uint32_t N_PROBE = 16;
-static constexpr float RECALL_TOLERANCE = 0.01f;
 static constexpr float MAINTENANCE_RECALL_TOLERANCE = 0.03f;
 static constexpr uint32_t MAX_CLUSTER_SIZE = 32;
 
@@ -60,16 +59,15 @@ float ComputeCursorRecall(
     return total_recall / static_cast<float>(N_QUERIES);
 }
 
-// ComputeL2SQ is the squared distance to the dequantized embedding, which is within half a step of
-// the embedding.
-TEST(LVQQuantizerTest, ComputeL2SQMatchesTheDequantizedEmbedding) {
+template <uint8_t BIT_WIDTH>
+void ExpectComputeL2SQMatchesTheDequantizedEmbedding() {
     for (size_t d : {1, 7, 16, 33, 128, 384}) {
-        SCOPED_TRACE("d=" + std::to_string(d));
+        SCOPED_TRACE("bit_width=" + std::to_string(BIT_WIDTH) + ", d=" + std::to_string(d));
         const auto vectors = skmeans::GenerateRandomVectors(2, d, -1.0f, 1.0f, 42);
         const float* embedding = vectors.data();
         const float* query = vectors.data() + d;
-        const PDX::LVQQuantizer<8> quantizer(d);
-        std::vector<uint8_t> codes(d);
+        const PDX::LVQQuantizer<BIT_WIDTH> quantizer(d);
+        std::vector<uint8_t> codes(PDX::LVQQuantizer<BIT_WIDTH>::GetCodesSizeInBytes(d));
         const PDX::LVQParams params = quantizer.QuantizeEmbedding(embedding, codes.data());
         std::vector<float> dequantized(d);
         quantizer.DequantizeEmbedding(codes.data(), params, dequantized.data());
@@ -97,21 +95,34 @@ TEST(LVQQuantizerTest, ComputeL2SQMatchesTheDequantizedEmbedding) {
     }
 }
 
-// A constant embedding has no range to spread over the codes: it dequantizes exactly.
-TEST(LVQQuantizerTest, ConstantEmbeddingDequantizesExactly) {
+template <uint8_t BIT_WIDTH>
+void ExpectConstantEmbeddingDequantizesExactly() {
     const std::vector<float> embedding(D, 0.25f);
-    const PDX::LVQQuantizer<8> quantizer(D);
-    std::vector<uint8_t> codes(D);
+    const PDX::LVQQuantizer<BIT_WIDTH> quantizer(D);
+    std::vector<uint8_t> codes(PDX::LVQQuantizer<BIT_WIDTH>::GetCodesSizeInBytes(D));
     const PDX::LVQParams params = quantizer.QuantizeEmbedding(embedding.data(), codes.data());
     std::vector<float> dequantized(D);
     quantizer.DequantizeEmbedding(codes.data(), params, dequantized.data());
     EXPECT_EQ(dequantized, embedding);
 }
 
+// ComputeL2SQ is the squared distance to the dequantized embedding, which is within half a step of
+// the embedding.
+TEST(LVQQuantizerTest, ComputeL2SQMatchesTheDequantizedEmbedding) {
+    ExpectComputeL2SQMatchesTheDequantizedEmbedding<8>();
+    ExpectComputeL2SQMatchesTheDequantizedEmbedding<4>();
+}
+
+// A constant embedding has no range to spread over the codes: it dequantizes exactly.
+TEST(LVQQuantizerTest, ConstantEmbeddingDequantizesExactly) {
+    ExpectConstantEmbeddingDequantizesExactly<8>();
+    ExpectConstantEmbeddingDequantizesExactly<4>();
+}
+
 class CentroidQuantizationTest : public ::testing::TestWithParam<std::string> {};
 
-// Ranking by the LVQ8 centroids keeps the recall of ranking by the float32 ones, single-shot and
-// on a cursor.
+// Ranking by the quantized centroids keeps the recall of ranking by the float32 ones, single-shot
+// and on a cursor.
 TEST_P(CentroidQuantizationTest, RecallMatchesF32) {
     auto data = TestUtils::LoadTestData(D);
     const auto gt = TestUtils::ComputeBruteForceKNN(
@@ -123,27 +134,35 @@ TEST_P(CentroidQuantizationTest, RecallMatchesF32) {
         data.train.data(),
         TestUtils::N_TRAIN
     );
-    auto lvq8_index = TestUtils::BuildIndexWithConfig(
-        GetParam(),
-        MakeConfig(PDX::CentroidQuantization::LVQ8),
-        data.train.data(),
-        TestUtils::N_TRAIN
-    );
     f32_index->SetNProbe(N_PROBE);
-    lvq8_index->SetNProbe(N_PROBE);
+    const float f32_recall = TestUtils::ComputeAverageRecall(
+        *f32_index, data.queries.data(), N_QUERIES, D, TestUtils::KNN, gt
+    );
+    const float f32_cursor_recall = ComputeCursorRecall(*f32_index, data.queries.data(), gt);
 
-    EXPECT_GE(
-        TestUtils::ComputeAverageRecall(
-            *lvq8_index, data.queries.data(), N_QUERIES, D, TestUtils::KNN, gt
-        ),
-        TestUtils::ComputeAverageRecall(
-            *f32_index, data.queries.data(), N_QUERIES, D, TestUtils::KNN, gt
-        ) - RECALL_TOLERANCE
-    );
-    EXPECT_GE(
-        ComputeCursorRecall(*lvq8_index, data.queries.data(), gt),
-        ComputeCursorRecall(*f32_index, data.queries.data(), gt) - RECALL_TOLERANCE
-    );
+    for (const auto& test_case : TestUtils::QUANTIZED_CENTROIDS) {
+        SCOPED_TRACE(
+            "centroid_quantization=" +
+            std::to_string(static_cast<int>(test_case.centroid_quantization))
+        );
+        auto quantized_index = TestUtils::BuildIndexWithConfig(
+            GetParam(),
+            MakeConfig(test_case.centroid_quantization),
+            data.train.data(),
+            TestUtils::N_TRAIN
+        );
+        quantized_index->SetNProbe(N_PROBE);
+        EXPECT_GE(
+            TestUtils::ComputeAverageRecall(
+                *quantized_index, data.queries.data(), N_QUERIES, D, TestUtils::KNN, gt
+            ),
+            f32_recall - test_case.recall_tolerance
+        );
+        EXPECT_GE(
+            ComputeCursorRecall(*quantized_index, data.queries.data(), gt),
+            f32_cursor_recall - test_case.recall_tolerance
+        );
+    }
 }
 
 // Splits (appends past MAX_CLUSTER_SIZE), merges (deleting four rows in five) and bulk appends
@@ -173,10 +192,10 @@ TEST_P(CentroidQuantizationTest, MaintenanceKeepsRowsRecallAndAccounting) {
         }
     }
 
-    std::vector<float> recalls;
-    for (auto centroid_quantization :
-         {PDX::CentroidQuantization::F32, PDX::CentroidQuantization::LVQ8}) {
-        SCOPED_TRACE("centroid_quantization=" + std::to_string(static_cast<int>(centroid_quantization)));
+    auto run_maintenance = [&](PDX::CentroidQuantization centroid_quantization) {
+        SCOPED_TRACE(
+            "centroid_quantization=" + std::to_string(static_cast<int>(centroid_quantization))
+        );
         TestUtils::CountingAllocator allocator;
         auto index = TestUtils::BuildIndexWithConfig(
             GetParam(),
@@ -204,11 +223,17 @@ TEST_P(CentroidQuantizationTest, MaintenanceKeepsRowsRecallAndAccounting) {
             index->GetInMemorySizeInBytes()
         );
         index->SetNProbe(N_PROBE);
-        recalls.push_back(TestUtils::ComputeAverageRecall(
+        return TestUtils::ComputeAverageRecall(
             *index, data.queries.data(), N_QUERIES, D, TestUtils::KNN, gt
-        ));
+        );
+    };
+    const float f32_recall = run_maintenance(PDX::CentroidQuantization::F32);
+    for (const auto& test_case : TestUtils::QUANTIZED_CENTROIDS) {
+        EXPECT_GE(
+            run_maintenance(test_case.centroid_quantization),
+            f32_recall - MAINTENANCE_RECALL_TOLERANCE
+        );
     }
-    EXPECT_GE(recalls[1], recalls[0] - MAINTENANCE_RECALL_TOLERANCE);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -222,9 +247,9 @@ INSTANTIATE_TEST_SUITE_P(
 // byte.
 class VanillaCentroidQuantizationTest : public ::testing::TestWithParam<std::string> {};
 
-// One clustering, so the indexes differ only by their centroids: d floats each in F32, d codes and
-// their LVQParams in LVQ8.
-TEST_P(VanillaCentroidQuantizationTest, LVQ8ShrinksTheCentroids) {
+// One clustering, so the indexes differ only by their centroids: d floats each in F32, the codes
+// and their LVQParams in LVQ.
+TEST_P(VanillaCentroidQuantizationTest, QuantizedCentroidsSaveTheirBytes) {
     auto data = TestUtils::LoadTestData(D);
     auto f32_index = TestUtils::BuildIndexWithConfig(
         GetParam(),
@@ -232,18 +257,25 @@ TEST_P(VanillaCentroidQuantizationTest, LVQ8ShrinksTheCentroids) {
         data.train.data(),
         TestUtils::N_TRAIN
     );
-    auto lvq8_index = TestUtils::BuildIndexWithConfig(
-        GetParam(),
-        MakeConfig(PDX::CentroidQuantization::LVQ8),
-        data.train.data(),
-        TestUtils::N_TRAIN
-    );
-    ASSERT_EQ(f32_index->GetNumClusters(), lvq8_index->GetNumClusters());
-    const size_t saved_bytes_per_centroid = D * sizeof(float) - (D + sizeof(PDX::LVQParams));
-    EXPECT_EQ(
-        f32_index->GetInMemorySizeInBytes() - lvq8_index->GetInMemorySizeInBytes(),
-        f32_index->GetNumClusters() * saved_bytes_per_centroid
-    );
+    for (const auto& test_case : TestUtils::QUANTIZED_CENTROIDS) {
+        SCOPED_TRACE(
+            "centroid_quantization=" +
+            std::to_string(static_cast<int>(test_case.centroid_quantization))
+        );
+        auto quantized_index = TestUtils::BuildIndexWithConfig(
+            GetParam(),
+            MakeConfig(test_case.centroid_quantization),
+            data.train.data(),
+            TestUtils::N_TRAIN
+        );
+        ASSERT_EQ(f32_index->GetNumClusters(), quantized_index->GetNumClusters());
+        const size_t saved_bytes_per_centroid =
+            D * sizeof(float) - test_case.encoded_centroid_size_in_bytes(D);
+        EXPECT_EQ(
+            f32_index->GetInMemorySizeInBytes() - quantized_index->GetInMemorySizeInBytes(),
+            f32_index->GetNumClusters() * saved_bytes_per_centroid
+        );
+    }
 }
 
 INSTANTIATE_TEST_SUITE_P(

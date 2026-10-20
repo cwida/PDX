@@ -78,6 +78,24 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
         return dot;
     }
+
+    static float HorizontalDotWithU4(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        float dot = 0.0f;
+        size_t dimension_idx = 0;
+        for (; dimension_idx + 2 <= num_dimensions; dimension_idx += 2) {
+            const uint8_t code_pair = codes[dimension_idx / 2];
+            dot += query[dimension_idx] * static_cast<float>(code_pair & 0x0F) +
+                   query[dimension_idx + 1] * static_cast<float>(code_pair >> 4);
+        }
+        if (dimension_idx < num_dimensions) {
+            dot += query[dimension_idx] * static_cast<float>(codes[dimension_idx / 2] & 0x0F);
+        }
+        return dot;
+    }
 };
 
 template <>

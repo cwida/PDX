@@ -89,26 +89,12 @@ class Centroids : public skmeans::AllocatorHolder {
                 );
             }
             break;
-        case CentroidQuantization::LVQ8: {
-            const LVQQuantizer<8> quantizer(num_dimensions);
-            float query_sum = 0.0f;
-            float query_squared_norm = 0.0f;
-            PDX_VECTORIZE_LOOP
-            for (size_t i = 0; i < num_dimensions; ++i) {
-                query_sum += query[i];
-                query_squared_norm += query[i] * query[i];
-            }
-            for (size_t centroid_id = 0; centroid_id < num_centroids; ++centroid_id) {
-                out[centroid_id] = quantizer.ComputeL2SQ(
-                    query,
-                    query_sum,
-                    query_squared_norm,
-                    GetLVQCodesPtr(centroid_id),
-                    ReadLVQParams(centroid_id)
-                );
-            }
+        case CentroidQuantization::LVQ8:
+            ComputeLVQDistancesToCentroids<8>(query, out);
             break;
-        }
+        case CentroidQuantization::LVQ4:
+            ComputeLVQDistancesToCentroids<4>(query, out);
+            break;
         }
     }
 
@@ -152,6 +138,7 @@ class Centroids : public skmeans::AllocatorHolder {
                         .squaredNorm();
                 break;
             case CentroidQuantization::LVQ8:
+            case CentroidQuantization::LVQ4:
                 for (size_t centroid_id = 0; centroid_id < num_centroids; ++centroid_id) {
                     squared_norms[centroid_id] = ReadLVQParams(centroid_id).dequantized_squared_norm;
                 }
@@ -197,7 +184,9 @@ class Centroids : public skmeans::AllocatorHolder {
         case CentroidQuantization::F32:
             return num_dimensions * sizeof(float);
         case CentroidQuantization::LVQ8:
-            return sizeof(LVQParams) + num_dimensions;
+            return sizeof(LVQParams) + LVQQuantizer<8>::GetCodesSizeInBytes(num_dimensions);
+        case CentroidQuantization::LVQ4:
+            return sizeof(LVQParams) + LVQQuantizer<4>::GetCodesSizeInBytes(num_dimensions);
         }
         throw std::runtime_error(
             "Unknown PDX centroid quantization: " +
@@ -248,21 +237,62 @@ class Centroids : public skmeans::AllocatorHolder {
         case CentroidQuantization::F32:
             std::memcpy(GetEncodedCentroidPtr(centroid_id), centroid, encoded_centroid_size);
             break;
-        case CentroidQuantization::LVQ8: {
-            const LVQParams params =
-                LVQQuantizer<8>(num_dimensions)
-                    .QuantizeEmbedding(
-                        centroid, GetEncodedCentroidPtr(centroid_id) + sizeof(LVQParams)
-                    );
-            std::memcpy(GetEncodedCentroidPtr(centroid_id), &params, sizeof(LVQParams));
+        case CentroidQuantization::LVQ8:
+            EncodeLVQCentroid<8>(centroid_id, centroid);
             break;
-        }
+        case CentroidQuantization::LVQ4:
+            EncodeLVQCentroid<4>(centroid_id, centroid);
+            break;
         }
     }
 
     void DecodeLVQCentroid(size_t centroid_id, float* out) const {
-        LVQQuantizer<8>(num_dimensions)
+        switch (quantization) {
+        case CentroidQuantization::F32:
+            break;
+        case CentroidQuantization::LVQ8:
+            DecodeLVQCentroid<8>(centroid_id, out);
+            break;
+        case CentroidQuantization::LVQ4:
+            DecodeLVQCentroid<4>(centroid_id, out);
+            break;
+        }
+    }
+
+    template <uint8_t BIT_WIDTH>
+    void EncodeLVQCentroid(size_t centroid_id, const float* centroid) {
+        const LVQParams params =
+            LVQQuantizer<BIT_WIDTH>(num_dimensions)
+                .QuantizeEmbedding(centroid, GetEncodedCentroidPtr(centroid_id) + sizeof(LVQParams));
+        std::memcpy(GetEncodedCentroidPtr(centroid_id), &params, sizeof(LVQParams));
+    }
+
+    template <uint8_t BIT_WIDTH>
+    void DecodeLVQCentroid(size_t centroid_id, float* out) const {
+        LVQQuantizer<BIT_WIDTH>(num_dimensions)
             .DequantizeEmbedding(GetLVQCodesPtr(centroid_id), ReadLVQParams(centroid_id), out);
+    }
+
+    template <uint8_t BIT_WIDTH>
+    void ComputeLVQDistancesToCentroids(const float* PDX_RESTRICT query, float* PDX_RESTRICT out)
+        const {
+        const LVQQuantizer<BIT_WIDTH> quantizer(num_dimensions);
+        float query_sum = 0.0f;
+        float query_squared_norm = 0.0f;
+        PDX_VECTORIZE_LOOP
+        for (size_t i = 0; i < num_dimensions; ++i) {
+            query_sum += query[i];
+            query_squared_norm += query[i] * query[i];
+        }
+        for (size_t centroid_id = 0; centroid_id < num_centroids; ++centroid_id) {
+            out[centroid_id] = quantizer.ComputeL2SQ(
+                query,
+                query_sum,
+                query_squared_norm,
+                GetLVQCodesPtr(centroid_id),
+                ReadLVQParams(centroid_id)
+            );
+        }
     }
 
     CentroidQuantization quantization = CentroidQuantization::F32;

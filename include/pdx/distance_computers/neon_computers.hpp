@@ -128,6 +128,76 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
         return dot;
     }
+
+    static void AccumulateDotWithU8x16(
+        const query_t* PDX_RESTRICT query,
+        const uint8x16_t codes_u8,
+        float32x4_t& dot_vec_0,
+        float32x4_t& dot_vec_1,
+        float32x4_t& dot_vec_2,
+        float32x4_t& dot_vec_3
+    ) {
+        const uint16x8_t codes_low_u16 = vmovl_u8(vget_low_u8(codes_u8));
+        const uint16x8_t codes_high_u16 = vmovl_high_u8(codes_u8);
+        dot_vec_0 = vfmaq_f32(
+            dot_vec_0, vld1q_f32(query), vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_low_u16)))
+        );
+        dot_vec_1 = vfmaq_f32(
+            dot_vec_1, vld1q_f32(query + 4), vcvtq_f32_u32(vmovl_high_u16(codes_low_u16))
+        );
+        dot_vec_2 = vfmaq_f32(
+            dot_vec_2, vld1q_f32(query + 8), vcvtq_f32_u32(vmovl_u16(vget_low_u16(codes_high_u16)))
+        );
+        dot_vec_3 = vfmaq_f32(
+            dot_vec_3, vld1q_f32(query + 12), vcvtq_f32_u32(vmovl_high_u16(codes_high_u16))
+        );
+    }
+
+    static float HorizontalDotWithU4(
+        const query_t* PDX_RESTRICT query,
+        const uint8_t* PDX_RESTRICT codes,
+        size_t num_dimensions
+    ) {
+        float32x4_t dot_vec_0 = vdupq_n_f32(0);
+        float32x4_t dot_vec_1 = vdupq_n_f32(0);
+        float32x4_t dot_vec_2 = vdupq_n_f32(0);
+        float32x4_t dot_vec_3 = vdupq_n_f32(0);
+        const uint8x16_t nibble_mask = vdupq_n_u8(0x0F);
+        size_t i = 0;
+        for (; i + 32 <= num_dimensions; i += 32) {
+            const uint8x16_t code_pairs = vld1q_u8(codes + i / 2);
+            const uint8x16_t low_nibbles = vandq_u8(code_pairs, nibble_mask);
+            const uint8x16_t high_nibbles = vshrq_n_u8(code_pairs, 4);
+            AccumulateDotWithU8x16(
+                query + i,
+                vzip1q_u8(low_nibbles, high_nibbles),
+                dot_vec_0,
+                dot_vec_1,
+                dot_vec_2,
+                dot_vec_3
+            );
+            AccumulateDotWithU8x16(
+                query + i + 16,
+                vzip2q_u8(low_nibbles, high_nibbles),
+                dot_vec_0,
+                dot_vec_1,
+                dot_vec_2,
+                dot_vec_3
+            );
+        }
+        float dot = vaddvq_f32(
+            vaddq_f32(vaddq_f32(dot_vec_0, dot_vec_1), vaddq_f32(dot_vec_2, dot_vec_3))
+        );
+        for (; i + 2 <= num_dimensions; i += 2) {
+            const uint8_t code_pair = codes[i / 2];
+            dot += query[i] * static_cast<float>(code_pair & 0x0F) +
+                   query[i + 1] * static_cast<float>(code_pair >> 4);
+        }
+        if (i < num_dimensions) {
+            dot += query[i] * static_cast<float>(codes[i / 2] & 0x0F);
+        }
+        return dot;
+    }
 };
 
 // Equivalent of vdotq_u32(acc, a, a) for squared accumulation.

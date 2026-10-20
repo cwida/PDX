@@ -47,10 +47,11 @@ All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`) and shar
   infinite norm. Unfiltered.
 
 Centroids (`Centroids`, `indexes/centroids.hpp`) are stored once, in `PDXIndexConfig::centroid_quantization`: `F32`
-(default) or `LVQ8` (`LVQQuantizer<8>`, `quantizers/lvq.hpp`: d uint8 codes plus `LVQParams` per centroid, no float32
-copy kept). Vanilla and tree leaf centroids; the tree's L0 (its centroids and its PDX copies of the leaf centroids)
+(default), `LVQ8` or `LVQ4` (`LVQQuantizer<BIT_WIDTH>`, `quantizers/lvq.hpp`: d 8-bit codes, or two 4-bit codes per
+byte with dimension 2i in the low nibble, plus `LVQParams` per centroid; no float32 copy kept). A new encoding adds its
+case to `Centroids`' switches (`-Wswitch` lists them) and to `TestUtils::QUANTIZED_CENTROIDS`. Vanilla and tree leaf centroids; the tree's L0 (its centroids and its PDX copies of the leaf centroids)
 stays f32, and Flat ignores the setting. Ranking, `Append`'s nearest centroid and the split's neighbour search use
-`ComputeDistancesToCentroids` (LVQ8: the exact L2 to the decoded centroid, through `HorizontalDotWithU8`); maintenance
+`ComputeDistancesToCentroids` (LVQ: the exact L2 to the decoded centroid, through `HorizontalDotWithU8`/`U4`); maintenance
 that needs floats decodes into scratch (`GetF32CentroidPtr`, `DecodeCentroid`, and `GetF32CentroidsPtr` +
 `GetF32CentroidsSquaredNormsPtr` for the GEMMs). A centroid is encoded only when computed (build, the split's two
 means); merges move encoded centroids as they are.
@@ -172,7 +173,7 @@ Performance-critical — weigh every copy/allocation.
   tagged by `Quantization` (`F32`/`U8`; `F16`/`BF` exist in the enum but have no kernels). Kernels are
   only specialized for `DistanceMetric::L2SQ` — `IP`/`COSINE` are served by normalizing the data
   (`DistanceMetricRequiresNormalization`) and running L2SQ. The F32 computers also hold `FlipSign` and
-  `HorizontalDotWithU8` (float query · uint8 codes, for LVQ8 centroids).
+  `HorizontalDotWithU8`/`HorizontalDotWithU4` (float query · 8-bit or packed 4-bit codes, for LVQ centroids).
   **All** SIMD lives in `include/pdx/distance_computers/` (`neon_computers.hpp`, `avx2_computers.hpp`,
   `avx512_computers.hpp`, `scalar_computers.hpp`) — don't scatter it elsewhere; keep all backends in
   sync when changing a kernel (on ARM the x86 ones aren't compiled or linted). Cover kernels in
