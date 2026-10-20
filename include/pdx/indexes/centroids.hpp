@@ -39,7 +39,12 @@ class CentroidRankingQuery {
 
     CentroidQuantization GetQuantization() const { return quantization; }
     // LVQ8 and LVQ4
-    const LVQInt8Query& GetLVQInt8Query() const { return *lvq_int8_query; }
+    const LVQInt8Query& GetLVQInt8Query() const {
+        if (!lvq_int8_query) {
+            throw std::logic_error("CentroidRankingQuery was not encoded for LVQ centroids");
+        }
+        return *lvq_int8_query;
+    }
 
   private:
     CentroidQuantization quantization;
@@ -248,6 +253,7 @@ class Centroids : public skmeans::AllocatorHolder {
         switch (quantization) {
         case CentroidQuantization::F32:
             return num_dimensions * sizeof(float);
+        // NOLINTNEXTLINE(bugprone-branch-clone)
         case CentroidQuantization::LVQ8:
             return sizeof(LVQParams) + LVQQuantizer<8>::GetCodesSizeInBytes(num_dimensions);
         case CentroidQuantization::LVQ4:
@@ -273,11 +279,9 @@ class Centroids : public skmeans::AllocatorHolder {
     }
 
     skmeans::AllocatedBuffer<uint8_t> AllocateEncodedCentroids(size_t capacity) const {
-        const size_t size_in_bytes = capacity * encoded_centroid_size + trailing_padding_size;
-        if (trailing_padding_size == 0) {
-            return skmeans::AllocateBuffer<uint8_t>(GetAllocator(), size_in_bytes);
-        }
-        return skmeans::AllocateZeroedBuffer<uint8_t>(GetAllocator(), size_in_bytes);
+        return skmeans::AllocateBuffer<uint8_t>(
+            GetAllocator(), capacity * encoded_centroid_size + trailing_padding_size
+        );
     }
 
     size_t GetCapacity() const {

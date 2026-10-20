@@ -326,12 +326,15 @@ TEST_P(CentroidQuantizationTest, MaintenanceKeepsRowsRecallAndAccounting) {
             *index, data.queries.data(), N_QUERIES, D, TestUtils::KNN, gt
         );
     };
+    // The cluster structures diverge (MAINTENANCE_RECALL_TOLERANCE), on top of the encoding's own
+    // ranking loss
     const float f32_recall = run_maintenance(PDX::CentroidQuantization::F32);
     for (const auto& test_case : TestUtils::QUANTIZED_CENTROIDS) {
         EXPECT_GE(
             run_maintenance(test_case.centroid_quantization),
-            f32_recall - MAINTENANCE_RECALL_TOLERANCE
-        );
+            f32_recall - MAINTENANCE_RECALL_TOLERANCE - test_case.recall_tolerance
+        ) << "centroid_quantization="
+          << static_cast<int>(test_case.centroid_quantization);
     }
 }
 
