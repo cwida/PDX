@@ -175,6 +175,20 @@ class Centroids : public skmeans::AllocatorHolder {
         DecodeLVQCentroid(centroid_id, out);
     }
 
+    // Replaces centroid by the decoding of its encoding, so it carries the stored centroids' error
+    void RoundTripThroughEncoding(float* centroid) const {
+        switch (quantization) {
+        case CentroidQuantization::F32:
+            break;
+        case CentroidQuantization::LVQ8:
+            RoundTripThroughLVQ<8>(centroid);
+            break;
+        case CentroidQuantization::LVQ4:
+            RoundTripThroughLVQ<4>(centroid);
+            break;
+        }
+    }
+
     const float* GetF32CentroidPtr(uint32_t centroid_id, float* scratch) const {
         if (quantization == CentroidQuantization::F32) {
             return GetStoredF32CentroidPtr(centroid_id);
@@ -363,6 +377,16 @@ class Centroids : public skmeans::AllocatorHolder {
     void DecodeLVQCentroid(size_t centroid_id, float* out) const {
         LVQQuantizer<BIT_WIDTH>(num_dimensions)
             .DequantizeEmbedding(GetLVQCodesPtr(centroid_id), ReadLVQParams(centroid_id), out);
+    }
+
+    template <uint8_t BIT_WIDTH>
+    void RoundTripThroughLVQ(float* centroid) const {
+        const LVQQuantizer<BIT_WIDTH> quantizer(num_dimensions);
+        std::unique_ptr<uint8_t[]> codes(
+            new uint8_t[LVQQuantizer<BIT_WIDTH>::GetCodesSizeInBytes(num_dimensions)]
+        );
+        const LVQParams params = quantizer.QuantizeEmbedding(centroid, codes.get());
+        quantizer.DequantizeEmbedding(codes.get(), params, centroid);
     }
 
     template <uint8_t BIT_WIDTH>

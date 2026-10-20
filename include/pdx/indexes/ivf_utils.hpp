@@ -935,6 +935,9 @@ inline SplitPartition PartitionClusterForSplit(
         std::memcpy(
             partition.centroid_b.get(), split_result.centroids.data() + d, d * sizeof(float)
         );
+        // A and B are compared with decoded centroids below, so they carry the same error
+        index.centroids.RoundTripThroughEncoding(partition.centroid_a.get());
+        index.centroids.RoundTripThroughEncoding(partition.centroid_b.get());
         partition.group_a_idx.reserve(split_result.assignments[0].size());
         partition.group_b_idx.reserve(split_result.assignments[1].size());
     }

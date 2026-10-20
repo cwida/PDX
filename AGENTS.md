@@ -60,7 +60,8 @@ F32 none). The encoded query travels as a `CentroidRankingQuery` (built for
 one `CentroidQuantization`; a new encoding adds its part to it). LVQ encoding (`MinMax`, `QuantizeToU8`/`U4`) and LVQ4
 decoding (`DequantizeFromU4`) are SIMD kernels, with codes bit-identical to scalar; LVQ8 decoding is an auto-vectorized
 loop. Maintenance that needs floats decodes into scratch (`GetF32CentroidPtr`, `DecodeCentroid`, and `GetF32CentroidsPtr` +
-`GetF32CentroidsSquaredNormsPtr` for the GEMMs). A centroid is encoded only when computed (build, the split's two
+`GetF32CentroidsSquaredNormsPtr` for the GEMMs). A float centroid compared with decoded ones goes through
+`RoundTripThroughEncoding` first, so both sides carry the encoding's error. A centroid is encoded only when computed (build, the split's two
 means); merges move encoded centroids as they are.
 
 Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`;
