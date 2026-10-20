@@ -59,12 +59,13 @@ class IVF : public skmeans::AllocatorHolder {
     IVF(uint32_t num_dimensions,
         uint64_t total_num_embeddings,
         uint32_t num_clusters,
-        bool is_normalized)
+        bool is_normalized,
+        CentroidQuantization centroid_quantization = CentroidQuantization::F32)
         : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings),
           num_clusters(num_clusters),
           num_vertical_dimensions(GetPDXDimensionSplit(num_dimensions).vertical_dimensions),
           num_horizontal_dimensions(GetPDXDimensionSplit(num_dimensions).horizontal_dimensions),
-          is_normalized(is_normalized), centroids(CentroidQuantization::F32, num_dimensions) {
+          is_normalized(is_normalized), centroids(centroid_quantization, num_dimensions) {
         clusters.reserve(num_clusters);
     }
 
@@ -73,12 +74,13 @@ class IVF : public skmeans::AllocatorHolder {
         uint32_t num_clusters,
         bool is_normalized,
         float quantization_scale,
-        float quantization_base)
+        float quantization_base,
+        CentroidQuantization centroid_quantization = CentroidQuantization::F32)
         : num_dimensions(num_dimensions), total_num_embeddings(total_num_embeddings),
           num_clusters(num_clusters),
           num_vertical_dimensions(GetPDXDimensionSplit(num_dimensions).vertical_dimensions),
           num_horizontal_dimensions(GetPDXDimensionSplit(num_dimensions).horizontal_dimensions),
-          is_normalized(is_normalized), centroids(CentroidQuantization::F32, num_dimensions),
+          is_normalized(is_normalized), centroids(centroid_quantization, num_dimensions),
           quantization_scale(quantization_scale),
           quantization_scale_squared(quantization_scale * quantization_scale),
           inverse_quantization_scale_squared(1.0f / (quantization_scale * quantization_scale)),
@@ -107,9 +109,9 @@ class IVF : public skmeans::AllocatorHolder {
         centroids.SetAllocator(allocator);
     }
 
-    void Load(char* input) {
+    void Load(char* input, CentroidQuantization centroid_quantization) {
         BufferReader reader{input};
-        Load(reader);
+        Load(reader, centroid_quantization);
     }
 
     // Reads the num_clusters clusters of num_dimensions as Save writes them: the (num_embeddings,
@@ -136,7 +138,7 @@ class IVF : public skmeans::AllocatorHolder {
     }
 
     template <class Reader>
-    void Load(Reader& reader) {
+    void Load(Reader& reader, CentroidQuantization centroid_quantization) {
         num_dimensions = ReadValue<uint32_t>(reader);
         num_vertical_dimensions = ReadValue<uint32_t>(reader);
         num_horizontal_dimensions = ReadValue<uint32_t>(reader);
@@ -145,7 +147,7 @@ class IVF : public skmeans::AllocatorHolder {
 
         is_normalized = ReadValue<char>(reader) != 0;
 
-        centroids = Centroids(CentroidQuantization::F32, num_dimensions, &GetAllocator());
+        centroids = Centroids(centroid_quantization, num_dimensions, &GetAllocator());
         centroids.Load(reader, num_clusters);
 
         if constexpr (Q == U8) {
@@ -227,7 +229,11 @@ class IVF : public skmeans::AllocatorHolder {
     }
 
     template <class Reader>
-    void LoadResidentData(Reader& reader, const bool allocate_cluster_data = true) {
+    void LoadResidentData(
+        Reader& reader,
+        CentroidQuantization centroid_quantization,
+        const bool allocate_cluster_data = true
+    ) {
         num_dimensions = ReadValue<uint32_t>(reader);
         num_vertical_dimensions = ReadValue<uint32_t>(reader);
         num_horizontal_dimensions = ReadValue<uint32_t>(reader);
@@ -244,7 +250,7 @@ class IVF : public skmeans::AllocatorHolder {
             cluster_data_offsets[i] = ReadValue<uint64_t>(reader);
         }
         is_normalized = ReadValue<char>(reader) != 0;
-        centroids = Centroids(CentroidQuantization::F32, num_dimensions, &GetAllocator());
+        centroids = Centroids(centroid_quantization, num_dimensions, &GetAllocator());
         centroids.Load(reader, num_clusters);
         if constexpr (Q == U8) {
             quantization_base = ReadValue<float>(reader);
@@ -324,9 +330,16 @@ class IVFTree : public IVF<Q> {
         uint32_t num_dimensions,
         uint64_t total_num_embeddings,
         uint32_t num_clusters,
-        bool is_normalized
+        bool is_normalized,
+        CentroidQuantization centroid_quantization = CentroidQuantization::F32
     )
-        : IVF<Q>(num_dimensions, total_num_embeddings, num_clusters, is_normalized) {}
+        : IVF<Q>(
+              num_dimensions,
+              total_num_embeddings,
+              num_clusters,
+              is_normalized,
+              centroid_quantization
+          ) {}
 
     IVFTree(
         uint32_t num_dimensions,
@@ -334,7 +347,8 @@ class IVFTree : public IVF<Q> {
         uint32_t num_clusters,
         bool is_normalized,
         float quantization_scale,
-        float quantization_base
+        float quantization_base,
+        CentroidQuantization centroid_quantization = CentroidQuantization::F32
     )
         : IVF<Q>(
               num_dimensions,
@@ -342,7 +356,8 @@ class IVFTree : public IVF<Q> {
               num_clusters,
               is_normalized,
               quantization_scale,
-              quantization_base
+              quantization_base,
+              centroid_quantization
           ) {}
 
     // Binds L0 too
@@ -351,13 +366,13 @@ class IVFTree : public IVF<Q> {
         l0.SetAllocator(allocator);
     }
 
-    void Load(char* input) {
+    void Load(char* input, CentroidQuantization centroid_quantization) {
         BufferReader reader{input};
-        Load(reader);
+        Load(reader, centroid_quantization);
     }
 
     template <class Reader>
-    void Load(Reader& reader) {
+    void Load(Reader& reader, CentroidQuantization centroid_quantization) {
         // Header
         const auto dims = ReadValue<uint32_t>(reader);
         const auto v_dims = ReadValue<uint32_t>(reader);
@@ -389,7 +404,7 @@ class IVFTree : public IVF<Q> {
         l0.centroids.Load(reader, n_clusters_l0);
 
         // === L1 centroids ===
-        this->centroids = Centroids(CentroidQuantization::F32, dims, &this->GetAllocator());
+        this->centroids = Centroids(centroid_quantization, dims, &this->GetAllocator());
         this->centroids.Load(reader, n_clusters_l1);
 
         // === U8 quantization params ===

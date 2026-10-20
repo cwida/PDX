@@ -79,7 +79,7 @@ class PDXTreeIndex : public IPDXIndex {
         CompactClusters();
 
         std::ofstream out(path, std::ios::binary);
-        WriteValue(out, static_cast<uint8_t>(GetIndexType()));
+        WriteValue(out, MakeIndexTypeByte(GetIndexType(), config.centroid_quantization));
         WriteRotationMatrix(out, *pruner);
         index.Save(out);
     }
@@ -90,10 +90,10 @@ class PDXTreeIndex : public IPDXIndex {
         BufferReader reader{ptr};
 
         // Index type flag
-        ReadValue<uint8_t>(reader);
+        config.centroid_quantization = GetCentroidQuantizationFromByte(ReadValue<uint8_t>(reader));
         const auto matrix = ReadRotationMatrix(reader, GetAllocator());
         index.SetAllocator(&GetAllocator());
-        index.Load(reader);
+        index.Load(reader, config.centroid_quantization);
         d = index.num_dimensions;
         config.num_dimensions = d;
         config.normalize = index.is_normalized;
@@ -108,13 +108,13 @@ class PDXTreeIndex : public IPDXIndex {
 
     void SaveToStream(std::ostream& out) override {
         CompactClusters();
-        WriteStreamHeader(out, GetIndexType(), config);
+        WriteStreamHeader(out, GetIndexType(), config.centroid_quantization, config);
         index.Save(out);
     }
 
     void LoadFromStream(std::istream& in) override {
         StreamReader reader{in};
-        index.Load(reader);
+        index.Load(reader, config.centroid_quantization);
         d = index.num_dimensions;
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
@@ -405,10 +405,13 @@ class PDXTreeIndex : public IPDXIndex {
                 num_clusters,
                 normalize,
                 quantization_scale,
-                quantization_base
+                quantization_base,
+                config.centroid_quantization
             );
         } else {
-            index = PDX::IVFTree<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
+            index = PDX::IVFTree<Q>(
+                num_dimensions, num_embeddings, num_clusters, normalize, config.centroid_quantization
+            );
         }
         index.SetAllocator(&GetAllocator());
 
@@ -1413,7 +1416,7 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(
     MemoryAllocator* allocator = nullptr
 ) {
     auto buffer = MmapFile(path);
-    auto type = static_cast<PDXIndexType>(buffer.get()[0]);
+    auto type = GetIndexTypeFromByte(static_cast<uint8_t>(buffer.get()[0]));
     std::unique_ptr<IPDXIndex> idx;
     // NOLINTBEGIN(bugprone-branch-clone)
     switch (type) {
@@ -1459,9 +1462,11 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndexFromStream(
             "Unsupported PDX serialization version: " + std::to_string(static_cast<int>(version))
         );
     }
-    const auto type = static_cast<PDXIndexType>(ReadValue<uint8_t>(reader));
+    const auto type_byte = ReadValue<uint8_t>(reader);
+    const auto type = GetIndexTypeFromByte(type_byte);
     PDXIndexConfig config{};
     config.Load(reader);
+    config.centroid_quantization = GetCentroidQuantizationFromByte(type_byte);
     config.allocator = allocator;
     if (config.num_dimensions != pruner.num_dimensions) {
         throw std::invalid_argument(

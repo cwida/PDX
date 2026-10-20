@@ -297,7 +297,7 @@ class FlatIndex : public IPDXIndex {
     }
 
     void SaveToStream(std::ostream& out) override {
-        WriteStreamHeader(out, PDXIndexType::PDX_FLAT, config);
+        WriteStreamHeader(out, PDXIndexType::PDX_FLAT, CentroidQuantization::F32, config);
         index.Save(out);
     }
 

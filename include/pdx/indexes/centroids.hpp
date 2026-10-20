@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstring>
 #include <ostream>
+#include <stdexcept>
+#include <string>
 
 namespace PDX {
 
@@ -197,7 +199,10 @@ class Centroids : public skmeans::AllocatorHolder {
         case CentroidQuantization::LVQ8:
             return sizeof(LVQParams) + num_dimensions;
         }
-        return 0;
+        throw std::runtime_error(
+            "Unknown PDX centroid quantization: " +
+            std::to_string(static_cast<int>(quantization))
+        );
     }
 
     size_t GetCapacity() const {

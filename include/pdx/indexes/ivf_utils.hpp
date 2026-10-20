@@ -38,6 +38,7 @@ struct PDXIndexConfig {
     size_t base_row_id = 0;
     uint32_t max_cluster_size = 0; // Clusters split at this size (0 = at 1.3x their initial size)
     bool expect_appends = true;    // false: built clusters get one free slot (not serialized)
+    CentroidQuantization centroid_quantization = CentroidQuantization::F32;
     // Runs the parallel loops (not owned, not serialized). nullptr: the index creates a default
     // one.
     ParallelExecutor* executor = nullptr;
@@ -124,9 +125,14 @@ struct PDXIndexConfig {
 
 // The start of every SaveToStream stream, which LoadPDXIndexFromStream reads to construct the
 // index.
-inline void WriteStreamHeader(std::ostream& out, PDXIndexType type, const PDXIndexConfig& config) {
+inline void WriteStreamHeader(
+    std::ostream& out,
+    PDXIndexType type,
+    CentroidQuantization centroid_quantization,
+    const PDXIndexConfig& config
+) {
     WriteValue(out, PDX_SERIALIZATION_VERSION);
-    WriteValue(out, static_cast<uint8_t>(type));
+    WriteValue(out, MakeIndexTypeByte(type, centroid_quantization));
     config.Save(out);
 }
 

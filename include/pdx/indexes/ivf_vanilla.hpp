@@ -221,7 +221,7 @@ class PDXIndex : public IPDXIndex {
         CompactClusters();
 
         std::ofstream out(path, std::ios::binary);
-        WriteValue(out, static_cast<uint8_t>(GetIndexType()));
+        WriteValue(out, MakeIndexTypeByte(GetIndexType(), config.centroid_quantization));
         WriteRotationMatrix(out, *pruner);
         index.Save(out);
     }
@@ -232,10 +232,10 @@ class PDXIndex : public IPDXIndex {
         BufferReader reader{ptr};
 
         // Index type flag
-        ReadValue<uint8_t>(reader);
+        config.centroid_quantization = GetCentroidQuantizationFromByte(ReadValue<uint8_t>(reader));
         const auto matrix = ReadRotationMatrix(reader, GetAllocator());
         index.SetAllocator(&GetAllocator());
-        index.Load(reader);
+        index.Load(reader, config.centroid_quantization);
         config.num_dimensions = index.num_dimensions;
         config.normalize = index.is_normalized;
 
@@ -250,7 +250,7 @@ class PDXIndex : public IPDXIndex {
 
     void SaveToStream(std::ostream& out) override {
         CompactClusters();
-        WriteStreamHeader(out, GetIndexType(), config);
+        WriteStreamHeader(out, GetIndexType(), config.centroid_quantization, config);
         index.SaveResidentData(out);
         row_id_cluster_mapping.Save(out);
         index.SaveClusterData(out);
@@ -258,7 +258,7 @@ class PDXIndex : public IPDXIndex {
 
     void LoadFromStream(std::istream& in) override {
         StreamReader reader{in};
-        index.LoadResidentData(reader);
+        index.LoadResidentData(reader, config.centroid_quantization);
         row_id_cluster_mapping.Load(reader);
         index.LoadClusterData(reader);
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
@@ -266,7 +266,9 @@ class PDXIndex : public IPDXIndex {
 
     void LoadResidentDataFromStream(std::istream& in, IClusterSource& cluster_source) override {
         StreamReader reader{in};
-        index.LoadResidentData(reader, /*allocate_cluster_data=*/false);
+        index.LoadResidentData(
+            reader, config.centroid_quantization, /*allocate_cluster_data=*/false
+        );
         row_id_cluster_mapping.Load(reader);
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         searcher->cluster_source = &cluster_source;
@@ -495,10 +497,13 @@ class PDXIndex : public IPDXIndex {
                 num_clusters,
                 normalize,
                 quantization_scale,
-                quantization_base
+                quantization_base,
+                config.centroid_quantization
             );
         } else {
-            index = PDX::IVF<Q>(num_dimensions, num_embeddings, num_clusters, normalize);
+            index = PDX::IVF<Q>(
+                num_dimensions, num_embeddings, num_clusters, normalize, config.centroid_quantization
+            );
         }
         index.SetAllocator(&GetAllocator());
 

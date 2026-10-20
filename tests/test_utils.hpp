@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -253,5 +254,22 @@ inline size_t CountEmptyClusters(const PDX::IPDXIndex& index) {
     }
     return num_empty;
 }
+
+class CountingAllocator final : public PDX::MemoryAllocator {
+  public:
+    void* Allocate(const size_t bytes) override {
+        live_bytes += bytes;
+        return vanilla.Allocate(bytes);
+    }
+    void Free(void* const ptr, const size_t bytes) override {
+        live_bytes -= bytes;
+        vanilla.Free(ptr, bytes);
+    }
+
+    std::atomic<size_t> live_bytes{0};
+
+  private:
+    skmeans::VanillaAllocator vanilla;
+};
 
 } // namespace TestUtils

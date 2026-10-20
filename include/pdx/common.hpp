@@ -149,6 +149,24 @@ enum class PDXIndexType : uint8_t {
 
 enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1 };
 
+// A saved index's type byte: its PDXIndexType in the low nibble, its CentroidQuantization in the high
+[[nodiscard]] constexpr uint8_t MakeIndexTypeByte(
+    PDXIndexType type,
+    CentroidQuantization centroid_quantization
+) {
+    return static_cast<uint8_t>(
+        static_cast<uint8_t>(type) | (static_cast<uint8_t>(centroid_quantization) << 4)
+    );
+}
+
+[[nodiscard]] constexpr PDXIndexType GetIndexTypeFromByte(uint8_t type_byte) {
+    return static_cast<PDXIndexType>(type_byte & 0x0F);
+}
+
+[[nodiscard]] constexpr CentroidQuantization GetCentroidQuantizationFromByte(uint8_t type_byte) {
+    return static_cast<CentroidQuantization>(type_byte >> 4);
+}
+
 static constexpr uint8_t PDX_SERIALIZATION_VERSION = 4;
 
 template <Quantization Q>

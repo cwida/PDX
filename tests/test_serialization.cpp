@@ -410,6 +410,56 @@ TEST_P(StreamSerializationTest, KeepsMaxClusterSize) {
     }
 }
 
+// LVQ8 centroids survive a full and a paged stream load and a file round trip. Flat holds no
+// centroids, so its type byte stays as before.
+TEST_P(StreamSerializationTest, KeepsCentroidQuantization) {
+    const std::string& index_type = GetParam();
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+        .centroid_quantization = PDX::CentroidQuantization::LVQ8,
+    };
+    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
+    auto index = BuildOnPruner(index_type, config, pruner);
+    index->BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    index->SetNProbe(16);
+    std::vector<size_t> passing_ids;
+    for (size_t i = 0; i < TestUtils::N_TRAIN; i += 3) {
+        passing_ids.push_back(i);
+    }
+
+    std::stringstream stream;
+    index->SaveToStream(stream);
+    const std::string saved_stream = stream.str();
+    EXPECT_EQ(
+        PDX::GetCentroidQuantizationFromByte(static_cast<uint8_t>(saved_stream[1])),
+        index_type == "flat" ? PDX::CentroidQuantization::F32 : PDX::CentroidQuantization::LVQ8
+    );
+    auto loaded = PDX::LoadPDXIndexFromStream(stream, pruner);
+    loaded->SetNProbe(16);
+    ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
+
+    std::stringstream paged_stream(saved_stream);
+    SavedStreamClusterSource source(saved_stream);
+    auto paged = PDX::LoadPDXIndexFromStream(paged_stream, pruner, &source);
+    source.Attach(*paged, static_cast<size_t>(paged_stream.tellg()));
+    paged->SetNProbe(16);
+    ExpectSameResults(*index, *paged, data.queries.data(), d, passing_ids);
+
+    const std::string path = TestUtils::TempPath("pdx_test_lvq8_" + index_type);
+    index->Save(path);
+    auto restored = PDX::LoadPDXIndex(path);
+    restored->SetNProbe(16);
+    ExpectSameResults(*index, *restored, data.queries.data(), d, passing_ids);
+    std::remove(path.c_str());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     StreamSerializationTest,
