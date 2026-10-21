@@ -16,6 +16,44 @@
 namespace PDX {
 
 template <Quantization Q>
+struct ClusterFormat {
+    ClusterFormat(uint32_t num_dimensions) : num_dimensions(num_dimensions) {}
+
+    // In data_t values
+    uint32_t GetValuesPerEmbedding() const { return num_dimensions; }
+
+    uint32_t num_dimensions;
+};
+
+template <>
+struct ClusterFormat<SAQ> {
+    ClusterFormat(const size_t* chunk_record_offsets, uint32_t num_chunks, uint32_t num_segments)
+        : num_chunks(num_chunks), num_segments(num_segments),
+          chunk_record_offsets(new size_t[num_chunks + 1]) {
+        std::copy(
+            chunk_record_offsets, chunk_record_offsets + num_chunks + 1, this->chunk_record_offsets.get()
+        );
+    }
+
+    ClusterFormat(const ClusterFormat& other)
+        : num_chunks(other.num_chunks), num_segments(other.num_segments),
+          chunk_record_offsets(CopyArray(other.chunk_record_offsets, other.num_chunks + 1)) {}
+
+    ClusterFormat(ClusterFormat&&) = default;
+
+    uint32_t GetValuesPerEmbedding() const {
+        return static_cast<uint32_t>(
+            chunk_record_offsets[num_chunks] + sizeof(uint16_t) * (num_segments + 1)
+        );
+    }
+
+    uint32_t num_chunks;
+    uint32_t num_segments;
+    // Where each chunk's record starts in an encoded embedding; the last entry is the records' size
+    std::unique_ptr<size_t[]> chunk_record_offsets;
+};
+
+template <Quantization Q>
 struct Cluster : skmeans::AllocatorHolder {
     using data_t = pdx_data_t<Q>;
     using tombstones_t = std::unordered_set<uint32_t>;
@@ -36,19 +74,23 @@ struct Cluster : skmeans::AllocatorHolder {
         );
     }
 
-    Cluster(uint32_t num_embeddings, uint32_t num_dimensions, MemoryAllocator* allocator = nullptr)
-        : Cluster(num_embeddings, CapacityFor(num_embeddings, 0), num_dimensions, allocator) {}
+    Cluster(
+        uint32_t num_embeddings,
+        const ClusterFormat<Q>& format,
+        MemoryAllocator* allocator = nullptr
+    )
+        : Cluster(num_embeddings, CapacityFor(num_embeddings, 0), format, allocator) {}
 
     Cluster(
         uint32_t num_embeddings,
         uint32_t max_capacity,
-        uint32_t num_dimensions,
+        const ClusterFormat<Q>& format,
         MemoryAllocator* allocator = nullptr,
         bool allocate_data = true
     )
         : num_embeddings(num_embeddings), used_capacity(num_embeddings), max_capacity(max_capacity),
           min_capacity(static_cast<uint32_t>(num_embeddings * MIN_CAPACITY_THRESHOLD)),
-          num_dimensions(num_dimensions) {
+          num_dimensions(format.GetValuesPerEmbedding()), format(format) {
         SetAllocator(allocator);
         if (allocate_data) {
             indices = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), max_capacity);
@@ -62,7 +104,7 @@ struct Cluster : skmeans::AllocatorHolder {
         : skmeans::AllocatorHolder(other), num_embeddings(other.num_embeddings),
           used_capacity(other.used_capacity), max_capacity(other.max_capacity),
           min_capacity(other.min_capacity), num_dimensions(other.num_dimensions),
-          n_accessed(other.n_accessed.load()), n_inserted(other.n_inserted),
+          format(other.format), n_accessed(other.n_accessed.load()), n_inserted(other.n_inserted),
           n_deleted(other.n_deleted), id(other.id), mesocluster_id(other.mesocluster_id),
           indices(std::move(other.indices)), data(std::move(other.data)),
           tombstones(std::move(other.tombstones)) {}
@@ -100,7 +142,8 @@ struct Cluster : skmeans::AllocatorHolder {
                               // excluding empty slots that are not yet used
     uint32_t max_capacity{};
     uint32_t min_capacity{};
-    const uint32_t num_dimensions{};
+    const uint32_t num_dimensions{}; // format.GetValuesPerEmbedding() (SAQ: bytes per embedding)
+    const ClusterFormat<Q> format;
     std::mutex cluster_mutex;
     std::atomic<size_t> n_accessed{0};
     size_t n_inserted = 0;
@@ -161,9 +204,14 @@ struct Cluster : skmeans::AllocatorHolder {
     }
 
     size_t GetInMemorySizeInBytes() const {
+        size_t format_overhead = 0;
+        if constexpr (Q == Quantization::SAQ) {
+            // Accounting for the SAQ format's offsets
+            format_overhead = (format.num_chunks + 1) * sizeof(size_t);
+        }
         return sizeof(*this) + GetAllocatedSizeInBytes() +
                tombstones.size() * (sizeof(uint32_t) + 2 * sizeof(void*)) +
-               tombstones.bucket_count() * sizeof(void*);
+               tombstones.bucket_count() * sizeof(void*) + format_overhead;
     }
 
     // Gather all embeddings from the PDX layout into a contiguous row-major buffer.
@@ -191,6 +239,32 @@ struct Cluster : skmeans::AllocatorHolder {
     // Writes the valid PDX data row-by-row, stripping stride gaps.
     // Assumes no tombstones (call CompactCluster first).
     void SavePDXData(std::ostream& out) const {
+        if constexpr (Q == Quantization::SAQ) {
+            const auto save_section = [&](size_t row_offset, size_t size) {
+                out.write(
+                    reinterpret_cast<const char*>(data.get() + max_capacity * row_offset),
+                    static_cast<std::streamsize>(size * num_embeddings)
+                );
+            };
+            // SAQ's data layout
+            // Head: U8 vertical layout
+            // Tail: See quantizers/saq.hpp
+            // Factors: See quantizers/saq.hpp
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
+                save_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            }
+            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+                save_section(
+                    format.chunk_record_offsets[chunk_idx],
+                    format.chunk_record_offsets[chunk_idx + 1] - format.chunk_record_offsets[chunk_idx]
+                );
+            }
+            const size_t factors_offset = format.chunk_record_offsets[format.num_chunks];
+            for (uint32_t factor_idx = 0; factor_idx <= format.num_segments; ++factor_idx) {
+                save_section(factors_offset + factor_idx * sizeof(uint16_t), sizeof(uint16_t));
+            }
+            return;
+        }
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
@@ -232,6 +306,25 @@ struct Cluster : skmeans::AllocatorHolder {
     // Reads compact PDX data (as SavePDXData writes it) and places it into the strided buffer.
     template <class Reader>
     void LoadPDXData(Reader& reader) {
+        if constexpr (Q == Quantization::SAQ) {
+            const auto load_section = [&](size_t row_offset, size_t size) {
+                reader.Read(data.get() + max_capacity * row_offset, size * num_embeddings);
+            };
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
+                load_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            }
+            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+                load_section(
+                    format.chunk_record_offsets[chunk_idx],
+                    format.chunk_record_offsets[chunk_idx + 1] - format.chunk_record_offsets[chunk_idx]
+                );
+            }
+            const size_t factors_offset = format.chunk_record_offsets[format.num_chunks];
+            for (uint32_t factor_idx = 0; factor_idx <= format.num_segments; ++factor_idx) {
+                load_section(factors_offset + factor_idx * sizeof(uint16_t), sizeof(uint16_t));
+            }
+            return;
+        }
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
@@ -268,6 +361,30 @@ struct Cluster : skmeans::AllocatorHolder {
     // layout, from slot 0. See the README of the following for a description of the PDX layout:
     // https://github.com/cwida/pdx
     void StoreEmbeddings(const data_t* embeddings, const size_t num_rows) {
+        if constexpr (Q == Quantization::SAQ) {
+            const auto store_section = [&](size_t row_offset, size_t size) {
+                uint8_t* section = data.get() + max_capacity * row_offset;
+                for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+                    std::memcpy(
+                        section + row_idx * size, embeddings + row_idx * num_dimensions + row_offset, size
+                    );
+                }
+            };
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
+                store_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            }
+            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+                store_section(
+                    format.chunk_record_offsets[chunk_idx],
+                    format.chunk_record_offsets[chunk_idx + 1] - format.chunk_record_offsets[chunk_idx]
+                );
+            }
+            const size_t factors_offset = format.chunk_record_offsets[format.num_chunks];
+            for (uint32_t factor_idx = 0; factor_idx <= format.num_segments; ++factor_idx) {
+                store_section(factors_offset + factor_idx * sizeof(uint16_t), sizeof(uint16_t));
+            }
+            return;
+        }
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
@@ -398,10 +515,30 @@ struct Cluster : skmeans::AllocatorHolder {
     static void ReadEmbeddingFromPDXBuffer(
         const data_t* data,
         size_t stride,
-        uint32_t num_dimensions,
+        const ClusterFormat<Q>& format,
         uint32_t idx_in_cluster,
         data_t* out
     ) {
+        if constexpr (Q == Quantization::SAQ) {
+            const auto read_section = [&](size_t row_offset, size_t size) {
+                std::memcpy(out + row_offset, data + stride * row_offset + idx_in_cluster * size, size);
+            };
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
+                read_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            }
+            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+                read_section(
+                    format.chunk_record_offsets[chunk_idx],
+                    format.chunk_record_offsets[chunk_idx + 1] - format.chunk_record_offsets[chunk_idx]
+                );
+            }
+            const size_t factors_offset = format.chunk_record_offsets[format.num_chunks];
+            for (uint32_t factor_idx = 0; factor_idx <= format.num_segments; ++factor_idx) {
+                read_section(factors_offset + factor_idx * sizeof(uint16_t), sizeof(uint16_t));
+            }
+            return;
+        }
+        const uint32_t num_dimensions = format.GetValuesPerEmbedding();
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
@@ -480,23 +617,44 @@ struct Cluster : skmeans::AllocatorHolder {
                 sizeof(data_t) * used_capacity * width
             );
         };
-        const uint32_t vertical_d = GetPDXDimensionSplit(num_dimensions).vertical_dimensions;
-        uint32_t d = 0;
-        if constexpr (Q == Quantization::F32) {
-            for (; d < vertical_d; d++) {
-                restride_block(d, 1);
+        if constexpr (Q == Quantization::SAQ) {
+            for (uint32_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
+                restride_block(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            }
+            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+                restride_block(
+                    static_cast<uint32_t>(format.chunk_record_offsets[chunk_idx]),
+                    static_cast<uint32_t>(
+                        format.chunk_record_offsets[chunk_idx + 1] - format.chunk_record_offsets[chunk_idx]
+                    )
+                );
+            }
+            const auto factors_offset = static_cast<uint32_t>(format.chunk_record_offsets[format.num_chunks]);
+            for (uint32_t factor_idx = 0; factor_idx <= format.num_segments; ++factor_idx) {
+                restride_block(
+                    factors_offset + factor_idx * static_cast<uint32_t>(sizeof(uint16_t)),
+                    static_cast<uint32_t>(sizeof(uint16_t))
+                );
             }
         } else {
-            for (; d + U8_INTERLEAVE_SIZE <= vertical_d; d += U8_INTERLEAVE_SIZE) {
-                restride_block(d, U8_INTERLEAVE_SIZE);
+            const uint32_t vertical_d = GetPDXDimensionSplit(num_dimensions).vertical_dimensions;
+            uint32_t d = 0;
+            if constexpr (Q == Quantization::F32) {
+                for (; d < vertical_d; d++) {
+                    restride_block(d, 1);
+                }
+            } else {
+                for (; d + U8_INTERLEAVE_SIZE <= vertical_d; d += U8_INTERLEAVE_SIZE) {
+                    restride_block(d, U8_INTERLEAVE_SIZE);
+                }
+                if (d < vertical_d) {
+                    restride_block(d, vertical_d - d);
+                    d = vertical_d;
+                }
             }
-            if (d < vertical_d) {
-                restride_block(d, vertical_d - d);
-                d = vertical_d;
+            for (; d < num_dimensions; d += H_DIM_SIZE) {
+                restride_block(d, H_DIM_SIZE);
             }
-        }
-        for (; d < num_dimensions; d += H_DIM_SIZE) {
-            restride_block(d, H_DIM_SIZE);
         }
         indices = std::move(new_indices);
         data = std::move(new_data);
@@ -504,12 +662,34 @@ struct Cluster : skmeans::AllocatorHolder {
     }
 
     void ReadEmbeddingFromPDXBuffer(uint32_t idx_in_cluster, data_t* out) const {
-        ReadEmbeddingFromPDXBuffer(data.get(), max_capacity, num_dimensions, idx_in_cluster, out);
+        ReadEmbeddingFromPDXBuffer(data.get(), max_capacity, format, idx_in_cluster, out);
     }
 
     // Scatter-writes a horizontal (row-major) embedding into the transposed PDX buffer layout.
     // This function assumes thread safety (caller must hold cluster_mutex).
     void InsertEmbedding(uint32_t idx_in_cluster, uint32_t row_id, const data_t* embedding) {
+        if constexpr (Q == Quantization::SAQ) {
+            const auto insert_section = [&](size_t row_offset, size_t size) {
+                std::memcpy(
+                    data.get() + max_capacity * row_offset + idx_in_cluster * size, embedding + row_offset, size
+                );
+            };
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
+                insert_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            }
+            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+                insert_section(
+                    format.chunk_record_offsets[chunk_idx],
+                    format.chunk_record_offsets[chunk_idx + 1] - format.chunk_record_offsets[chunk_idx]
+                );
+            }
+            const size_t factors_offset = format.chunk_record_offsets[format.num_chunks];
+            for (uint32_t factor_idx = 0; factor_idx <= format.num_segments; ++factor_idx) {
+                insert_section(factors_offset + factor_idx * sizeof(uint16_t), sizeof(uint16_t));
+            }
+            indices[idx_in_cluster] = row_id;
+            return;
+        }
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
@@ -558,6 +738,26 @@ struct Cluster : skmeans::AllocatorHolder {
     // Copies an embedding within the PDX buffer from one position to another.
     // This function assumes thread safety (caller must hold cluster_mutex).
     void CopyEmbeddingInPDXLayout(uint32_t src_idx, uint32_t dst_idx) {
+        if constexpr (Q == Quantization::SAQ) {
+            const auto copy_section = [&](size_t row_offset, size_t size) {
+                uint8_t* section = data.get() + max_capacity * row_offset;
+                std::memcpy(section + dst_idx * size, section + src_idx * size, size);
+            };
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
+                copy_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            }
+            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+                copy_section(
+                    format.chunk_record_offsets[chunk_idx],
+                    format.chunk_record_offsets[chunk_idx + 1] - format.chunk_record_offsets[chunk_idx]
+                );
+            }
+            const size_t factors_offset = format.chunk_record_offsets[format.num_chunks];
+            for (uint32_t factor_idx = 0; factor_idx <= format.num_segments; ++factor_idx) {
+                copy_section(factors_offset + factor_idx * sizeof(uint16_t), sizeof(uint16_t));
+            }
+            return;
+        }
         const auto split = GetPDXDimensionSplit(num_dimensions);
         const uint32_t vertical_d = split.vertical_dimensions;
         const uint32_t horizontal_d = split.horizontal_dimensions;
