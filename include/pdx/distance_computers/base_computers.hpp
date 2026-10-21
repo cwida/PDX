@@ -66,4 +66,66 @@ class DistanceComputer<DistanceMetric::L2SQ, Quantization::U8> {
     constexpr static auto Horizontal = computer::Horizontal;
 };
 
+template <>
+class DistanceComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+    using computer = ScalarComputer<DistanceMetric::L2SQ, SAQ>;
+#else
+    using computer = SIMDComputer<DistanceMetric::L2SQ, SAQ>;
+#endif
+
+  public:
+    using ScanTailFunction = size_t (*)(
+        const uint8_t*,
+        const int8_t*,
+        float,
+        float,
+        const uint16_t*,
+        float,
+        uint32_t*,
+        float*,
+        float*,
+        size_t
+    );
+
+    constexpr static auto ScanHead = computer::ScanHead;
+    constexpr static auto PackRecord = ScalarComputer<DistanceMetric::L2SQ, SAQ>::PackRecord;
+    constexpr static auto UnpackRecord = ScalarComputer<DistanceMetric::L2SQ, SAQ>::UnpackRecord;
+
+    static ScanTailFunction GetScanTail(uint32_t width) {
+        static constexpr ScanTailFunction SCAN_TAILS[SAQ_MAX_CODE_WIDTH + 1] = {
+            nullptr,
+            computer::ScanTail<1>,
+            computer::ScanTail<2>,
+            computer::ScanTail<3>,
+            computer::ScanTail<4>,
+            computer::ScanTail<5>,
+            computer::ScanTail<6>,
+            computer::ScanTail<7>,
+            computer::ScanTail<8>
+        };
+        return SCAN_TAILS[width];
+    }
+
+    using AccumulateTailEstimatesFunction =
+        void (*)(const uint8_t*, size_t, const int8_t*, float, float, const uint16_t*, float*);
+
+    constexpr static auto ComputeHeadEstimates = computer::ComputeHeadEstimates;
+
+    static AccumulateTailEstimatesFunction GetAccumulateTailEstimates(uint32_t width) {
+        static constexpr AccumulateTailEstimatesFunction ACCUMULATE_TAIL_ESTIMATES[SAQ_MAX_CODE_WIDTH + 1] = {
+            nullptr,
+            computer::AccumulateTailEstimates<1>,
+            computer::AccumulateTailEstimates<2>,
+            computer::AccumulateTailEstimates<3>,
+            computer::AccumulateTailEstimates<4>,
+            computer::AccumulateTailEstimates<5>,
+            computer::AccumulateTailEstimates<6>,
+            computer::AccumulateTailEstimates<7>,
+            computer::AccumulateTailEstimates<8>
+        };
+        return ACCUMULATE_TAIL_ESTIMATES[width];
+    }
+};
+
 } // namespace PDX

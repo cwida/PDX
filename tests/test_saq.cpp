@@ -161,16 +161,22 @@ TEST_F(SAQQuantizerTest, QueryDotsMatchDecodedInnerProducts) {
             decoded_norm += decoded_residual * decoded_residual;
         }
         double actual = 0.0;
+        const uint8_t* factors = encoded.data() + model.chunk_record_offsets[model.num_chunks];
         for (uint32_t chunk_idx = 0; chunk_idx < model.num_chunks; ++chunk_idx) {
+            uint8_t levels[PDX::SAQ_CHUNK_SIZE];
+            PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>::UnpackRecord(
+                encoded.data() + model.chunk_record_offsets[chunk_idx],
+                model.chunk_widths[chunk_idx],
+                levels
+            );
             int32_t dot = 0;
             for (uint32_t j = chunk_idx * PDX::SAQ_CHUNK_SIZE;
                  j < std::min((chunk_idx + 1) * PDX::SAQ_CHUNK_SIZE, D);
                  ++j) {
-                dot += saq_query.GetCodesPtr()[j] * encoded[j];
+                dot += saq_query.GetCodesPtr()[j] * levels[j - chunk_idx * PDX::SAQ_CHUNK_SIZE];
             }
-            const float rescale = PDX::ReadHalf(
-                encoded.data() + D + model.chunk_segments[chunk_idx] * sizeof(uint16_t)
-            );
+            const float rescale =
+                PDX::ReadHalf(factors + model.chunk_segments[chunk_idx] * sizeof(uint16_t));
             actual += rescale * (saq_query.GetChunkDotScalesPtr()[chunk_idx] * dot -
                                  saq_query.GetChunkDotOffsetsPtr()[chunk_idx]);
         }

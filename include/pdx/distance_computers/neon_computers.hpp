@@ -519,6 +519,482 @@ static inline uint32x4_t squared_dot_accumulate(uint32x4_t acc, uint8x16_t a) {
 #endif
 }
 
+struct SAQCompactionTable {
+    uint8_t shuffles[16][16];
+};
+
+// For each mask of 4 surviving 32-bit lanes, the byte shuffle that moves them to the front
+constexpr SAQCompactionTable MakeSAQCompactionTable() {
+    SAQCompactionTable table{};
+    for (uint32_t mask = 0; mask < 16; ++mask) {
+        uint32_t out_lane = 0;
+        for (uint32_t lane = 0; lane < 4; ++lane) {
+            if ((mask >> lane) & 1u) {
+                for (uint32_t byte = 0; byte < 4; ++byte) {
+                    table.shuffles[mask][out_lane * 4 + byte] =
+                        static_cast<uint8_t>(lane * 4 + byte);
+                }
+                ++out_lane;
+            }
+        }
+        for (uint32_t byte = out_lane * 4; byte < 16; ++byte) {
+            table.shuffles[mask][byte] = 0xFF;
+        }
+    }
+    return table;
+}
+
+inline constexpr SAQCompactionTable SAQ_COMPACTION_TABLE = MakeSAQCompactionTable();
+
+// The 1-bit part of a tail record is a 64-bit mask: lane j of the 16 levels i takes mask byte
+// 2i + j / 8 and tests bit j % 8 of it
+inline constexpr uint8_t SAQ_BIT_PART_BYTE_INDICES[4][16] = {
+    {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1},
+    {2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3},
+    {4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5},
+    {6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7}
+};
+inline constexpr uint8_t SAQ_BIT_PART_LANE_BITS[16] = {1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128};
+
+template <>
+class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
+    using scalar_computer = ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ>;
+
+  public:
+    static size_t ScanHead(
+        const uint8_t* PDX_RESTRICT head,
+        size_t num_vectors,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint8_t* PDX_RESTRICT selection,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales
+    ) {
+        int8x16_t query_groups[NUM_HEAD_GROUPS];
+        const int32x4_t dot_bias = vdupq_n_s32(DOT_LEVELS_BIAS * LoadHeadQuery(query_codes, query_groups));
+        const float32x4_t dot_scale_vec = vdupq_n_f32(dot_scale);
+        const float32x4_t dot_offset_vec = vdupq_n_f32(dot_offset);
+        const float32x4_t query_squared_norm_vec = vdupq_n_f32(query_squared_norm);
+        const float32x4_t threshold_vec = vdupq_n_f32(threshold);
+        const uint32x4_t lane_offsets = {0, 1, 2, 3};
+        size_t num_kept = 0;
+        size_t vector_idx = 0;
+        for (; vector_idx + 4 <= num_vectors; vector_idx += 4) {
+            const int32x4_t dot =
+                HeadDots4(head + vector_idx * U8_INTERLEAVE_SIZE, stride, query_groups, dot_bias);
+            const float32x4_t rescale =
+                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(head_rescales + vector_idx)));
+            const float32x4_t squared_norm =
+                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(squared_norms + vector_idx)));
+            const float32x4_t estimate = vfmaq_f32(
+                vaddq_f32(squared_norm, query_squared_norm_vec),
+                rescale,
+                vsubq_f32(vmulq_f32(vcvtq_f32_s32(dot), dot_scale_vec), dot_offset_vec)
+            );
+            uint32x4_t keep = vcltq_f32(estimate, threshold_vec);
+            if (selection != nullptr) {
+                uint32_t selected;
+                std::memcpy(&selected, selection + vector_idx, sizeof(uint32_t));
+                const uint32x4_t selected_lanes = vmovl_u16(
+                    vget_low_u16(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(selected))))
+                );
+                keep = vandq_u32(keep, vtstq_u32(selected_lanes, selected_lanes));
+            }
+            num_kept += Compact4(
+                keep,
+                vaddq_u32(vdupq_n_u32(static_cast<uint32_t>(vector_idx)), lane_offsets),
+                estimate,
+                rescale,
+                positions + num_kept,
+                estimates + num_kept,
+                rescales + num_kept
+            );
+        }
+        if (vector_idx < num_vectors) {
+            const size_t num_remainder_kept = scalar_computer::ScanHead(
+                head + vector_idx * U8_INTERLEAVE_SIZE,
+                num_vectors - vector_idx,
+                stride,
+                query_codes,
+                dot_scale,
+                dot_offset,
+                query_squared_norm,
+                head_rescales + vector_idx,
+                squared_norms + vector_idx,
+                selection != nullptr ? selection + vector_idx : nullptr,
+                threshold,
+                positions + num_kept,
+                estimates + num_kept,
+                rescales + num_kept
+            );
+            for (size_t kept_idx = num_kept; kept_idx < num_kept + num_remainder_kept; ++kept_idx) {
+                positions[kept_idx] += static_cast<uint32_t>(vector_idx);
+            }
+            num_kept += num_remainder_kept;
+        }
+        return num_kept;
+    }
+
+    template <uint32_t WIDTH>
+    static size_t ScanTail(
+        const uint8_t* PDX_RESTRICT records,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        const uint16_t* PDX_RESTRICT segment_rescales,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales,
+        size_t num_survivors
+    ) {
+        int8x16_t query[4];
+        const int32_t codes_sum = LoadTailQuery(query_codes, query);
+        const int32_t dot_bias = WIDTH == 8 ? DOT_LEVELS_BIAS * codes_sum : 0;
+        const float32x4_t dot_scale_vec = vdupq_n_f32(dot_scale);
+        const float32x4_t dot_offset_vec = vdupq_n_f32(dot_offset);
+        const float32x4_t threshold_vec = vdupq_n_f32(threshold);
+        size_t num_kept = 0;
+        size_t survivor_idx = 0;
+        for (; survivor_idx + 4 <= num_survivors; survivor_idx += 4) {
+            int32_t lane_dots[4];
+            uint16_t lane_rescales[4];
+            for (size_t lane = 0; lane < 4; ++lane) {
+                const uint32_t position = positions[survivor_idx + lane];
+                lane_dots[lane] =
+                    TailDot<WIDTH>(records + static_cast<size_t>(position) * 8 * WIDTH, query, dot_bias);
+                if (segment_rescales != nullptr) {
+                    lane_rescales[lane] = segment_rescales[position];
+                }
+            }
+            const float32x4_t rescale =
+                segment_rescales != nullptr
+                    ? vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(lane_rescales)))
+                    : vld1q_f32(rescales + survivor_idx);
+            const float32x4_t estimate = vfmaq_f32(
+                vld1q_f32(estimates + survivor_idx),
+                rescale,
+                vsubq_f32(
+                    vmulq_f32(vcvtq_f32_s32(vld1q_s32(lane_dots)), dot_scale_vec), dot_offset_vec
+                )
+            );
+            num_kept += Compact4(
+                vcltq_f32(estimate, threshold_vec),
+                vld1q_u32(positions + survivor_idx),
+                estimate,
+                rescale,
+                positions + num_kept,
+                estimates + num_kept,
+                rescales + num_kept
+            );
+        }
+        if (survivor_idx < num_survivors) {
+            const size_t num_remainder_kept = scalar_computer::ScanTail<WIDTH>(
+                records,
+                query_codes,
+                dot_scale,
+                dot_offset,
+                segment_rescales,
+                threshold,
+                positions + survivor_idx,
+                estimates + survivor_idx,
+                rescales + survivor_idx,
+                num_survivors - survivor_idx
+            );
+            std::memmove(
+                positions + num_kept, positions + survivor_idx, num_remainder_kept * sizeof(uint32_t)
+            );
+            std::memmove(
+                estimates + num_kept, estimates + survivor_idx, num_remainder_kept * sizeof(float)
+            );
+            std::memmove(
+                rescales + num_kept, rescales + survivor_idx, num_remainder_kept * sizeof(float)
+            );
+            num_kept += num_remainder_kept;
+        }
+        return num_kept;
+    }
+
+    static void ComputeHeadEstimates(
+        const uint8_t* PDX_RESTRICT head,
+        size_t num_vectors,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT squared_norms,
+        float* PDX_RESTRICT estimates
+    ) {
+        int8x16_t query_groups[NUM_HEAD_GROUPS];
+        const int32x4_t dot_bias = vdupq_n_s32(DOT_LEVELS_BIAS * LoadHeadQuery(query_codes, query_groups));
+        const float32x4_t dot_scale_vec = vdupq_n_f32(dot_scale);
+        const float32x4_t dot_offset_vec = vdupq_n_f32(dot_offset);
+        const float32x4_t query_squared_norm_vec = vdupq_n_f32(query_squared_norm);
+        size_t vector_idx = 0;
+        for (; vector_idx + 4 <= num_vectors; vector_idx += 4) {
+            const int32x4_t dot =
+                HeadDots4(head + vector_idx * U8_INTERLEAVE_SIZE, stride, query_groups, dot_bias);
+            const float32x4_t rescale =
+                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(head_rescales + vector_idx)));
+            const float32x4_t squared_norm =
+                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(squared_norms + vector_idx)));
+            vst1q_f32(
+                estimates + vector_idx,
+                vfmaq_f32(
+                    vaddq_f32(squared_norm, query_squared_norm_vec),
+                    rescale,
+                    vsubq_f32(vmulq_f32(vcvtq_f32_s32(dot), dot_scale_vec), dot_offset_vec)
+                )
+            );
+        }
+        if (vector_idx < num_vectors) {
+            scalar_computer::ComputeHeadEstimates(
+                head + vector_idx * U8_INTERLEAVE_SIZE,
+                num_vectors - vector_idx,
+                stride,
+                query_codes,
+                dot_scale,
+                dot_offset,
+                query_squared_norm,
+                head_rescales + vector_idx,
+                squared_norms + vector_idx,
+                estimates + vector_idx
+            );
+        }
+    }
+
+    template <uint32_t WIDTH>
+    static void AccumulateTailEstimates(
+        const uint8_t* PDX_RESTRICT records,
+        size_t num_vectors,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        const uint16_t* PDX_RESTRICT segment_rescales,
+        float* PDX_RESTRICT estimates
+    ) {
+        int8x16_t query[4];
+        const int32_t codes_sum = LoadTailQuery(query_codes, query);
+        const int32_t dot_bias = WIDTH == 8 ? DOT_LEVELS_BIAS * codes_sum : 0;
+        const float32x4_t dot_scale_vec = vdupq_n_f32(dot_scale);
+        const float32x4_t dot_offset_vec = vdupq_n_f32(dot_offset);
+        size_t vector_idx = 0;
+        for (; vector_idx + 4 <= num_vectors; vector_idx += 4) {
+            int32_t lane_dots[4];
+            for (size_t lane = 0; lane < 4; ++lane) {
+                lane_dots[lane] = TailDot<WIDTH>(records + (vector_idx + lane) * 8 * WIDTH, query, dot_bias);
+            }
+            const float32x4_t rescale =
+                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(segment_rescales + vector_idx)));
+            vst1q_f32(
+                estimates + vector_idx,
+                vfmaq_f32(
+                    vld1q_f32(estimates + vector_idx),
+                    rescale,
+                    vsubq_f32(
+                        vmulq_f32(vcvtq_f32_s32(vld1q_s32(lane_dots)), dot_scale_vec), dot_offset_vec
+                    )
+                )
+            );
+        }
+        if (vector_idx < num_vectors) {
+            scalar_computer::AccumulateTailEstimates<WIDTH>(
+                records + vector_idx * 8 * WIDTH,
+                num_vectors - vector_idx,
+                query_codes,
+                dot_scale,
+                dot_offset,
+                segment_rescales + vector_idx,
+                estimates + vector_idx
+            );
+        }
+    }
+
+  private:
+    // Stores the lanes of keep's surviving vectors at the front of the outputs (all 4 lanes are
+    // written), returns how many survived
+    static size_t Compact4(
+        uint32x4_t keep,
+        uint32x4_t positions_in,
+        float32x4_t estimates_in,
+        float32x4_t rescales_in,
+        uint32_t* positions,
+        float* estimates,
+        float* rescales
+    ) {
+        const uint32x4_t lane_bits = {1, 2, 4, 8};
+        const uint32_t mask = vaddvq_u32(vandq_u32(keep, lane_bits));
+        const uint8x16_t shuffle = vld1q_u8(SAQ_COMPACTION_TABLE.shuffles[mask]);
+        vst1q_u32(
+            positions, vreinterpretq_u32_u8(vqtbl1q_u8(vreinterpretq_u8_u32(positions_in), shuffle))
+        );
+        vst1q_f32(
+            estimates, vreinterpretq_f32_u8(vqtbl1q_u8(vreinterpretq_u8_f32(estimates_in), shuffle))
+        );
+        vst1q_f32(
+            rescales, vreinterpretq_f32_u8(vqtbl1q_u8(vreinterpretq_u8_f32(rescales_in), shuffle))
+        );
+        return static_cast<size_t>(__builtin_popcount(mask));
+    }
+
+    static int32x4_t WideningLaneDots(int32x4_t acc, uint8x16_t levels, int8x16_t query) {
+        const int16x8_t levels_low = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(levels)));
+        const int16x8_t levels_high = vreinterpretq_s16_u16(vmovl_high_u8(levels));
+        const int16x8_t query_low = vmovl_s8(vget_low_s8(query));
+        const int16x8_t query_high = vmovl_high_s8(query);
+        const int32x4_t products_0 = vmull_s16(vget_low_s16(levels_low), vget_low_s16(query_low));
+        const int32x4_t products_1 = vmull_high_s16(levels_low, query_low);
+        const int32x4_t products_2 =
+            vmull_s16(vget_low_s16(levels_high), vget_low_s16(query_high));
+        const int32x4_t products_3 = vmull_high_s16(levels_high, query_high);
+        return vaddq_s32(
+            acc,
+            vpaddq_s32(vpaddq_s32(products_0, products_1), vpaddq_s32(products_2, products_3))
+        );
+    }
+
+    // Each lane plus the dot of its 4 levels with its 4 query codes; levels below 128 are valid s8
+    static int32x4_t DotSmallLevels(int32x4_t acc, uint8x16_t levels, int8x16_t query) {
+#if defined(__ARM_FEATURE_DOTPROD)
+        return vdotq_s32(acc, vreinterpretq_s8_u8(levels), query);
+#else
+        return WideningLaneDots(acc, levels, query);
+#endif
+    }
+
+#if defined(__ARM_FEATURE_DOTPROD)
+    // SDOT multiplies s8 by s8: levels XOR 0x80 are level - 128, so the dots lack 128 times the
+    // sum of the query codes, which the caller adds
+    static constexpr int32_t DOT_LEVELS_BIAS = 128;
+#else
+    static constexpr int32_t DOT_LEVELS_BIAS = 0;
+#endif
+
+    // DotSmallLevels for levels up to 255, short by DOT_LEVELS_BIAS times the query codes' sum
+    static int32x4_t DotLevels(int32x4_t acc, uint8x16_t levels, int8x16_t query) {
+#if defined(__ARM_FEATURE_DOTPROD)
+        return vdotq_s32(acc, vreinterpretq_s8_u8(veorq_u8(levels, vdupq_n_u8(0x80))), query);
+#else
+        return WideningLaneDots(acc, levels, query);
+#endif
+    }
+
+    static constexpr size_t NUM_HEAD_GROUPS = SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+
+    // The head query's groups of 4 codes, each in every lane; returns the codes' sum
+    static int32_t LoadHeadQuery(const int8_t* PDX_RESTRICT query_codes, int8x16_t query_groups[NUM_HEAD_GROUPS]) {
+        int32_t codes_sum = 0;
+        for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
+            int32_t group_codes;
+            std::memcpy(&group_codes, query_codes + group_idx * U8_INTERLEAVE_SIZE, sizeof(int32_t));
+            query_groups[group_idx] = vreinterpretq_s8_s32(vdupq_n_s32(group_codes));
+            for (size_t k = 0; k < U8_INTERLEAVE_SIZE; ++k) {
+                codes_sum += query_codes[group_idx * U8_INTERLEAVE_SIZE + k];
+            }
+        }
+        return codes_sum;
+    }
+
+    // The head dots of the 4 vectors whose levels start at levels (groups stride vectors apart)
+    static int32x4_t HeadDots4(
+        const uint8_t* PDX_RESTRICT levels,
+        size_t stride,
+        const int8x16_t query_groups[NUM_HEAD_GROUPS],
+        int32x4_t dot_bias
+    ) {
+        int32x4_t dots[4] = {dot_bias, vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0)};
+        for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
+            dots[group_idx % 4] = DotLevels(
+                dots[group_idx % 4],
+                vld1q_u8(levels + group_idx * U8_INTERLEAVE_SIZE * stride),
+                query_groups[group_idx]
+            );
+        }
+        return vaddq_s32(vaddq_s32(dots[0], dots[1]), vaddq_s32(dots[2], dots[3]));
+    }
+
+    // A tail chunk's query codes; returns their sum
+    static int32_t LoadTailQuery(const int8_t* PDX_RESTRICT query_codes, int8x16_t query[4]) {
+        int32_t codes_sum = 0;
+        for (size_t i = 0; i < 4; ++i) {
+            query[i] = vld1q_s8(query_codes + i * 16);
+            codes_sum += vaddlvq_s8(query[i]);
+        }
+        return codes_sum;
+    }
+
+    // The dot of a WIDTH-bit tail record with its query chunk; dot_bias completes DotLevels' at 8 bits
+    template <uint32_t WIDTH>
+    static int32_t TailDot(const uint8_t* PDX_RESTRICT record, const int8x16_t query[4], int32_t dot_bias) {
+        uint8x16_t levels[4];
+        UnpackLevels<WIDTH>(record, levels);
+        int32x4_t dot = vdupq_n_s32(0);
+        for (size_t i = 0; i < 4; ++i) {
+            dot = WIDTH == 8 ? DotLevels(dot, levels[i], query[i]) : DotSmallLevels(dot, levels[i], query[i]);
+        }
+        return vaddvq_s32(dot) + dot_bias;
+    }
+
+    // The 64 levels of a WIDTH-bit tail record (ScalarComputer::PackRecord's format), in order
+    template <uint32_t WIDTH>
+    static void UnpackLevels(const uint8_t* PDX_RESTRICT record, uint8x16_t levels[4]) {
+        if constexpr (WIDTH == 8) {
+            for (size_t i = 0; i < 4; ++i) {
+                levels[i] = vld1q_u8(record + i * 16);
+            }
+        } else {
+            for (size_t i = 0; i < 4; ++i) {
+                levels[i] = vdupq_n_u8(0);
+            }
+            if constexpr ((WIDTH & 4u) != 0) {
+                const uint8x16_t low_bytes = vld1q_u8(record);
+                const uint8x16_t high_bytes = vld1q_u8(record + 16);
+                const uint8x16_t nibble_mask = vdupq_n_u8(0x0F);
+                levels[0] = vandq_u8(low_bytes, nibble_mask);
+                levels[1] = vandq_u8(high_bytes, nibble_mask);
+                levels[2] = vshrq_n_u8(low_bytes, 4);
+                levels[3] = vshrq_n_u8(high_bytes, 4);
+                record += 32;
+            }
+            if constexpr ((WIDTH & 2u) != 0) {
+                constexpr int SHIFT = (WIDTH & 4u) != 0 ? 4 : 0;
+                const uint8x16_t bytes = vld1q_u8(record);
+                const uint8x16_t two_bit_mask = vdupq_n_u8(3);
+                const uint8x16_t parts[4] = {
+                    vandq_u8(bytes, two_bit_mask),
+                    vandq_u8(vshrq_n_u8(bytes, 2), two_bit_mask),
+                    vandq_u8(vshrq_n_u8(bytes, 4), two_bit_mask),
+                    vshrq_n_u8(bytes, 6)
+                };
+                for (size_t i = 0; i < 4; ++i) {
+                    levels[i] = vorrq_u8(levels[i], SHIFT != 0 ? vshlq_n_u8(parts[i], SHIFT) : parts[i]);
+                }
+                record += 16;
+            }
+            if constexpr ((WIDTH & 1u) != 0) {
+                const uint8x8_t mask_bytes = vld1_u8(record);
+                const uint8x16_t both_halves = vcombine_u8(mask_bytes, mask_bytes);
+                const uint8x16_t lane_bits = vld1q_u8(SAQ_BIT_PART_LANE_BITS);
+                const uint8x16_t top_bit = vdupq_n_u8(static_cast<uint8_t>(1u << (WIDTH - 1)));
+                for (size_t i = 0; i < 4; ++i) {
+                    const uint8x16_t spread =
+                        vqtbl1q_u8(both_halves, vld1q_u8(SAQ_BIT_PART_BYTE_INDICES[i]));
+                    levels[i] = vorrq_u8(levels[i], vandq_u8(vtstq_u8(spread, lane_bits), top_bit));
+                }
+            }
+        }
+    }
+};
+
 template <>
 class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
   public:

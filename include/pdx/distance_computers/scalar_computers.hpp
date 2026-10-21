@@ -294,6 +294,231 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::U8> {
 };
 
 template <>
+class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
+  public:
+    // The head estimates of the selected vectors (8-bit levels, 4 dimensions per vector as in the U8
+    // vertical block, groups stride vectors apart); keeps those below threshold, compacted
+    static size_t ScanHead(
+        const uint8_t* PDX_RESTRICT head,
+        size_t num_vectors,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint8_t* PDX_RESTRICT selection,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales
+    ) {
+        size_t num_kept = 0;
+        for (size_t vector_idx = 0; vector_idx < num_vectors; ++vector_idx) {
+            if (selection != nullptr && selection[vector_idx] == 0) {
+                continue;
+            }
+            int32_t dot = 0;
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
+                const uint8_t* levels =
+                    head + group_idx * U8_INTERLEAVE_SIZE * stride + vector_idx * U8_INTERLEAVE_SIZE;
+                for (size_t k = 0; k < U8_INTERLEAVE_SIZE; ++k) {
+                    dot += query_codes[group_idx * U8_INTERLEAVE_SIZE + k] * levels[k];
+                }
+            }
+            const float rescale =
+                ReadHalf(reinterpret_cast<const uint8_t*>(head_rescales + vector_idx));
+            const float squared_norm =
+                ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + vector_idx));
+            const float estimate = rescale * (static_cast<float>(dot) * dot_scale - dot_offset) +
+                                   (squared_norm + query_squared_norm);
+            if (estimate < threshold) {
+                positions[num_kept] = static_cast<uint32_t>(vector_idx);
+                estimates[num_kept] = estimate;
+                rescales[num_kept] = rescale;
+                ++num_kept;
+            }
+        }
+        return num_kept;
+    }
+
+    // One tail chunk for the survivors, each vector's record in PackRecord's format.
+    // segment_rescales: the rescales of the segment this chunk starts (null when it continues the
+    // survivors' segment)
+    template <uint32_t WIDTH>
+    static size_t ScanTail(
+        const uint8_t* PDX_RESTRICT records,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        const uint16_t* PDX_RESTRICT segment_rescales,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales,
+        size_t num_survivors
+    ) {
+        size_t num_kept = 0;
+        uint8_t levels[SAQ_CHUNK_SIZE];
+        for (size_t survivor_idx = 0; survivor_idx < num_survivors; ++survivor_idx) {
+            const uint32_t position = positions[survivor_idx];
+            UnpackRecord(records + static_cast<size_t>(position) * 8 * WIDTH, WIDTH, levels);
+            int32_t dot = 0;
+            for (size_t dimension_idx = 0; dimension_idx < SAQ_CHUNK_SIZE; ++dimension_idx) {
+                dot += query_codes[dimension_idx] * levels[dimension_idx];
+            }
+            const float rescale =
+                segment_rescales != nullptr
+                    ? ReadHalf(reinterpret_cast<const uint8_t*>(segment_rescales + position))
+                    : rescales[survivor_idx];
+            const float estimate = rescale * (static_cast<float>(dot) * dot_scale - dot_offset) +
+                                   estimates[survivor_idx];
+            if (estimate < threshold) {
+                positions[num_kept] = position;
+                estimates[num_kept] = estimate;
+                rescales[num_kept] = rescale;
+                ++num_kept;
+            }
+        }
+        return num_kept;
+    }
+
+    // The no-pruning scan of a cluster, while the heap holds fewer than k: every vector's head
+    // estimate, by position
+    static void ComputeHeadEstimates(
+        const uint8_t* PDX_RESTRICT head,
+        size_t num_vectors,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT squared_norms,
+        float* PDX_RESTRICT estimates
+    ) {
+        for (size_t vector_idx = 0; vector_idx < num_vectors; ++vector_idx) {
+            int32_t dot = 0;
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
+                const uint8_t* levels =
+                    head + group_idx * U8_INTERLEAVE_SIZE * stride + vector_idx * U8_INTERLEAVE_SIZE;
+                for (size_t k = 0; k < U8_INTERLEAVE_SIZE; ++k) {
+                    dot += query_codes[group_idx * U8_INTERLEAVE_SIZE + k] * levels[k];
+                }
+            }
+            const float rescale =
+                ReadHalf(reinterpret_cast<const uint8_t*>(head_rescales + vector_idx));
+            const float squared_norm =
+                ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + vector_idx));
+            estimates[vector_idx] = rescale * (static_cast<float>(dot) * dot_scale - dot_offset) +
+                                    (squared_norm + query_squared_norm);
+        }
+    }
+
+    // The no-pruning scan's tail chunks: adds one chunk to every vector's estimate.
+    // segment_rescales: the rescales of the chunk's segment
+    template <uint32_t WIDTH>
+    static void AccumulateTailEstimates(
+        const uint8_t* PDX_RESTRICT records,
+        size_t num_vectors,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        const uint16_t* PDX_RESTRICT segment_rescales,
+        float* PDX_RESTRICT estimates
+    ) {
+        uint8_t levels[SAQ_CHUNK_SIZE];
+        for (size_t vector_idx = 0; vector_idx < num_vectors; ++vector_idx) {
+            UnpackRecord(records + vector_idx * 8 * WIDTH, WIDTH, levels);
+            int32_t dot = 0;
+            for (size_t dimension_idx = 0; dimension_idx < SAQ_CHUNK_SIZE; ++dimension_idx) {
+                dot += query_codes[dimension_idx] * levels[dimension_idx];
+            }
+            const float rescale =
+                ReadHalf(reinterpret_cast<const uint8_t*>(segment_rescales + vector_idx));
+            estimates[vector_idx] += rescale * (static_cast<float>(dot) * dot_scale - dot_offset);
+        }
+    }
+
+    // A chunk's record: its SAQ_CHUNK_SIZE levels of width bits in 8 * width bytes. At 8 bits the
+    // levels are stored as they are. Below, the width splits into parts of 4, 2 and 1 bits (low bits
+    // first), each spread across byte lanes so the kernels unpack with shifts and masks: the 4-bit
+    // part is 32 bytes (byte b: dim b in the low nibble, dim b + 32 in the high one), the 2-bit part
+    // 16 bytes (byte b: dims b, b + 16, b + 32 and b + 48), the 1-bit part a 64-bit mask (bit j: dim j)
+    // TODO(@lkuffo, mid): SIMD PackRecord and UnpackRecord (every build, append and split encodes rows)
+    static void PackRecord(const uint8_t* PDX_RESTRICT levels, uint32_t width, uint8_t* PDX_RESTRICT record) {
+        static_assert(SAQ_CHUNK_SIZE == 64, "the 1-bit part is a 64-bit mask");
+        if (width == SAQ_MAX_CODE_WIDTH) {
+            std::memcpy(record, levels, SAQ_CHUNK_SIZE);
+            return;
+        }
+        uint32_t shift = 0;
+        if ((width & 4u) != 0) {
+            for (size_t byte_idx = 0; byte_idx < SAQ_CHUNK_SIZE / 2; ++byte_idx) {
+                record[byte_idx] = static_cast<uint8_t>(
+                    (levels[byte_idx] & 0xFu) | ((levels[byte_idx + SAQ_CHUNK_SIZE / 2] & 0xFu) << 4)
+                );
+            }
+            record += SAQ_CHUNK_SIZE / 2;
+            shift += 4;
+        }
+        if ((width & 2u) != 0) {
+            for (size_t byte_idx = 0; byte_idx < SAQ_CHUNK_SIZE / 4; ++byte_idx) {
+                uint32_t packed = 0;
+                for (size_t lane = 0; lane < 4; ++lane) {
+                    packed |= ((levels[byte_idx + lane * SAQ_CHUNK_SIZE / 4] >> shift) & 3u) << (2 * lane);
+                }
+                record[byte_idx] = static_cast<uint8_t>(packed);
+            }
+            record += SAQ_CHUNK_SIZE / 4;
+            shift += 2;
+        }
+        if ((width & 1u) != 0) {
+            uint64_t bits = 0;
+            for (size_t dimension_idx = 0; dimension_idx < SAQ_CHUNK_SIZE; ++dimension_idx) {
+                bits |= static_cast<uint64_t>((levels[dimension_idx] >> shift) & 1u) << dimension_idx;
+            }
+            std::memcpy(record, &bits, sizeof(bits));
+        }
+    }
+
+    static void UnpackRecord(const uint8_t* PDX_RESTRICT record, uint32_t width, uint8_t* PDX_RESTRICT levels) {
+        if (width == SAQ_MAX_CODE_WIDTH) {
+            std::memcpy(levels, record, SAQ_CHUNK_SIZE);
+            return;
+        }
+        std::fill_n(levels, SAQ_CHUNK_SIZE, uint8_t{0});
+        uint32_t shift = 0;
+        if ((width & 4u) != 0) {
+            for (size_t byte_idx = 0; byte_idx < SAQ_CHUNK_SIZE / 2; ++byte_idx) {
+                levels[byte_idx] = static_cast<uint8_t>(record[byte_idx] & 0xFu);
+                levels[byte_idx + SAQ_CHUNK_SIZE / 2] = static_cast<uint8_t>(record[byte_idx] >> 4);
+            }
+            record += SAQ_CHUNK_SIZE / 2;
+            shift += 4;
+        }
+        if ((width & 2u) != 0) {
+            for (size_t byte_idx = 0; byte_idx < SAQ_CHUNK_SIZE / 4; ++byte_idx) {
+                for (size_t lane = 0; lane < 4; ++lane) {
+                    levels[byte_idx + lane * SAQ_CHUNK_SIZE / 4] |=
+                        static_cast<uint8_t>(((record[byte_idx] >> (2 * lane)) & 3u) << shift);
+                }
+            }
+            record += SAQ_CHUNK_SIZE / 4;
+            shift += 2;
+        }
+        if ((width & 1u) != 0) {
+            uint64_t bits;
+            std::memcpy(&bits, record, sizeof(bits));
+            for (size_t dimension_idx = 0; dimension_idx < SAQ_CHUNK_SIZE; ++dimension_idx) {
+                levels[dimension_idx] |= static_cast<uint8_t>(((bits >> dimension_idx) & 1u) << shift);
+            }
+        }
+    }
+};
+
+template <>
 class ScalarComputer<DistanceMetric::COSINE, Quantization::F32> {
   public:
     using distance_t = float;

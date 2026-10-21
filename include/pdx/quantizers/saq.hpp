@@ -40,6 +40,8 @@ struct SAQModel {
     std::unique_ptr<uint32_t[]> chunk_segments;
     std::unique_ptr<float[]> chunk_code_centers;
     std::unique_ptr<float[]> chunk_remaining_variances;
+    // Where each chunk's record starts in an encoded embedding; the last entry is the records' size
+    std::unique_ptr<size_t[]> chunk_record_offsets;
 
     SAQModel() = default;
     SAQModel(SAQModel&&) = default;
@@ -55,8 +57,9 @@ struct SAQModel {
 
     SAQModel& operator=(const SAQModel& other) { return *this = SAQModel(other); }
 
+    // The chunks' records, then the segments' rescales and the residual's squared norm in fp16
     size_t GetEncodedEmbeddingSize() const {
-        return num_dimensions + sizeof(uint16_t) * (num_segments + 1);
+        return chunk_record_offsets[num_chunks] + sizeof(uint16_t) * (num_segments + 1);
     }
 
     void ComputeChunks() {
@@ -64,6 +67,8 @@ struct SAQModel {
         chunk_widths.reset(new uint32_t[num_chunks]);
         chunk_segments.reset(new uint32_t[num_chunks]);
         chunk_code_centers.reset(new float[num_chunks]);
+        chunk_record_offsets.reset(new size_t[num_chunks + 1]);
+        chunk_record_offsets[0] = 0;
         for (uint32_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
             for (uint32_t segment_idx = 0; segment_idx < num_segments; ++segment_idx) {
                 const SAQSegment& segment = segments[segment_idx];
@@ -75,6 +80,8 @@ struct SAQModel {
             }
             chunk_code_centers[chunk_idx] =
                 0.5f * static_cast<float>((1u << chunk_widths[chunk_idx]) - 1);
+            chunk_record_offsets[chunk_idx + 1] =
+                chunk_record_offsets[chunk_idx] + size_t{8} * chunk_widths[chunk_idx];
         }
     }
 
@@ -126,12 +133,15 @@ class SAQEncodingScratch {
     explicit SAQEncodingScratch(uint32_t num_dimensions)
         : residual(new float[num_dimensions]), absolute_values(new double[num_dimensions]),
           levels(new int32_t[num_dimensions]),
-          candidate_scales(new std::pair<double, uint32_t>[num_dimensions]) {}
+          candidate_scales(new std::pair<double, uint32_t>[num_dimensions]),
+          levels_by_chunk(new uint8_t[AlignValue<uint32_t, SAQ_CHUNK_SIZE>(num_dimensions)]()) {}
 
     std::unique_ptr<float[]> residual;
     std::unique_ptr<double[]> absolute_values;
     std::unique_ptr<int32_t[]> levels;
     std::unique_ptr<std::pair<double, uint32_t>[]> candidate_scales;
+    // The levels of whole chunks; the last chunk's levels past the dimensions stay zero
+    std::unique_ptr<uint8_t[]> levels_by_chunk;
 };
 
 class SAQQuantizer : public Quantizer {
@@ -239,13 +249,15 @@ class SAQQuantizer : public Quantizer {
         uint8_t* PDX_RESTRICT encoded,
         SAQEncodingScratch& scratch
     ) const {
+        using computer = DistanceComputer<DistanceMetric::L2SQ, SAQ>;
         float* residual = scratch.residual.get();
         double squared_norm = 0.0;
         for (uint32_t j = 0; j < model.num_dimensions; ++j) {
             residual[j] = embedding[j] - model.rotated_mean[j];
             squared_norm += static_cast<double>(residual[j]) * residual[j];
         }
-        uint8_t* factors = encoded + model.num_dimensions;
+        uint8_t* levels = scratch.levels_by_chunk.get();
+        uint8_t* factors = encoded + model.chunk_record_offsets[model.num_chunks];
         for (uint32_t segment_idx = 0; segment_idx < model.num_segments; ++segment_idx) {
             const SAQSegment& segment = model.segments[segment_idx];
             float rescale;
@@ -254,13 +266,20 @@ class SAQQuantizer : public Quantizer {
                 segment.end - segment.start,
                 segment.width,
                 GetTightStart(segment.width),
-                encoded + segment.start,
+                levels + segment.start,
                 rescale,
                 scratch
             );
             WriteHalf(rescale, factors + segment_idx * sizeof(uint16_t));
         }
         WriteHalf(static_cast<float>(squared_norm), factors + model.num_segments * sizeof(uint16_t));
+        for (uint32_t chunk_idx = 0; chunk_idx < model.num_chunks; ++chunk_idx) {
+            computer::PackRecord(
+                levels + static_cast<size_t>(chunk_idx) * SAQ_CHUNK_SIZE,
+                model.chunk_widths[chunk_idx],
+                encoded + model.chunk_record_offsets[chunk_idx]
+            );
+        }
     }
 
     void DecodeEmbedding(
@@ -268,15 +287,23 @@ class SAQQuantizer : public Quantizer {
         const SAQModel& model,
         float* PDX_RESTRICT out
     ) const {
-        const uint8_t* factors = encoded + model.num_dimensions;
-        for (uint32_t segment_idx = 0; segment_idx < model.num_segments; ++segment_idx) {
-            const SAQSegment& segment = model.segments[segment_idx];
-            const float rescale = ReadHalf(factors + segment_idx * sizeof(uint16_t));
-            const float code_center = 0.5f * static_cast<float>((1u << segment.width) - 1);
+        using computer = DistanceComputer<DistanceMetric::L2SQ, SAQ>;
+        const uint8_t* factors = encoded + model.chunk_record_offsets[model.num_chunks];
+        uint8_t levels[SAQ_CHUNK_SIZE];
+        for (uint32_t chunk_idx = 0; chunk_idx < model.num_chunks; ++chunk_idx) {
+            computer::UnpackRecord(
+                encoded + model.chunk_record_offsets[chunk_idx], model.chunk_widths[chunk_idx], levels
+            );
+            const float rescale =
+                ReadHalf(factors + model.chunk_segments[chunk_idx] * sizeof(uint16_t));
+            const float code_center = model.chunk_code_centers[chunk_idx];
+            const uint32_t first_dimension = chunk_idx * SAQ_CHUNK_SIZE;
+            const uint32_t chunk_dimensions =
+                std::min(SAQ_CHUNK_SIZE, model.num_dimensions - first_dimension);
             PDX_VECTORIZE_LOOP
-            for (uint32_t j = segment.start; j < segment.end; ++j) {
-                out[j] = model.rotated_mean[j] +
-                         (static_cast<float>(encoded[j]) - code_center) * rescale;
+            for (uint32_t j = 0; j < chunk_dimensions; ++j) {
+                out[first_dimension + j] = model.rotated_mean[first_dimension + j] +
+                                           (static_cast<float>(levels[j]) - code_center) * rescale;
             }
         }
     }
