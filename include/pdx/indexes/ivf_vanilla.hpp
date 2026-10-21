@@ -993,9 +993,10 @@ class PDXIndex : public IPDXIndex {
         // Create new clusters and update all data structures
         {
             PDX_PROFILE_SCOPE("Split/ConsolidateNewClusters");
+            const ClusterFormat<Q> cluster_format = index.GetClusterFormat();
             const auto size_a = static_cast<uint32_t>(count_a);
             cluster_t new_cluster_a(
-                size_a, cluster_t::CapacityFor(size_a, config.max_cluster_size), d, &GetAllocator()
+                size_a, cluster_t::CapacityFor(size_a, config.max_cluster_size), cluster_format, &GetAllocator()
             );
             new_cluster_a.id = cluster_id;
             if (count_a > 0) {
@@ -1005,7 +1006,7 @@ class PDXIndex : public IPDXIndex {
             uint32_t new_cluster_b_id = index.num_clusters;
             const auto size_b = static_cast<uint32_t>(count_b);
             cluster_t new_cluster_b(
-                size_b, cluster_t::CapacityFor(size_b, config.max_cluster_size), d, &GetAllocator()
+                size_b, cluster_t::CapacityFor(size_b, config.max_cluster_size), cluster_format, &GetAllocator()
             );
             new_cluster_b.id = new_cluster_b_id;
             if (count_b > 0) {

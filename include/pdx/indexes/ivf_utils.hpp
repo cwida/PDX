@@ -560,6 +560,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
         }
 
         // Pre-allocate all clusters sequentially
+        const ClusterFormat<Q> cluster_format = ivf.GetClusterFormat();
         for (size_t cluster_idx = 0; cluster_idx < num_clusters; cluster_idx++) {
             const auto cluster_size =
                 static_cast<uint32_t>(kmeans_result.assignments[cluster_idx].size());
@@ -567,7 +568,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
                 cluster_size,
                 expect_appends ? Cluster<Q>::CapacityFor(cluster_size, max_cluster_size)
                                : cluster_size + 1,
-                num_dimensions,
+                cluster_format,
                 &GetAllocator()
             );
             ivf.clusters[cluster_idx].id = cluster_idx;

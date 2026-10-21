@@ -80,6 +80,12 @@ struct SAQModel {
         return chunk_record_offsets[num_chunks] + sizeof(uint16_t) * (num_segments + 1);
     }
 
+    size_t GetInMemorySizeInBytes() const {
+        return sizeof(*this) + num_dimensions * sizeof(float) + num_segments * sizeof(SAQSegment) +
+               num_chunks * (2 * sizeof(uint32_t) + 2 * sizeof(float)) +
+               (num_chunks + 1) * sizeof(size_t);
+    }
+
     void ComputeChunks() {
         num_chunks = (num_dimensions + SAQ_CHUNK_SIZE - 1) / SAQ_CHUNK_SIZE;
         chunk_widths.reset(new uint32_t[num_chunks]);
