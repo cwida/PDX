@@ -116,6 +116,8 @@ static constexpr uint32_t SAQ_CHUNK_SIZE = H_DIM_SIZE;
 static constexpr uint32_t SAQ_MIN_DIMENSIONS = SAQ_CHUNK_SIZE;
 static constexpr uint32_t SAQ_MAX_CODE_WIDTH = 8;
 static constexpr size_t SAQ_FIT_SAMPLE_SIZE = 122880;
+// The SAQ scans read and write up to one batch (16 lanes) past the last vector
+static constexpr size_t SAQ_SCAN_PADDING = 16;
 
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most
