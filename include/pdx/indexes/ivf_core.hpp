@@ -93,6 +93,15 @@ class IVF : public skmeans::AllocatorHolder {
         clusters.reserve(num_clusters);
     }
 
+    // In data_t values, as ClusterFormat::GetValuesPerEmbedding
+    uint32_t GetValuesPerEmbedding() const {
+        if constexpr (Q == Quantization::SAQ) {
+            return static_cast<uint32_t>(saq_model.GetEncodedEmbeddingSize());
+        } else {
+            return num_dimensions;
+        }
+    }
+
     ClusterFormat<Q> GetClusterFormat() const {
         if constexpr (Q == Quantization::SAQ) {
             return {saq_model.chunk_record_offsets.get(), saq_model.num_chunks, saq_model.num_segments};
@@ -217,11 +226,8 @@ class IVF : public skmeans::AllocatorHolder {
     }
 
     [[nodiscard]] uint64_t GetClusterDataSizeInBytes(const uint32_t num_embeddings) const {
-        uint64_t embedding_size = num_dimensions * sizeof(data_t);
-        if constexpr (Q == Quantization::SAQ) {
-            embedding_size = saq_model.GetEncodedEmbeddingSize();
-        }
-        return static_cast<uint64_t>(num_embeddings) * (embedding_size + sizeof(uint32_t));
+        return static_cast<uint64_t>(num_embeddings) *
+               (GetValuesPerEmbedding() * sizeof(data_t) + sizeof(uint32_t));
     }
 
     // The first half of the stream format (SaveToStream): what a search keeps in memory, with the

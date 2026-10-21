@@ -206,10 +206,12 @@ class PDXIndex : public IPDXIndex {
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
-        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
-            config.num_dimensions, config.seed, config.allocator
-        );
-        pruner = owned_pruner.get();
+        if constexpr (Q != SAQ) {
+            owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
+                config.num_dimensions, config.seed, config.allocator
+            );
+            pruner = owned_pruner.get();
+        }
         row_id_cluster_mapping.base_row_id = config.base_row_id;
     }
 
@@ -220,6 +222,24 @@ class PDXIndex : public IPDXIndex {
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
         row_id_cluster_mapping.base_row_id = config.base_row_id;
+    }
+
+    // For DuckIR: indexes that share one SAQ fit, its rotation in the pruner and its model
+    PDXIndex(
+        PDXIndexConfig config,
+        PDX::ADSamplingPruner& external_pruner,
+        const PDX::SAQModel& saq_model
+    )
+        : PDXIndex(config, external_pruner) {
+        static_assert(Q == SAQ, "Only SAQ indexes take an SAQ model");
+        if (external_pruner.GetMatrix().rows() != config.num_dimensions ||
+            saq_model.num_dimensions != config.num_dimensions) {
+            throw std::invalid_argument(
+                "PDXIndex: an SAQ index needs the fit's dense rotation and a model of its "
+                "dimensions"
+            );
+        }
+        index.saq_model = saq_model;
     }
 
     void Save(const std::string& path) override {
@@ -492,14 +512,24 @@ class PDXIndex : public IPDXIndex {
             config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
 
         assert(num_embeddings > 0);
-        assert(pruner);
 
         skmeans::AllocatedBuffer<float> transformed;
         if (!config.is_data_transformed) {
-            transformed = ivf_utils.NormalizeAndRotate(
-                embeddings, num_embeddings, num_dimensions, normalize, *pruner
-            );
+            if constexpr (Q == PDX::SAQ) {
+                transformed = FitSAQAndRotate(ivf_utils, embeddings, num_embeddings, normalize);
+            } else {
+                transformed = ivf_utils.NormalizeAndRotate(
+                    embeddings, num_embeddings, num_dimensions, normalize, *pruner
+                );
+            }
+        } else if constexpr (Q == PDX::SAQ) {
+            if (index.saq_model.num_dimensions == 0) {
+                throw std::invalid_argument(
+                    "BuildIndex: SAQ on transformed data needs the constructor of a shared fit"
+                );
+            }
         }
+        assert(pruner);
         const float* preprocessed = config.is_data_transformed ? embeddings : transformed.get();
 
         float quantization_base = 0.0f;
@@ -519,6 +549,22 @@ class PDXIndex : public IPDXIndex {
                 quantization_scale,
                 quantization_base,
                 config.centroid_quantization
+            );
+        } else if constexpr (Q == PDX::SAQ) {
+            PDX::SAQModel saq_model = std::move(index.saq_model);
+            index = PDX::IVF<Q>(
+                num_dimensions,
+                num_embeddings,
+                num_clusters,
+                normalize,
+                config.centroid_quantization
+            );
+            index.saq_model = std::move(saq_model);
+            index.saq_chunk_epsilons.reset(new float[index.saq_model.num_chunks]);
+            std::fill_n(
+                index.saq_chunk_epsilons.get(),
+                index.saq_model.num_chunks,
+                std::numeric_limits<float>::infinity()
             );
         } else {
             index = PDX::IVF<Q>(
@@ -541,7 +587,9 @@ class PDXIndex : public IPDXIndex {
             config.normalize,
             config.sampling_fraction,
             config.kmeans_iters,
-            config.hierarchical_indexing
+            config.hierarchical_indexing,
+            // SuperKMeans' pruning needs a random rotation, and SAQ's starts with a PCA
+            /*use_superkmeans_pruning=*/Q != PDX::SAQ
         );
         if (config.max_cluster_size > 0) {
             ivf_utils.SplitClustersAboveMaxClusterSize(
@@ -551,7 +599,8 @@ class PDXIndex : public IPDXIndex {
                 config.max_cluster_size,
                 config.distance_metric,
                 config.seed,
-                config.normalize
+                config.normalize,
+                /*use_superkmeans_pruning=*/Q != PDX::SAQ
             );
             num_clusters = static_cast<uint32_t>(kmeans_result.assignments.size());
             index.num_clusters = num_clusters;
@@ -694,8 +743,48 @@ class PDXIndex : public IPDXIndex {
     static constexpr PDXIndexType GetIndexType() {
         if constexpr (Q == F32)
             return PDXIndexType::PDX_F32;
-        else
+        else if constexpr (Q == U8)
             return PDXIndexType::PDX_U8;
+        else
+            return PDXIndexType::PDX_SAQ;
+    }
+
+    // A standalone SAQ index fits on its embeddings, and the fit's rotation becomes its pruner.
+    // An index on a shared fit only rotates them.
+    skmeans::AllocatedBuffer<float> FitSAQAndRotate(
+        const IVFUtils& ivf_utils,
+        const float* embeddings,
+        size_t num_embeddings,
+        bool normalize
+    ) {
+        const uint32_t num_dimensions = config.num_dimensions;
+        if (pruner && !owned_pruner) {
+            return ivf_utils.NormalizeAndRotate(
+                embeddings, num_embeddings, num_dimensions, normalize, *pruner
+            );
+        }
+        skmeans::AllocatedBuffer<float> normalized;
+        if (normalize) {
+            normalized = ivf_utils.Normalize(embeddings, num_embeddings, num_dimensions);
+        }
+        const float* fit_input = normalize ? normalized.get() : embeddings;
+        PDX::SAQFit fit = PDX::SAQQuantizer::Fit(
+            fit_input,
+            num_embeddings,
+            num_dimensions,
+            config.saq_bits_per_dimension,
+            config.seed,
+            GetExecutor(),
+            GetAllocator()
+        );
+        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
+            num_dimensions, fit.rotation.get(), num_dimensions, &GetAllocator()
+        );
+        pruner = owned_pruner.get();
+        index.saq_model = std::move(fit.model);
+        return ivf_utils.NormalizeAndRotate(
+            fit_input, num_embeddings, num_dimensions, /*normalize=*/false, *pruner
+        );
     }
 
     void SetRowIdMapping(uint32_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {
@@ -912,8 +1001,11 @@ class PDXIndex : public IPDXIndex {
         const size_t count_b = group_b_idx.size() + num_stolen_b;
 
         // Gather embeddings and IDs, accumulate centroid sums
-        auto embs_a = skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_a * d);
-        auto embs_b = skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_b * d);
+        const size_t values_per_embedding = index.GetValuesPerEmbedding();
+        auto embs_a =
+            skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_a * values_per_embedding);
+        auto embs_b =
+            skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_b * values_per_embedding);
         auto ids_a = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_a);
         auto ids_b = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_b);
         auto centroid_sum_a = std::make_unique<float[]>(d); // zero-init needed
@@ -959,10 +1051,10 @@ class PDXIndex : public IPDXIndex {
             index,
             neighboring_clusters_ids,
             rows_to_steal,
-            embs_a.get() + group_a_idx.size() * d,
+            embs_a.get() + group_a_idx.size() * values_per_embedding,
             ids_a.get() + group_a_idx.size(),
             centroid_sum_a.get(),
-            embs_b.get() + group_b_idx.size() * d,
+            embs_b.get() + group_b_idx.size() * values_per_embedding,
             ids_b.get() + group_b_idx.size(),
             centroid_sum_b.get()
         );

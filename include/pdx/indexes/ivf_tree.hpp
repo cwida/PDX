@@ -27,6 +27,9 @@ namespace PDX {
 
 template <PDX::Quantization Q>
 class PDXTreeIndex : public IPDXIndex {
+    // TODO(@lkuffo, mid): Support SAQ in the tree index
+    static_assert(Q != PDX::SAQ, "The tree index has no SAQ clusters");
+
   public:
     using embedding_storage_t = PDX::pdx_data_t<Q>;
     using cluster_t = PDX::Cluster<Q>;
@@ -1425,6 +1428,7 @@ class PDXTreeIndex : public IPDXIndex {
 
 using PDXIndexF32 = PDXIndex<PDX::F32>;
 using PDXIndexU8 = PDXIndex<PDX::U8>;
+using PDXIndexSAQ = PDXIndex<PDX::SAQ>;
 using PDXTreeIndexF32 = PDXTreeIndex<PDX::F32>;
 using PDXTreeIndexU8 = PDXTreeIndex<PDX::U8>;
 
@@ -1442,6 +1446,9 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(
         break;
     case PDXIndexType::PDX_U8:
         idx = std::make_unique<PDXIndexU8>();
+        break;
+    case PDXIndexType::PDX_SAQ:
+        idx = std::make_unique<PDXIndexSAQ>();
         break;
     case PDXIndexType::PDX_TREE_F32:
         idx = std::make_unique<PDXTreeIndexF32>();
@@ -1499,6 +1506,9 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndexFromStream(
         break;
     case PDXIndexType::PDX_U8:
         idx = std::make_unique<PDXIndexU8>(config, pruner);
+        break;
+    case PDXIndexType::PDX_SAQ:
+        idx = std::make_unique<PDXIndexSAQ>(config, pruner);
         break;
     case PDXIndexType::PDX_TREE_F32:
         idx = std::make_unique<PDXTreeIndexF32>(config, pruner);
