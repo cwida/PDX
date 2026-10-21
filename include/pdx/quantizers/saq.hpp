@@ -27,6 +27,24 @@ struct SAQSegment {
     uint32_t width;
 };
 
+// An encoded embedding, e.g. d = 384 at 3 bits with chunk widths 8, 3, 3, 1, 1, 1 in 3 segments
+// (chunk 0, chunks 1-2, chunks 3-5):
+//
+//   chunk     0 (head)   1          2          3        4        5
+//   width     8          3          3          1        1        1
+//            [ 64 B     ][ 24 B    ][ 24 B    ][ 8 B   ][ 8 B   ][ 8 B   ][ r0 r1 r2 |r|^2 ]
+//   offset    0          64         88         112      120      128      136              144
+//            \________________________ records ______________________/ \___ fp16 factors __/
+//
+// chunk_record_offsets = {0, 64, 88, 112, 120, 128, 136}. The factors are each segment's rescale,
+// then the residual's squared norm. A chunk's record holds its 64 levels in 8 * width bytes
+// (ScalarComputer<L2SQ, SAQ>::PackRecord): as they are at 8 bits, else split into parts of 4, 2 and
+// 1 bits, low bits first. For example, width 3 = 2 + 1:
+//
+//   bytes 0-15    2-bit part: byte b holds dims b, b + 16, b + 32, b + 48 in bits 0-1 to 6-7
+//   bytes 16-23   1-bit part: bit j holds bit 2 of dim j
+//
+// and a 4-bit part (widths 4 to 7) is 32 bytes, byte b holding dim b and dim b + 32 in its nibbles
 struct SAQModel {
     uint32_t num_dimensions = 0;
     uint32_t bits_per_dimension = 0;
