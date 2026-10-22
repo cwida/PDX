@@ -1013,7 +1013,12 @@ class PDXTreeIndex : public IPDXIndex {
 
         // Fully removed the dying cluster before reassignment
         ReassignEmbeddings(
-            cluster_indices.get(), cluster_embeddings.get(), n_emb, mesocluster_id, false
+            cluster_indices.get(),
+            cluster_embeddings.get(),
+            raw_embeddings.get(),
+            n_emb,
+            mesocluster_id,
+            false
         );
 
         CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
@@ -1109,12 +1114,19 @@ class PDXTreeIndex : public IPDXIndex {
 
         // Gather group_rest NOW, before the cluster is replaced
         auto float_rest = skmeans::AllocateBuffer<float>(GetAllocator(), group_rest_idx.size() * d);
+        auto encoded_rest =
+            skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), group_rest_idx.size() * d);
         auto ids_rest = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), group_rest_idx.size());
         for (size_t i = 0; i < group_rest_idx.size(); i++) {
             std::memcpy(
                 float_rest.get() + i * d,
                 cluster_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * d,
                 d * sizeof(float)
+            );
+            std::memcpy(
+                encoded_rest.get() + i * d,
+                raw_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * d,
+                d * sizeof(embedding_storage_t)
             );
             ids_rest[i] = cluster.indices[group_rest_idx[i]];
         }
@@ -1216,6 +1228,7 @@ class PDXTreeIndex : public IPDXIndex {
             ReassignEmbeddings(
                 ids_rest.get(),
                 float_rest.get(),
+                encoded_rest.get(),
                 static_cast<uint32_t>(group_rest_idx.size()),
                 mesocluster_id,
                 false
@@ -1344,8 +1357,9 @@ class PDXTreeIndex : public IPDXIndex {
         }
     }
 
-    // Reassign dequantized (float) embeddings to their closest centroid
-    // within the given mesocluster.
+    // Reassign embeddings to their closest centroid within the given mesocluster: the dequantized
+    // (float) ones choose the cluster, and the encoded ones they were decoded from are appended as
+    // they are.
     // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
     // TODO(@lkuffo, med): We can optimize reassignments by doing GEMM+PRUNING for assignments
     // TODO(@lkuffo, high): Same stale-assignments problem as PDXIndex::ReassignEmbeddings (see the
@@ -1354,6 +1368,7 @@ class PDXTreeIndex : public IPDXIndex {
     void ReassignEmbeddings(
         uint32_t* row_ids,
         const float* embeddings,
+        const embedding_storage_t* encoded_embeddings,
         uint32_t num_embeddings,
         uint32_t mesocluster_id,
         bool allow_merges = true
@@ -1416,9 +1431,8 @@ class PDXTreeIndex : public IPDXIndex {
         for (size_t i = 0; i < num_embeddings; i++) {
             uint32_t best_cluster = candidate_ids[assignments[i]];
             uint32_t row_id = row_ids[i];
-            uint32_t new_pos = QuantizeAndAppend<Q>(
-                index, searcher->quantizer, index.clusters[best_cluster], row_id, embeddings + i * d
-            );
+            uint32_t new_pos =
+                index.clusters[best_cluster].AppendEmbedding(row_id, encoded_embeddings + i * d);
             SetRowIdMapping(row_id, best_cluster, new_pos);
             ReserveClusterSlotIfNeeded();
             CheckClusterHealth(index.clusters[best_cluster], allow_merges);

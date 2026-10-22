@@ -1018,7 +1018,9 @@ class PDXIndex : public IPDXIndex {
         index.ComputeClusterOffsets();
 
         // Fully removed the dying cluster before reassignment
-        ReassignEmbeddings(cluster_indices.get(), cluster_embeddings.get(), n_emb, false);
+        ReassignEmbeddings(
+            cluster_indices.get(), cluster_embeddings.get(), raw_embeddings.get(), n_emb, false
+        );
     }
 
     // Assumes cluster is compacted and has no tombstones
@@ -1112,12 +1114,20 @@ class PDXIndex : public IPDXIndex {
 
         // Gather group_rest NOW, before the cluster is replaced
         auto float_rest = skmeans::AllocateBuffer<float>(GetAllocator(), group_rest_idx.size() * d);
+        auto encoded_rest = skmeans::AllocateBuffer<embedding_storage_t>(
+            GetAllocator(), group_rest_idx.size() * values_per_embedding
+        );
         auto ids_rest = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), group_rest_idx.size());
         for (size_t i = 0; i < group_rest_idx.size(); i++) {
             std::memcpy(
                 float_rest.get() + i * d,
                 cluster_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * d,
                 d * sizeof(float)
+            );
+            std::memcpy(
+                encoded_rest.get() + i * values_per_embedding,
+                raw_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * values_per_embedding,
+                values_per_embedding * sizeof(embedding_storage_t)
             );
             ids_rest[i] = cluster.indices[group_rest_idx[i]];
         }
@@ -1211,6 +1221,7 @@ class PDXIndex : public IPDXIndex {
             ReassignEmbeddings(
                 ids_rest.get(),
                 float_rest.get(),
+                encoded_rest.get(),
                 static_cast<uint32_t>(group_rest_idx.size()),
                 false,
                 &rest_candidates
@@ -1334,8 +1345,9 @@ class PDXIndex : public IPDXIndex {
         }
     }
 
-    // Reassign dequantized (float) embeddings to their closest centroid among candidate_cluster_ids
-    // (all clusters when null).
+    // Reassign embeddings to their closest centroid among candidate_cluster_ids (all clusters when
+    // null): the dequantized (float) ones choose the cluster, and the encoded ones they were decoded
+    // from are appended as they are.
     // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
     // TODO(@lkuffo, med): We can optimize reassignments by doing GEMM+PRUNING for assignments
     // TODO(@lkuffo, high): The assignments are computed once, against the centroids at loop start.
@@ -1347,6 +1359,7 @@ class PDXIndex : public IPDXIndex {
     void ReassignEmbeddings(
         const uint32_t* row_ids,
         const float* embeddings,
+        const embedding_storage_t* encoded_embeddings,
         uint32_t num_embeddings,
         bool allow_merges = true,
         const std::vector<uint32_t>* candidate_cluster_ids = nullptr
@@ -1403,13 +1416,14 @@ class PDXIndex : public IPDXIndex {
             tmp_distances_buf.get()
         );
 
+        const size_t values_per_embedding = index.GetValuesPerEmbedding();
         for (size_t i = 0; i < num_embeddings; i++) {
             const uint32_t best_cluster = candidate_cluster_ids != nullptr
                                               ? (*candidate_cluster_ids)[assignments[i]]
                                               : assignments[i];
             uint32_t row_id = row_ids[i];
-            uint32_t new_pos = QuantizeAndAppend<Q>(
-                index, searcher->quantizer, index.clusters[best_cluster], row_id, embeddings + i * d
+            uint32_t new_pos = index.clusters[best_cluster].AppendEmbedding(
+                row_id, encoded_embeddings + i * values_per_embedding
             );
             SetRowIdMapping(row_id, best_cluster, new_pos);
             ReserveClusterSlotIfNeeded();
