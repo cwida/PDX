@@ -417,9 +417,7 @@ void RunAppendCascadeThenDeleteHalf() {
         }
         total_recall += TestUtils::ComputeRecall(results, gt_odd.indices[q], TestUtils::KNN);
     }
-    EXPECT_GE(
-        total_recall / static_cast<float>(n_queries), MIN_EXHAUSTIVE_RECALL.at(IndexType())
-    );
+    EXPECT_GE(total_recall / static_cast<float>(n_queries), MIN_EXHAUSTIVE_RECALL.at(IndexType()));
 }
 
 // Test 9: Delete every other row of a built index (every cluster drops to its merge threshold at
@@ -470,9 +468,7 @@ void RunBuildThenDeleteHalf() {
         }
         total_recall += TestUtils::ComputeRecall(results, gt_odd.indices[q], TestUtils::KNN);
     }
-    EXPECT_GE(
-        total_recall / static_cast<float>(n_queries), MIN_EXHAUSTIVE_RECALL.at(IndexType())
-    );
+    EXPECT_GE(total_recall / static_cast<float>(n_queries), MIN_EXHAUSTIVE_RECALL.at(IndexType()));
 }
 
 // Test 11: Ask for more neighbors than live rows remain after mass deletes: the heap never fills,
@@ -883,7 +879,9 @@ void RunBuildWithoutAppendHeadroom() {
     for (; row_id < n_total; row_id++) {
         row_ids.push_back(row_id);
     }
-    index.BulkAppend(row_ids.data(), data.data() + row_ids[0] * RestrideDimensions(), row_ids.size());
+    index.BulkAppend(
+        row_ids.data(), data.data() + row_ids[0] * RestrideDimensions(), row_ids.size()
+    );
     ExpectIndexHoldsExactly(index, n_total);
     EXPECT_LE(LargestClusterSize(index), max_cluster_size);
 }
@@ -932,7 +930,9 @@ void RunShrinkToFit() {
     }
     IndexT reference(MakeConfig(RestrideDimensions()));
     reference.BuildIndex(data.data(), n_build);
-    reference.BulkAppend(row_ids.data(), data.data() + n_build * RestrideDimensions(), row_ids.size());
+    reference.BulkAppend(
+        row_ids.data(), data.data() + n_build * RestrideDimensions(), row_ids.size()
+    );
     auto config = MakeConfig(RestrideDimensions());
     config.max_cluster_size = 64;
     IndexT index(config);

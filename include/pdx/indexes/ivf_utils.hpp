@@ -645,18 +645,18 @@ class IVFUtils : public skmeans::AllocatorHolder {
     }
 
     // The pruning bound of an SAQ index. After 64-dim chunk k a vector is pruned when its running
-    // estimate exceeds the k-th distance plus eps_k * |q_c unseen| * sqrt(unseen residual variance),
-    // q_c being the query minus the mean. The running estimate already holds |q_c|^2 and |r|^2: the
-    // final one is it minus 2 <q_c, y> over the unseen dimensions, which the margin must cover.
-    // SAQ (Li et al., arXiv 2509.12086, Section 4.3) also prunes between segments, but bounds that
-    // inner product with Chebyshev's inequality, as if it averaged zero. For the near neighbours that
-    // pruning must keep it does not: they point towards the query, so that bound drops them. As in
-    // DADE (Deng et al., arXiv 2411.17229), eps_k is estimated from the data at a significance
-    // level instead: the (1 - significance) quantile of the ratio over rows of the index as queries,
-    // each against its SAQ_CALIBRATION_NEIGHBORS nearest neighbours by estimate in its
-    // SAQ_CALIBRATION_CLUSTERS nearest clusters (DADE samples pairs uniformly; these are the pairs
-    // pruning must keep). pseudo_queries are transformed; their row ids (or null) keep each one from
-    // being its own neighbour.
+    // estimate exceeds the k-th distance plus eps_k * |q_c unseen| * sqrt(unseen residual
+    // variance), q_c being the query minus the mean. The running estimate already holds |q_c|^2 and
+    // |r|^2: the final one is it minus 2 <q_c, y> over the unseen dimensions, which the margin must
+    // cover. SAQ (Li et al., arXiv 2509.12086, Section 4.3) also prunes between segments, but
+    // bounds that inner product with Chebyshev's inequality, as if it averaged zero. For the near
+    // neighbours that pruning must keep it does not: they point towards the query, so that bound
+    // drops them. As in DADE (Deng et al., arXiv 2411.17229), eps_k is estimated from the data at a
+    // significance level instead: the (1 - significance) quantile of the ratio over rows of the
+    // index as queries, each against its SAQ_CALIBRATION_NEIGHBORS nearest neighbours by estimate
+    // in its SAQ_CALIBRATION_CLUSTERS nearest clusters (DADE samples pairs uniformly; these are the
+    // pairs pruning must keep). pseudo_queries are transformed; their row ids (or null) keep each
+    // one from being its own neighbour.
     void CalibrateSAQPruningBound(
         IVF<SAQ>& index,
         const float* pseudo_queries,
@@ -681,13 +681,15 @@ class IVFUtils : public skmeans::AllocatorHolder {
         );
         const ClusterFormat<SAQ> format = index.GetClusterFormat();
         const SAQQuantizer quantizer(d);
-        const uint32_t num_nearest_clusters = std::min(SAQ_CALIBRATION_CLUSTERS, index.num_clusters);
+        const uint32_t num_nearest_clusters =
+            std::min(SAQ_CALIBRATION_CLUSTERS, index.num_clusters);
         executor.ParallelFor(num_pseudo_queries, [&](size_t begin, size_t end, size_t) {
             auto estimates = skmeans::AllocateBuffer<float>(
                 GetAllocator(), index.max_cluster_capacity + SAQ_SCAN_PADDING
             );
             auto candidates = skmeans::AllocateBuffer<Candidate>(
-                GetAllocator(), static_cast<size_t>(num_nearest_clusters) * index.max_cluster_capacity
+                GetAllocator(),
+                static_cast<size_t>(num_nearest_clusters) * index.max_cluster_capacity
             );
             std::unique_ptr<float[]> cluster_distances(new float[index.num_clusters]);
             std::unique_ptr<uint32_t[]> cluster_order(new uint32_t[index.num_clusters]);
@@ -707,7 +709,9 @@ class IVFUtils : public skmeans::AllocatorHolder {
                     cluster_order.get(),
                     cluster_order.get() + num_nearest_clusters,
                     cluster_order.get() + index.num_clusters,
-                    [&](uint32_t a, uint32_t b) { return cluster_distances[a] < cluster_distances[b]; }
+                    [&](uint32_t a, uint32_t b) {
+                        return cluster_distances[a] < cluster_distances[b];
+                    }
                 );
                 size_t num_candidates = 0;
                 for (uint32_t nearest_idx = 0; nearest_idx < num_nearest_clusters; ++nearest_idx) {
@@ -731,7 +735,9 @@ class IVFUtils : public skmeans::AllocatorHolder {
                             pseudo_query_row_ids != nullptr &&
                             cluster.indices[position] == pseudo_query_row_ids[query_idx];
                         if (!is_deleted && !is_pseudo_query) {
-                            candidates[num_candidates++] = {estimates[position], cluster_id, position};
+                            candidates[num_candidates++] = {
+                                estimates[position], cluster_id, position
+                            };
                         }
                     }
                 }
@@ -742,7 +748,8 @@ class IVFUtils : public skmeans::AllocatorHolder {
                     candidates.get() + num_candidates,
                     [](const Candidate& a, const Candidate& b) { return a.estimate < b.estimate; }
                 );
-                for (size_t neighbor_idx = 0; neighbor_idx < SAQ_CALIBRATION_NEIGHBORS; ++neighbor_idx) {
+                for (size_t neighbor_idx = 0; neighbor_idx < SAQ_CALIBRATION_NEIGHBORS;
+                     ++neighbor_idx) {
                     float* neighbor_ratios =
                         ratios.get() + query_idx * SAQ_CALIBRATION_NEIGHBORS + neighbor_idx;
                     if (neighbor_idx >= num_neighbors) {
@@ -754,12 +761,17 @@ class IVFUtils : public skmeans::AllocatorHolder {
                     const Candidate& neighbor = candidates[neighbor_idx];
                     const auto& cluster = index.clusters[neighbor.cluster_id];
                     Cluster<SAQ>::ReadEmbeddingFromPDXBuffer(
-                        cluster.data.get(), cluster.max_capacity, format, neighbor.position, encoded.get()
+                        cluster.data.get(),
+                        cluster.max_capacity,
+                        format,
+                        neighbor.position,
+                        encoded.get()
                     );
                     quantizer.DecodeEmbedding(encoded.get(), model, decoded.get());
                     for (uint32_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
                         const uint32_t first_dimension = chunk_idx * SAQ_CHUNK_SIZE;
-                        const uint32_t last_dimension = std::min(first_dimension + SAQ_CHUNK_SIZE, d);
+                        const uint32_t last_dimension =
+                            std::min(first_dimension + SAQ_CHUNK_SIZE, d);
                         float dot = 0.0f;
                         for (uint32_t j = first_dimension; j < last_dimension; ++j) {
                             dot += query_residual[j] * (decoded[j] - model.rotated_mean[j]);
@@ -769,7 +781,8 @@ class IVFUtils : public skmeans::AllocatorHolder {
                     // The unseen term and its spread after each chunk, as the search's margins
                     float unseen_term = 0.0f;
                     float unseen_squared_norm = 0.0f;
-                    for (int chunk_idx = static_cast<int>(num_chunks) - 2; chunk_idx >= 0; --chunk_idx) {
+                    for (int chunk_idx = static_cast<int>(num_chunks) - 2; chunk_idx >= 0;
+                         --chunk_idx) {
                         unseen_term += 2.0f * chunk_dots[chunk_idx + 1];
                         unseen_squared_norm += query.GetChunkSquaredNormsPtr()[chunk_idx + 1];
                         const float spread = std::sqrt(
@@ -785,9 +798,10 @@ class IVFUtils : public skmeans::AllocatorHolder {
         // The quantile with linear interpolation between the sorted ratios
         for (uint32_t chunk_idx = 0; chunk_idx + 1 < num_chunks; ++chunk_idx) {
             float* chunk_ratios = ratios.get() + static_cast<size_t>(chunk_idx) * ratios_per_chunk;
-            float* chunk_ratios_end = std::remove_if(
-                chunk_ratios, chunk_ratios + ratios_per_chunk, [](float r) { return std::isnan(r); }
-            );
+            float* chunk_ratios_end =
+                std::remove_if(chunk_ratios, chunk_ratios + ratios_per_chunk, [](float r) {
+                    return std::isnan(r);
+                });
             const auto num_ratios = static_cast<size_t>(chunk_ratios_end - chunk_ratios);
             if (num_ratios == 0) {
                 index.saq_chunk_epsilons[chunk_idx] = 0.0f;
@@ -1444,7 +1458,9 @@ inline NeighborRowsToSteal FindNeighborRowsToSteal(
                         neighbor.data.get(), neighbor.max_capacity, cluster_format, p, raw_row.get()
                     );
                     if constexpr (Q == SAQ) {
-                        saq_quantizer.DecodeEmbedding(raw_row.get(), index.saq_model, rows.get() + p * d);
+                        saq_quantizer.DecodeEmbedding(
+                            raw_row.get(), index.saq_model, rows.get() + p * d
+                        );
                     } else {
                         quantizer.DequantizeEmbedding(
                             raw_row.get(),

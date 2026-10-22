@@ -296,7 +296,9 @@ class SAQQuantizer : public Quantizer {
             );
             WriteHalf(rescale, factors + segment_idx * sizeof(uint16_t));
         }
-        WriteHalf(static_cast<float>(squared_norm), factors + model.num_segments * sizeof(uint16_t));
+        WriteHalf(
+            static_cast<float>(squared_norm), factors + model.num_segments * sizeof(uint16_t)
+        );
         for (uint32_t chunk_idx = 0; chunk_idx < model.num_chunks; ++chunk_idx) {
             computer::PackRecord(
                 levels + static_cast<size_t>(chunk_idx) * SAQ_CHUNK_SIZE,
@@ -316,7 +318,9 @@ class SAQQuantizer : public Quantizer {
         uint8_t levels[SAQ_CHUNK_SIZE];
         for (uint32_t chunk_idx = 0; chunk_idx < model.num_chunks; ++chunk_idx) {
             computer::UnpackRecord(
-                encoded + model.chunk_record_offsets[chunk_idx], model.chunk_widths[chunk_idx], levels
+                encoded + model.chunk_record_offsets[chunk_idx],
+                model.chunk_widths[chunk_idx],
+                levels
             );
             const float rescale =
                 ReadHalf(factors + model.chunk_segments[chunk_idx] * sizeof(uint16_t));
@@ -333,9 +337,9 @@ class SAQQuantizer : public Quantizer {
     }
 
   private:
-    // RaBitQ-Library's kTightStart, kNEnum and kEps (quantization/rabitq_impl.hpp): the scale search
-    // starts at this fraction of its end (by ex_bits), ends this many levels past the largest, and
-    // rounds levels down with this tolerance
+    // RaBitQ-Library's kTightStart, kNEnum and kEps (quantization/rabitq_impl.hpp): the scale
+    // search starts at this fraction of its end (by ex_bits), ends this many levels past the
+    // largest, and rounds levels down with this tolerance
     static constexpr std::array<double, SAQ_MAX_CODE_WIDTH + 1> TIGHT_START =
         {0.0, 0.15, 0.20, 0.52, 0.59, 0.71, 0.75, 0.77, 0.81};
     static constexpr double SCALE_SEARCH_EXTRA_LEVELS = 10.0;
@@ -346,7 +350,9 @@ class SAQQuantizer : public Quantizer {
     static constexpr double PLAN_BIT_UNIT = 8;
     static constexpr size_t COVARIANCE_BLOCK_ROWS = 256;
 
-    static double GetTightStart(uint32_t width) { return width <= 4 ? 0.0 : TIGHT_START[width - 1]; }
+    static double GetTightStart(uint32_t width) {
+        return width <= 4 ? 0.0 : TIGHT_START[width - 1];
+    }
 
     static size_t GetSampleRowIndex(size_t sample_idx, size_t num_samples, size_t num_embeddings) {
         return sample_idx * num_embeddings / num_samples;
@@ -738,8 +744,9 @@ inline void ComputeSAQEstimates(
     float* estimates
 ) {
     using computer = DistanceComputer<DistanceMetric::L2SQ, SAQ>;
-    const auto* rescales =
-        reinterpret_cast<const uint16_t*>(data + stride * model.chunk_record_offsets[model.num_chunks]);
+    const auto* rescales = reinterpret_cast<const uint16_t*>(
+        data + stride * model.chunk_record_offsets[model.num_chunks]
+    );
     const int8_t* query_codes = query.GetCodesPtr();
     const float* dot_scales = query.GetChunkDotScalesPtr();
     const float* dot_offsets = query.GetChunkDotOffsetsPtr();

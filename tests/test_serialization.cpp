@@ -526,9 +526,8 @@ TEST_P(StreamSerializationTest, KeepsCentroidQuantization) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     StreamSerializationTest,
-    ::testing::Values(
-        "pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "flat", "pdx_saq3", "pdx_saq4"
-    ),
+    ::testing::
+        Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "flat", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

@@ -643,8 +643,8 @@ class PDXearch {
 
     // The SAQ scan of a cluster while the heap holds fewer than k: every vector's estimate over all
     // of its chunks, then the live (and passing) ones into the heap
-    // TODO(@lkuffo, high): Benchmark choosing like FilteredStart: with few passing rows, the pruning
-    // kernels at an infinite threshold instead of every chunk of every vector
+    // TODO(@lkuffo, high): Benchmark choosing like FilteredStart: with few passing rows, the
+    // pruning kernels at an infinite threshold instead of every chunk of every vector
     template <bool FILTERED = false>
     void SAQStart(
         const data_t* data,
@@ -676,12 +676,14 @@ class PDXearch {
             selection_vector
         );
         auto lock = top_k_heap.GetLock();
-        MergeIntoHeap(vector_indices, n_candidates, k, pruning_positions, pruning_distances, top_k_heap);
+        MergeIntoHeap(
+            vector_indices, n_candidates, k, pruning_positions, pruning_distances, top_k_heap
+        );
         top_k_heap.PublishKthDistance(k);
     }
 
-    // The SAQ scan of a cluster once the heap holds k: the head of every vector, then each tail chunk
-    // for the survivors, kept below the k-th distance plus the chunk's margin
+    // The SAQ scan of a cluster once the heap holds k: the head of every vector, then each tail
+    // chunk for the survivors, kept below the k-th distance plus the chunk's margin
     void SAQPrune(
         const data_t* data,
         const size_t n_vectors,
@@ -1170,12 +1172,14 @@ class PDXearch {
             search_cursor.saq_query = std::make_unique<SAQQuery>(search_cursor.query.get(), model);
             search_cursor.saq_chunk_margins.reset(new float[model.num_chunks]);
             float remaining_squared_norm = 0.0f;
-            for (int chunk_idx = static_cast<int>(model.num_chunks) - 1; chunk_idx >= 0; --chunk_idx) {
+            for (int chunk_idx = static_cast<int>(model.num_chunks) - 1; chunk_idx >= 0;
+                 --chunk_idx) {
                 const float spread =
                     std::sqrt(remaining_squared_norm * model.chunk_remaining_variances[chunk_idx]);
                 search_cursor.saq_chunk_margins[chunk_idx] =
                     spread > 0.0f ? pdx_data.saq_chunk_epsilons[chunk_idx] * spread : 0.0f;
-                remaining_squared_norm += search_cursor.saq_query->GetChunkSquaredNormsPtr()[chunk_idx];
+                remaining_squared_norm +=
+                    search_cursor.saq_query->GetChunkSquaredNormsPtr()[chunk_idx];
             }
         } else {
             search_cursor.prepared_query = search_cursor.query.get();

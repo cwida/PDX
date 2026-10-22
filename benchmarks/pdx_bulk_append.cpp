@@ -143,7 +143,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "Usage: " << argv[0]
                   << " <dataset> <index_type> <batch_size> [n_append] [n_threads]\n";
         std::cerr << "batch_size: 1 = Append per row, 0 = build on all rows (reference)\n";
-        std::cerr << "Index types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4\n";
+        std::cerr
+            << "Index types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4\n";
         return 1;
     }
     const std::string dataset = argv[1];

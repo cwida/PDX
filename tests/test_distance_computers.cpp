@@ -486,7 +486,9 @@ TEST_F(DistanceComputerTest, SAQ_ScanHead_SIMD_MatchesScalar) {
             SAQSurvivors all(num_vectors);
             const size_t num_all =
                 scan(scalar_computer::ScanHead, std::numeric_limits<float>::infinity(), all);
-            std::vector<float> all_estimates(all.estimates.begin(), all.estimates.begin() + num_all);
+            std::vector<float> all_estimates(
+                all.estimates.begin(), all.estimates.begin() + num_all
+            );
             std::vector<float> thresholds = {std::numeric_limits<float>::infinity()};
             if (num_all >= 2) {
                 thresholds.push_back(ThresholdBetween(all_estimates, num_all / 2 - 1));
@@ -502,11 +504,17 @@ TEST_F(DistanceComputerTest, SAQ_ScanHead_SIMD_MatchesScalar) {
     }
 }
 
-std::vector<uint8_t> PackRecords(const std::vector<uint8_t>& levels, size_t num_records, uint32_t width) {
+std::vector<uint8_t> PackRecords(
+    const std::vector<uint8_t>& levels,
+    size_t num_records,
+    uint32_t width
+) {
     std::vector<uint8_t> records(num_records * 8 * width);
     for (size_t record_idx = 0; record_idx < num_records; ++record_idx) {
         PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>::PackRecord(
-            levels.data() + record_idx * PDX::SAQ_CHUNK_SIZE, width, records.data() + record_idx * 8 * width
+            levels.data() + record_idx * PDX::SAQ_CHUNK_SIZE,
+            width,
+            records.data() + record_idx * 8 * width
         );
     }
     return records;
@@ -533,17 +541,16 @@ TEST_F(DistanceComputerTest, SAQ_PackRecord_RoundTrips) {
 TEST_F(DistanceComputerTest, SAQ_ScanTail_SIMD_MatchesScalar) {
     using scalar_computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
     using computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
-    const computer::ScanTailFunction scalar_scan_tails[PDX::SAQ_MAX_CODE_WIDTH + 1] = {
-        nullptr,
-        scalar_computer::ScanTail<1>,
-        scalar_computer::ScanTail<2>,
-        scalar_computer::ScanTail<3>,
-        scalar_computer::ScanTail<4>,
-        scalar_computer::ScanTail<5>,
-        scalar_computer::ScanTail<6>,
-        scalar_computer::ScanTail<7>,
-        scalar_computer::ScanTail<8>
-    };
+    const computer::ScanTailFunction scalar_scan_tails[PDX::SAQ_MAX_CODE_WIDTH + 1] =
+        {nullptr,
+         scalar_computer::ScanTail<1>,
+         scalar_computer::ScanTail<2>,
+         scalar_computer::ScanTail<3>,
+         scalar_computer::ScanTail<4>,
+         scalar_computer::ScanTail<5>,
+         scalar_computer::ScanTail<6>,
+         scalar_computer::ScanTail<7>,
+         scalar_computer::ScanTail<8>};
     std::mt19937 rng(7);
     std::uniform_real_distribution<float> estimate_distribution(0.5f, 2.0f);
     std::uniform_real_distribution<float> rescale_distribution(0.001f, 0.01f);
@@ -591,9 +598,8 @@ TEST_F(DistanceComputerTest, SAQ_ScanTail_SIMD_MatchesScalar) {
                     );
                 };
                 SAQSurvivors all(num_survivors);
-                const size_t num_all = scan(
-                    scalar_scan_tails[width], std::numeric_limits<float>::infinity(), all
-                );
+                const size_t num_all =
+                    scan(scalar_scan_tails[width], std::numeric_limits<float>::infinity(), all);
                 std::vector<float> all_estimates(
                     all.estimates.begin(), all.estimates.begin() + num_all
                 );
@@ -604,10 +610,8 @@ TEST_F(DistanceComputerTest, SAQ_ScanTail_SIMD_MatchesScalar) {
                 for (const float threshold : thresholds) {
                     SAQSurvivors expected(num_survivors);
                     SAQSurvivors actual(num_survivors);
-                    const size_t num_expected =
-                        scan(scalar_scan_tails[width], threshold, expected);
-                    const size_t num_actual =
-                        scan(computer::GetScanTail(width), threshold, actual);
+                    const size_t num_expected = scan(scalar_scan_tails[width], threshold, expected);
+                    const size_t num_actual = scan(computer::GetScanTail(width), threshold, actual);
                     ExpectSameSurvivors(expected, num_expected, actual, num_actual);
                 }
             }
@@ -619,33 +623,34 @@ TEST_F(DistanceComputerTest, SAQ_ScanTail_SIMD_MatchesScalar) {
 TEST_F(DistanceComputerTest, SAQ_NoPruningScan_SIMD_MatchesScalar) {
     using scalar_computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
     using computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
-    const computer::AccumulateTailEstimatesFunction scalar_accumulates[PDX::SAQ_MAX_CODE_WIDTH + 1] = {
-        nullptr,
-        scalar_computer::AccumulateTailEstimates<1>,
-        scalar_computer::AccumulateTailEstimates<2>,
-        scalar_computer::AccumulateTailEstimates<3>,
-        scalar_computer::AccumulateTailEstimates<4>,
-        scalar_computer::AccumulateTailEstimates<5>,
-        scalar_computer::AccumulateTailEstimates<6>,
-        scalar_computer::AccumulateTailEstimates<7>,
-        scalar_computer::AccumulateTailEstimates<8>
-    };
-    const computer::ScanTailFunction scalar_scan_tails[PDX::SAQ_MAX_CODE_WIDTH + 1] = {
-        nullptr,
-        scalar_computer::ScanTail<1>,
-        scalar_computer::ScanTail<2>,
-        scalar_computer::ScanTail<3>,
-        scalar_computer::ScanTail<4>,
-        scalar_computer::ScanTail<5>,
-        scalar_computer::ScanTail<6>,
-        scalar_computer::ScanTail<7>,
-        scalar_computer::ScanTail<8>
-    };
-    const auto expect_near = [](const std::vector<float>& expected, const std::vector<float>& actual, size_t n) {
-        for (size_t i = 0; i < n; ++i) {
-            EXPECT_NEAR(expected[i], actual[i], 1e-5f * std::max(1.0f, std::abs(expected[i]))) << "vector " << i;
-        }
-    };
+    const computer::AccumulateTailEstimatesFunction
+        scalar_accumulates[PDX::SAQ_MAX_CODE_WIDTH + 1] =
+            {nullptr,
+             scalar_computer::AccumulateTailEstimates<1>,
+             scalar_computer::AccumulateTailEstimates<2>,
+             scalar_computer::AccumulateTailEstimates<3>,
+             scalar_computer::AccumulateTailEstimates<4>,
+             scalar_computer::AccumulateTailEstimates<5>,
+             scalar_computer::AccumulateTailEstimates<6>,
+             scalar_computer::AccumulateTailEstimates<7>,
+             scalar_computer::AccumulateTailEstimates<8>};
+    const computer::ScanTailFunction scalar_scan_tails[PDX::SAQ_MAX_CODE_WIDTH + 1] =
+        {nullptr,
+         scalar_computer::ScanTail<1>,
+         scalar_computer::ScanTail<2>,
+         scalar_computer::ScanTail<3>,
+         scalar_computer::ScanTail<4>,
+         scalar_computer::ScanTail<5>,
+         scalar_computer::ScanTail<6>,
+         scalar_computer::ScanTail<7>,
+         scalar_computer::ScanTail<8>};
+    const auto expect_near =
+        [](const std::vector<float>& expected, const std::vector<float>& actual, size_t n) {
+            for (size_t i = 0; i < n; ++i) {
+                EXPECT_NEAR(expected[i], actual[i], 1e-5f * std::max(1.0f, std::abs(expected[i])))
+                    << "vector " << i;
+            }
+        };
     std::mt19937 rng(11);
     for (const size_t num_vectors : {1, 5, 16, 33, 100}) {
         SCOPED_TRACE("n=" + std::to_string(num_vectors));
@@ -660,20 +665,40 @@ TEST_F(DistanceComputerTest, SAQ_NoPruningScan_SIMD_MatchesScalar) {
         const auto head_estimates = [&](auto compute_head_estimates) {
             std::vector<float> estimates(num_vectors);
             compute_head_estimates(
-                head.data(), num_vectors, stride, head_codes.data(), -0.02f, 1.5f, 0.7f,
-                head_rescales.data(), squared_norms.data(), estimates.data()
+                head.data(),
+                num_vectors,
+                stride,
+                head_codes.data(),
+                -0.02f,
+                1.5f,
+                0.7f,
+                head_rescales.data(),
+                squared_norms.data(),
+                estimates.data()
             );
             return estimates;
         };
-        const std::vector<float> expected_head = head_estimates(scalar_computer::ComputeHeadEstimates);
+        const std::vector<float> expected_head =
+            head_estimates(scalar_computer::ComputeHeadEstimates);
         expect_near(expected_head, head_estimates(computer::ComputeHeadEstimates), num_vectors);
         SAQSurvivors all(num_vectors);
         ASSERT_EQ(
             num_vectors,
             scalar_computer::ScanHead(
-                head.data(), num_vectors, stride, head_codes.data(), -0.02f, 1.5f, 0.7f,
-                head_rescales.data(), squared_norms.data(), nullptr, std::numeric_limits<float>::infinity(),
-                all.positions.data(), all.estimates.data(), all.rescales.data()
+                head.data(),
+                num_vectors,
+                stride,
+                head_codes.data(),
+                -0.02f,
+                1.5f,
+                0.7f,
+                head_rescales.data(),
+                squared_norms.data(),
+                nullptr,
+                std::numeric_limits<float>::infinity(),
+                all.positions.data(),
+                all.estimates.data(),
+                all.rescales.data()
             )
         );
         expect_near(expected_head, all.estimates, num_vectors);
@@ -690,20 +715,34 @@ TEST_F(DistanceComputerTest, SAQ_NoPruningScan_SIMD_MatchesScalar) {
             const auto accumulated = [&](computer::AccumulateTailEstimatesFunction accumulate) {
                 std::vector<float> estimates = expected_head;
                 accumulate(
-                    records.data(), num_vectors, tail_codes.data(), -0.02f, 0.3f, segment_rescales.data(),
+                    records.data(),
+                    num_vectors,
+                    tail_codes.data(),
+                    -0.02f,
+                    0.3f,
+                    segment_rescales.data(),
                     estimates.data()
                 );
                 return estimates;
             };
             const std::vector<float> expected_tail = accumulated(scalar_accumulates[width]);
-            expect_near(expected_tail, accumulated(computer::GetAccumulateTailEstimates(width)), num_vectors);
+            expect_near(
+                expected_tail, accumulated(computer::GetAccumulateTailEstimates(width)), num_vectors
+            );
             SAQSurvivors survivors = all;
             ASSERT_EQ(
                 num_vectors,
                 scalar_scan_tails[width](
-                    records.data(), tail_codes.data(), -0.02f, 0.3f, segment_rescales.data(),
-                    std::numeric_limits<float>::infinity(), survivors.positions.data(), survivors.estimates.data(),
-                    survivors.rescales.data(), num_vectors
+                    records.data(),
+                    tail_codes.data(),
+                    -0.02f,
+                    0.3f,
+                    segment_rescales.data(),
+                    std::numeric_limits<float>::infinity(),
+                    survivors.positions.data(),
+                    survivors.estimates.data(),
+                    survivors.rescales.data(),
+                    num_vectors
                 )
             );
             expect_near(expected_tail, survivors.estimates, num_vectors);

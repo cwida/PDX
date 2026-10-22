@@ -541,21 +541,24 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             const __m256 estimate = _mm256_fmadd_ps(
                 rescale,
                 _mm256_fmsub_ps(_mm256_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
-                _mm256_add_ps(LoadHalves8(squared_norms + vector_idx, num_valid), query_squared_norm_vec)
+                _mm256_add_ps(
+                    LoadHalves8(squared_norms + vector_idx, num_valid), query_squared_norm_vec
+                )
             );
-            auto keep_mask = static_cast<uint32_t>(
-                                 _mm256_movemask_ps(_mm256_cmp_ps(estimate, threshold_vec, _CMP_LT_OQ))
-                             ) &
-                             ((1u << num_valid) - 1);
+            auto keep_mask =
+                static_cast<uint32_t>(
+                    _mm256_movemask_ps(_mm256_cmp_ps(estimate, threshold_vec, _CMP_LT_OQ))
+                ) &
+                ((1u << num_valid) - 1);
             if (selection != nullptr) {
                 uint8_t selected_bytes[8] = {};
                 std::memcpy(selected_bytes, selection + vector_idx, num_valid);
                 const __m256i selected = _mm256_cvtepu8_epi32(
                     _mm_loadl_epi64(reinterpret_cast<const __m128i*>(selected_bytes))
                 );
-                keep_mask &= static_cast<uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(
-                    _mm256_cmpgt_epi32(selected, _mm256_setzero_si256())
-                )));
+                keep_mask &= static_cast<uint32_t>(_mm256_movemask_ps(
+                    _mm256_castsi256_ps(_mm256_cmpgt_epi32(selected, _mm256_setzero_si256()))
+                ));
             }
             num_kept += Compact8(
                 keep_mask,
@@ -594,7 +597,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             uint16_t lane_rescales[16] = {};
             for (size_t lane = 0; lane < batch_size; ++lane) {
                 const uint32_t position = positions[first_survivor + lane];
-                lane_dots[lane] = TailDot<WIDTH>(records + static_cast<size_t>(position) * 8 * WIDTH, query);
+                lane_dots[lane] =
+                    TailDot<WIDTH>(records + static_cast<size_t>(position) * 8 * WIDTH, query);
                 if (segment_rescales != nullptr) {
                     lane_rescales[lane] = segment_rescales[position];
                 }
@@ -608,7 +612,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 const __m256 estimate = _mm256_fmadd_ps(
                     rescale,
                     _mm256_fmsub_ps(
-                        _mm256_cvtepi32_ps(LoadBytes32(lane_dots + half * 8)), dot_scale_vec, dot_offset_vec
+                        _mm256_cvtepi32_ps(LoadBytes32(lane_dots + half * 8)),
+                        dot_scale_vec,
+                        dot_offset_vec
                     ),
                     _mm256_loadu_ps(estimates + first)
                 );
@@ -652,7 +658,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             const __m256 estimate = _mm256_fmadd_ps(
                 LoadHalves8(head_rescales + vector_idx, num_valid),
                 _mm256_fmsub_ps(_mm256_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
-                _mm256_add_ps(LoadHalves8(squared_norms + vector_idx, num_valid), query_squared_norm_vec)
+                _mm256_add_ps(
+                    LoadHalves8(squared_norms + vector_idx, num_valid), query_squared_norm_vec
+                )
             );
             if (num_valid == 8) {
                 _mm256_storeu_ps(estimates + vector_idx, estimate);
@@ -684,7 +692,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             }
             const __m256 estimate = _mm256_fmadd_ps(
                 LoadHalves8(segment_rescales + vector_idx, num_valid),
-                _mm256_fmsub_ps(_mm256_cvtepi32_ps(LoadBytes32(lane_dots)), dot_scale_vec, dot_offset_vec),
+                _mm256_fmsub_ps(
+                    _mm256_cvtepi32_ps(LoadBytes32(lane_dots)), dot_scale_vec, dot_offset_vec
+                ),
                 num_valid == 8 ? _mm256_loadu_ps(estimates + vector_idx)
                                : _mm256_maskload_ps(estimates + vector_idx, valid_lanes)
             );
@@ -778,7 +788,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
     // All ones in the first num_valid of the 8 32-bit lanes
     static __m256i ValidLanes8(size_t num_valid) {
         return _mm256_cmpgt_epi32(
-            _mm256_set1_epi32(static_cast<int>(num_valid)), _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7)
+            _mm256_set1_epi32(static_cast<int>(num_valid)),
+            _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7)
         );
     }
 
@@ -805,9 +816,10 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
             const uint8_t* group_levels = levels + group_idx * U8_INTERLEAVE_SIZE * stride;
             const __m256i group_vectors =
-                num_valid == 8
-                    ? LoadBytes32(group_levels)
-                    : _mm256_maskload_epi32(reinterpret_cast<const int*>(group_levels), valid_lanes);
+                num_valid == 8 ? LoadBytes32(group_levels)
+                               : _mm256_maskload_epi32(
+                                     reinterpret_cast<const int*>(group_levels), valid_lanes
+                                 );
             dots[group_idx % 2] =
                 AddHeadGroupDots(dots[group_idx % 2], group_vectors, group_codes[group_idx]);
         }
@@ -841,14 +853,17 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             }
             if constexpr ((WIDTH & 2u) != 0) {
                 constexpr int SHIFT = (WIDTH & 4u) != 0 ? 4 : 0;
-                // Both 128-bit lanes get the 16 bytes; each takes the bit pairs of its 16 dimensions
+                // Both 128-bit lanes get the 16 bytes; each takes the bit pairs of its 16
+                // dimensions
                 const __m256i bytes = _mm256_broadcastsi128_si256(LoadBytes16(record));
                 const __m256i two_bit_mask = _mm256_set1_epi8(3);
                 __m256i low_parts = _mm256_and_si256(
-                    _mm256_srlv_epi32(bytes, _mm256_setr_epi32(0, 0, 0, 0, 2, 2, 2, 2)), two_bit_mask
+                    _mm256_srlv_epi32(bytes, _mm256_setr_epi32(0, 0, 0, 0, 2, 2, 2, 2)),
+                    two_bit_mask
                 );
                 __m256i high_parts = _mm256_and_si256(
-                    _mm256_srlv_epi32(bytes, _mm256_setr_epi32(4, 4, 4, 4, 6, 6, 6, 6)), two_bit_mask
+                    _mm256_srlv_epi32(bytes, _mm256_setr_epi32(4, 4, 4, 4, 6, 6, 6, 6)),
+                    two_bit_mask
                 );
                 if constexpr (SHIFT != 0) {
                     low_parts = _mm256_slli_epi16(low_parts, SHIFT);
@@ -863,11 +878,42 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 std::memcpy(&bits, record, sizeof(bits));
                 const __m256i mask_bytes = _mm256_set1_epi64x(static_cast<long long>(bits));
                 const __m256i lane_bits = _mm256_setr_epi8(
-                    1, 2, 4, 8, 16, 32, 64, -128, 1, 2, 4, 8, 16, 32, 64, -128,
-                    1, 2, 4, 8, 16, 32, 64, -128, 1, 2, 4, 8, 16, 32, 64, -128
+                    1,
+                    2,
+                    4,
+                    8,
+                    16,
+                    32,
+                    64,
+                    -128,
+                    1,
+                    2,
+                    4,
+                    8,
+                    16,
+                    32,
+                    64,
+                    -128,
+                    1,
+                    2,
+                    4,
+                    8,
+                    16,
+                    32,
+                    64,
+                    -128,
+                    1,
+                    2,
+                    4,
+                    8,
+                    16,
+                    32,
+                    64,
+                    -128
                 );
                 const __m256i top_bit = _mm256_set1_epi8(static_cast<char>(1u << (WIDTH - 1)));
-                // Lane j of dimensions 32h to 32h + 31 takes mask byte 4h + j / 8 and tests bit j % 8
+                // Lane j of dimensions 32h to 32h + 31 takes mask byte 4h + j / 8 and tests bit j %
+                // 8
                 const auto expand = [&](__m256i byte_indices) {
                     const __m256i selected =
                         _mm256_and_si256(_mm256_shuffle_epi8(mask_bytes, byte_indices), lane_bits);
@@ -876,15 +922,75 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 levels[0] = _mm256_or_si256(
                     levels[0],
                     expand(_mm256_setr_epi8(
-                        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
-                        2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        1,
+                        1,
+                        1,
+                        1,
+                        1,
+                        1,
+                        1,
+                        1,
+                        2,
+                        2,
+                        2,
+                        2,
+                        2,
+                        2,
+                        2,
+                        2,
+                        3,
+                        3,
+                        3,
+                        3,
+                        3,
+                        3,
+                        3,
+                        3
                     ))
                 );
                 levels[1] = _mm256_or_si256(
                     levels[1],
                     expand(_mm256_setr_epi8(
-                        4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5,
-                        6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7
+                        4,
+                        4,
+                        4,
+                        4,
+                        4,
+                        4,
+                        4,
+                        4,
+                        5,
+                        5,
+                        5,
+                        5,
+                        5,
+                        5,
+                        5,
+                        5,
+                        6,
+                        6,
+                        6,
+                        6,
+                        6,
+                        6,
+                        6,
+                        6,
+                        7,
+                        7,
+                        7,
+                        7,
+                        7,
+                        7,
+                        7,
+                        7
                     ))
                 );
             }

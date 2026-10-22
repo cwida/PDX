@@ -446,8 +446,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                                                     : static_cast<__mmask16>((1u << remaining) - 1);
             const __mmask64 valid_levels =
                 remaining >= 16 ? ~__mmask64{0} : (__mmask64{1} << (4 * remaining)) - 1;
-            const __m512i dot =
-                HeadDots16(head + vector_idx * U8_INTERLEAVE_SIZE, stride, valid_levels, query_groups);
+            const __m512i dot = HeadDots16(
+                head + vector_idx * U8_INTERLEAVE_SIZE, stride, valid_levels, query_groups
+            );
             const __m512 rescale =
                 _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, head_rescales + vector_idx));
             const __m512 squared_norm =
@@ -465,9 +466,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             keep = _mm512_mask_cmp_ps_mask(keep, estimate, threshold_vec, _CMP_LT_OQ);
             num_kept += Compact16(
                 keep,
-                _mm512_add_epi32(
-                    _mm512_set1_epi32(static_cast<int>(vector_idx)), lane_offsets
-                ),
+                _mm512_add_epi32(_mm512_set1_epi32(static_cast<int>(vector_idx)), lane_offsets),
                 estimate,
                 rescale,
                 positions + num_kept,
@@ -505,7 +504,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             const __m512i batch_positions =
                 _mm512_maskz_loadu_epi32(valid, positions + first_survivor);
             const __m512i dot = TailDots16(unpack, query, [&](size_t lane) {
-                const uint32_t position = positions[first_survivor + (lane < batch_size ? lane : 0)];
+                const uint32_t position =
+                    positions[first_survivor + (lane < batch_size ? lane : 0)];
                 return records + static_cast<size_t>(position) * 8 * WIDTH;
             });
             __m512 rescale;
@@ -558,8 +558,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                                                     : static_cast<__mmask16>((1u << remaining) - 1);
             const __mmask64 valid_levels =
                 remaining >= 16 ? ~__mmask64{0} : (__mmask64{1} << (4 * remaining)) - 1;
-            const __m512i dot =
-                HeadDots16(head + vector_idx * U8_INTERLEAVE_SIZE, stride, valid_levels, query_groups);
+            const __m512i dot = HeadDots16(
+                head + vector_idx * U8_INTERLEAVE_SIZE, stride, valid_levels, query_groups
+            );
             const __m512 rescale =
                 _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, head_rescales + vector_idx));
             const __m512 squared_norm =
@@ -636,14 +637,16 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 constexpr int SHIFT = (WIDTH & 4u) != 0 ? 4 : 0;
                 // Every 128-bit lane gets the 16 bytes; lane i takes their bits 2i and 2i + 1
                 const __m512i bytes =
-                    _mm512_broadcast_i32x4(_mm_loadu_si128(reinterpret_cast<const __m128i*>(record)));
+                    _mm512_broadcast_i32x4(_mm_loadu_si128(reinterpret_cast<const __m128i*>(record))
+                    );
                 const __m512i parts = _mm512_and_si512(
                     _mm512_srlv_epi32(
                         bytes, _mm512_setr_epi32(0, 0, 0, 0, 2, 2, 2, 2, 4, 4, 4, 4, 6, 6, 6, 6)
                     ),
                     _mm512_set1_epi8(3)
                 );
-                levels = _mm512_or_si512(levels, SHIFT != 0 ? _mm512_slli_epi16(parts, SHIFT) : parts);
+                levels =
+                    _mm512_or_si512(levels, SHIFT != 0 ? _mm512_slli_epi16(parts, SHIFT) : parts);
                 record += 16;
             }
             if constexpr ((WIDTH & 1u) != 0) {
@@ -710,10 +713,15 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
     static constexpr size_t NUM_HEAD_GROUPS = SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
 
     // The head query's groups of 4 codes, each in every lane
-    static void LoadHeadQuery(const int8_t* PDX_RESTRICT query_codes, __m512i query_groups[NUM_HEAD_GROUPS]) {
+    static void LoadHeadQuery(
+        const int8_t* PDX_RESTRICT query_codes,
+        __m512i query_groups[NUM_HEAD_GROUPS]
+    ) {
         for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
             int32_t group_codes;
-            std::memcpy(&group_codes, query_codes + group_idx * U8_INTERLEAVE_SIZE, sizeof(int32_t));
+            std::memcpy(
+                &group_codes, query_codes + group_idx * U8_INTERLEAVE_SIZE, sizeof(int32_t)
+            );
             query_groups[group_idx] = _mm512_set1_epi32(group_codes);
         }
     }
@@ -727,24 +735,36 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         const __m512i query_groups[NUM_HEAD_GROUPS]
     ) {
         __m512i dots[4] = {
-            _mm512_setzero_si512(), _mm512_setzero_si512(), _mm512_setzero_si512(), _mm512_setzero_si512()
+            _mm512_setzero_si512(),
+            _mm512_setzero_si512(),
+            _mm512_setzero_si512(),
+            _mm512_setzero_si512()
         };
         for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
             dots[group_idx % 4] = _mm512_dpbusd_epi32(
                 dots[group_idx % 4],
-                _mm512_maskz_loadu_epi8(valid_levels, levels + group_idx * U8_INTERLEAVE_SIZE * stride),
+                _mm512_maskz_loadu_epi8(
+                    valid_levels, levels + group_idx * U8_INTERLEAVE_SIZE * stride
+                ),
                 query_groups[group_idx]
             );
         }
-        return _mm512_add_epi32(_mm512_add_epi32(dots[0], dots[1]), _mm512_add_epi32(dots[2], dots[3]));
+        return _mm512_add_epi32(
+            _mm512_add_epi32(dots[0], dots[1]), _mm512_add_epi32(dots[2], dots[3])
+        );
     }
 
     // The dots of 16 tail records with the query chunk, lane l's record at record_of_lane(l)
     template <uint32_t WIDTH, class RecordOfLane>
-    static __m512i TailDots16(const LevelUnpacker<WIDTH>& unpack, __m512i query, RecordOfLane record_of_lane) {
+    static __m512i TailDots16(
+        const LevelUnpacker<WIDTH>& unpack,
+        __m512i query,
+        RecordOfLane record_of_lane
+    ) {
         __m512i dots[16];
         for (size_t lane = 0; lane < 16; ++lane) {
-            dots[lane] = _mm512_dpbusd_epi32(_mm512_setzero_si512(), unpack(record_of_lane(lane)), query);
+            dots[lane] =
+                _mm512_dpbusd_epi32(_mm512_setzero_si512(), unpack(record_of_lane(lane)), query);
         }
         return Reduce16(dots);
     }

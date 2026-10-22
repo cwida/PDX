@@ -742,8 +742,8 @@ class PDXIndex : public IPDXIndex {
         index.ComputeClusterOffsets();
     }
 
-    // For DuckIR: recalibrates the SAQ pruning bound on rows of this index, taken as BulkAppend takes
-    // them (e.g. once its row group stops receiving appends)
+    // For DuckIR: recalibrates the SAQ pruning bound on rows of this index, taken as BulkAppend
+    // takes them (e.g. once its row group stops receiving appends)
     void CalibratePruningBound(
         const size_t* row_ids,
         const float* embeddings,
@@ -1080,10 +1080,12 @@ class PDXIndex : public IPDXIndex {
 
         // Gather embeddings and IDs, accumulate centroid sums
         const size_t values_per_embedding = index.GetValuesPerEmbedding();
-        auto embs_a =
-            skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_a * values_per_embedding);
-        auto embs_b =
-            skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_b * values_per_embedding);
+        auto embs_a = skmeans::AllocateBuffer<embedding_storage_t>(
+            GetAllocator(), count_a * values_per_embedding
+        );
+        auto embs_b = skmeans::AllocateBuffer<embedding_storage_t>(
+            GetAllocator(), count_b * values_per_embedding
+        );
         auto ids_a = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_a);
         auto ids_b = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_b);
         auto centroid_sum_a = std::make_unique<float[]>(d); // zero-init needed
@@ -1126,7 +1128,8 @@ class PDXIndex : public IPDXIndex {
             );
             std::memcpy(
                 encoded_rest.get() + i * values_per_embedding,
-                raw_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * values_per_embedding,
+                raw_embeddings.get() +
+                    static_cast<size_t>(group_rest_idx[i]) * values_per_embedding,
                 values_per_embedding * sizeof(embedding_storage_t)
             );
             ids_rest[i] = cluster.indices[group_rest_idx[i]];
@@ -1174,7 +1177,10 @@ class PDXIndex : public IPDXIndex {
             const ClusterFormat<Q> cluster_format = index.GetClusterFormat();
             const auto size_a = static_cast<uint32_t>(count_a);
             cluster_t new_cluster_a(
-                size_a, cluster_t::CapacityFor(size_a, config.max_cluster_size), cluster_format, &GetAllocator()
+                size_a,
+                cluster_t::CapacityFor(size_a, config.max_cluster_size),
+                cluster_format,
+                &GetAllocator()
             );
             new_cluster_a.id = cluster_id;
             if (count_a > 0) {
@@ -1184,7 +1190,10 @@ class PDXIndex : public IPDXIndex {
             uint32_t new_cluster_b_id = index.num_clusters;
             const auto size_b = static_cast<uint32_t>(count_b);
             cluster_t new_cluster_b(
-                size_b, cluster_t::CapacityFor(size_b, config.max_cluster_size), cluster_format, &GetAllocator()
+                size_b,
+                cluster_t::CapacityFor(size_b, config.max_cluster_size),
+                cluster_format,
+                &GetAllocator()
             );
             new_cluster_b.id = new_cluster_b_id;
             if (count_b > 0) {
@@ -1346,9 +1355,9 @@ class PDXIndex : public IPDXIndex {
     }
 
     // Reassign embeddings to their closest centroid among candidate_cluster_ids (all clusters when
-    // null): the dequantized (float) ones choose the cluster, and the encoded ones they were decoded
-    // from are appended as they are.
-    // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
+    // null): the dequantized (float) ones choose the cluster, and the encoded ones they were
+    // decoded from are appended as they are. allow_merges: passed to CheckClusterHealth — false
+    // suppresses merge cascades.
     // TODO(@lkuffo, med): We can optimize reassignments by doing GEMM+PRUNING for assignments
     // TODO(@lkuffo, high): The assignments are computed once, against the centroids at loop start.
     // A split or merge run by CheckClusterHealth inside the loop restructures the clusters (a merge

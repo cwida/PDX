@@ -554,7 +554,8 @@ inline constexpr uint8_t SAQ_BIT_PART_BYTE_INDICES[4][16] = {
     {4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5},
     {6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7}
 };
-inline constexpr uint8_t SAQ_BIT_PART_LANE_BITS[16] = {1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128};
+inline constexpr uint8_t SAQ_BIT_PART_LANE_BITS[16] =
+    {1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128};
 
 template <>
 class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
@@ -578,7 +579,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float* PDX_RESTRICT rescales
     ) {
         int8x16_t query_groups[NUM_HEAD_GROUPS];
-        const int32x4_t dot_bias = vdupq_n_s32(DOT_LEVELS_BIAS * LoadHeadQuery(query_codes, query_groups));
+        const int32x4_t dot_bias =
+            vdupq_n_s32(DOT_LEVELS_BIAS * LoadHeadQuery(query_codes, query_groups));
         const float32x4_t dot_scale_vec = vdupq_n_f32(dot_scale);
         const float32x4_t dot_offset_vec = vdupq_n_f32(dot_offset);
         const float32x4_t query_squared_norm_vec = vdupq_n_f32(query_squared_norm);
@@ -602,9 +604,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             if (selection != nullptr) {
                 uint32_t selected;
                 std::memcpy(&selected, selection + vector_idx, sizeof(uint32_t));
-                const uint32x4_t selected_lanes = vmovl_u16(
-                    vget_low_u16(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(selected))))
-                );
+                const uint32x4_t selected_lanes =
+                    vmovl_u16(vget_low_u16(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(selected)))));
                 keep = vandq_u32(keep, vtstq_u32(selected_lanes, selected_lanes));
             }
             num_kept += Compact4(
@@ -668,8 +669,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             uint16_t lane_rescales[4];
             for (size_t lane = 0; lane < 4; ++lane) {
                 const uint32_t position = positions[survivor_idx + lane];
-                lane_dots[lane] =
-                    TailDot<WIDTH>(records + static_cast<size_t>(position) * 8 * WIDTH, query, dot_bias);
+                lane_dots[lane] = TailDot<WIDTH>(
+                    records + static_cast<size_t>(position) * 8 * WIDTH, query, dot_bias
+                );
                 if (segment_rescales != nullptr) {
                     lane_rescales[lane] = segment_rescales[position];
                 }
@@ -709,7 +711,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 num_survivors - survivor_idx
             );
             std::memmove(
-                positions + num_kept, positions + survivor_idx, num_remainder_kept * sizeof(uint32_t)
+                positions + num_kept,
+                positions + survivor_idx,
+                num_remainder_kept * sizeof(uint32_t)
             );
             std::memmove(
                 estimates + num_kept, estimates + survivor_idx, num_remainder_kept * sizeof(float)
@@ -735,7 +739,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float* PDX_RESTRICT estimates
     ) {
         int8x16_t query_groups[NUM_HEAD_GROUPS];
-        const int32x4_t dot_bias = vdupq_n_s32(DOT_LEVELS_BIAS * LoadHeadQuery(query_codes, query_groups));
+        const int32x4_t dot_bias =
+            vdupq_n_s32(DOT_LEVELS_BIAS * LoadHeadQuery(query_codes, query_groups));
         const float32x4_t dot_scale_vec = vdupq_n_f32(dot_scale);
         const float32x4_t dot_offset_vec = vdupq_n_f32(dot_offset);
         const float32x4_t query_squared_norm_vec = vdupq_n_f32(query_squared_norm);
@@ -791,7 +796,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         for (; vector_idx + 4 <= num_vectors; vector_idx += 4) {
             int32_t lane_dots[4];
             for (size_t lane = 0; lane < 4; ++lane) {
-                lane_dots[lane] = TailDot<WIDTH>(records + (vector_idx + lane) * 8 * WIDTH, query, dot_bias);
+                lane_dots[lane] =
+                    TailDot<WIDTH>(records + (vector_idx + lane) * 8 * WIDTH, query, dot_bias);
             }
             const float32x4_t rescale =
                 vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(segment_rescales + vector_idx)));
@@ -801,7 +807,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                     vld1q_f32(estimates + vector_idx),
                     rescale,
                     vsubq_f32(
-                        vmulq_f32(vcvtq_f32_s32(vld1q_s32(lane_dots)), dot_scale_vec), dot_offset_vec
+                        vmulq_f32(vcvtq_f32_s32(vld1q_s32(lane_dots)), dot_scale_vec),
+                        dot_offset_vec
                     )
                 )
             );
@@ -853,12 +860,10 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         const int16x8_t query_high = vmovl_high_s8(query);
         const int32x4_t products_0 = vmull_s16(vget_low_s16(levels_low), vget_low_s16(query_low));
         const int32x4_t products_1 = vmull_high_s16(levels_low, query_low);
-        const int32x4_t products_2 =
-            vmull_s16(vget_low_s16(levels_high), vget_low_s16(query_high));
+        const int32x4_t products_2 = vmull_s16(vget_low_s16(levels_high), vget_low_s16(query_high));
         const int32x4_t products_3 = vmull_high_s16(levels_high, query_high);
         return vaddq_s32(
-            acc,
-            vpaddq_s32(vpaddq_s32(products_0, products_1), vpaddq_s32(products_2, products_3))
+            acc, vpaddq_s32(vpaddq_s32(products_0, products_1), vpaddq_s32(products_2, products_3))
         );
     }
 
@@ -891,11 +896,16 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
     static constexpr size_t NUM_HEAD_GROUPS = SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
 
     // The head query's groups of 4 codes, each in every lane; returns the codes' sum
-    static int32_t LoadHeadQuery(const int8_t* PDX_RESTRICT query_codes, int8x16_t query_groups[NUM_HEAD_GROUPS]) {
+    static int32_t LoadHeadQuery(
+        const int8_t* PDX_RESTRICT query_codes,
+        int8x16_t query_groups[NUM_HEAD_GROUPS]
+    ) {
         int32_t codes_sum = 0;
         for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
             int32_t group_codes;
-            std::memcpy(&group_codes, query_codes + group_idx * U8_INTERLEAVE_SIZE, sizeof(int32_t));
+            std::memcpy(
+                &group_codes, query_codes + group_idx * U8_INTERLEAVE_SIZE, sizeof(int32_t)
+            );
             query_groups[group_idx] = vreinterpretq_s8_s32(vdupq_n_s32(group_codes));
             for (size_t k = 0; k < U8_INTERLEAVE_SIZE; ++k) {
                 codes_sum += query_codes[group_idx * U8_INTERLEAVE_SIZE + k];
@@ -932,14 +942,20 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         return codes_sum;
     }
 
-    // The dot of a WIDTH-bit tail record with its query chunk; dot_bias completes DotLevels' at 8 bits
+    // The dot of a WIDTH-bit tail record with its query chunk; dot_bias completes DotLevels' at 8
+    // bits
     template <uint32_t WIDTH>
-    static int32_t TailDot(const uint8_t* PDX_RESTRICT record, const int8x16_t query[4], int32_t dot_bias) {
+    static int32_t TailDot(
+        const uint8_t* PDX_RESTRICT record,
+        const int8x16_t query[4],
+        int32_t dot_bias
+    ) {
         uint8x16_t levels[4];
         UnpackLevels<WIDTH>(record, levels);
         int32x4_t dot = vdupq_n_s32(0);
         for (size_t i = 0; i < 4; ++i) {
-            dot = WIDTH == 8 ? DotLevels(dot, levels[i], query[i]) : DotSmallLevels(dot, levels[i], query[i]);
+            dot = WIDTH == 8 ? DotLevels(dot, levels[i], query[i])
+                             : DotSmallLevels(dot, levels[i], query[i]);
         }
         return vaddvq_s32(dot) + dot_bias;
     }
@@ -976,7 +992,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                     vshrq_n_u8(bytes, 6)
                 };
                 for (size_t i = 0; i < 4; ++i) {
-                    levels[i] = vorrq_u8(levels[i], SHIFT != 0 ? vshlq_n_u8(parts[i], SHIFT) : parts[i]);
+                    levels[i] =
+                        vorrq_u8(levels[i], SHIFT != 0 ? vshlq_n_u8(parts[i], SHIFT) : parts[i]);
                 }
                 record += 16;
             }

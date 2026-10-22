@@ -98,7 +98,13 @@ TEST(TransformedInput, PDXIndexSAQ) {
     const PDX::IVFUtils ivf_utils(executor);
     auto normalized = ivf_utils.Normalize(data.train.data(), n_build, d);
     PDX::SAQFit fit = PDX::SAQQuantizer::Fit(
-        normalized.get(), n_build, d, config.saq_bits_per_dimension, config.seed, executor, allocator
+        normalized.get(),
+        n_build,
+        d,
+        config.saq_bits_per_dimension,
+        config.seed,
+        executor,
+        allocator
     );
     PDX::ADSamplingPruner pruner(d, fit.rotation.get(), d);
     auto transformed = ivf_utils.NormalizeAndRotate(data.train.data(), n_build, d, true, pruner);

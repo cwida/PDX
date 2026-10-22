@@ -219,7 +219,8 @@ int main(int argc, char* argv[]) {
         );
     } else {
         std::cerr << "Unknown index type: " << index_type << "\n";
-        std::cerr << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4\n";
+        std::cerr
+            << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4\n";
         return 1;
     }
 

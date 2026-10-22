@@ -296,8 +296,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::U8> {
 template <>
 class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
   public:
-    // The head estimates of the selected vectors (8-bit levels, 4 dimensions per vector as in the U8
-    // vertical block, groups stride vectors apart); keeps those below threshold, compacted
+    // The head estimates of the selected vectors (8-bit levels, 4 dimensions per vector as in the
+    // U8 vertical block, groups stride vectors apart); keeps those below threshold, compacted
     static size_t ScanHead(
         const uint8_t* PDX_RESTRICT head,
         size_t num_vectors,
@@ -320,9 +320,10 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 continue;
             }
             int32_t dot = 0;
-            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
-                const uint8_t* levels =
-                    head + group_idx * U8_INTERLEAVE_SIZE * stride + vector_idx * U8_INTERLEAVE_SIZE;
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                 ++group_idx) {
+                const uint8_t* levels = head + group_idx * U8_INTERLEAVE_SIZE * stride +
+                                        vector_idx * U8_INTERLEAVE_SIZE;
                 for (size_t k = 0; k < U8_INTERLEAVE_SIZE; ++k) {
                     dot += query_codes[group_idx * U8_INTERLEAVE_SIZE + k] * levels[k];
                 }
@@ -400,9 +401,10 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
     ) {
         for (size_t vector_idx = 0; vector_idx < num_vectors; ++vector_idx) {
             int32_t dot = 0;
-            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE; ++group_idx) {
-                const uint8_t* levels =
-                    head + group_idx * U8_INTERLEAVE_SIZE * stride + vector_idx * U8_INTERLEAVE_SIZE;
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                 ++group_idx) {
+                const uint8_t* levels = head + group_idx * U8_INTERLEAVE_SIZE * stride +
+                                        vector_idx * U8_INTERLEAVE_SIZE;
                 for (size_t k = 0; k < U8_INTERLEAVE_SIZE; ++k) {
                     dot += query_codes[group_idx * U8_INTERLEAVE_SIZE + k] * levels[k];
                 }
@@ -442,12 +444,18 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
     }
 
     // A chunk's record: its SAQ_CHUNK_SIZE levels of width bits in 8 * width bytes. At 8 bits the
-    // levels are stored as they are. Below, the width splits into parts of 4, 2 and 1 bits (low bits
-    // first), each spread across byte lanes so the kernels unpack with shifts and masks: the 4-bit
-    // part is 32 bytes (byte b: dim b in the low nibble, dim b + 32 in the high one), the 2-bit part
-    // 16 bytes (byte b: dims b, b + 16, b + 32 and b + 48), the 1-bit part a 64-bit mask (bit j: dim j)
-    // TODO(@lkuffo, mid): SIMD PackRecord and UnpackRecord (every build, append and split encodes rows)
-    static void PackRecord(const uint8_t* PDX_RESTRICT levels, uint32_t width, uint8_t* PDX_RESTRICT record) {
+    // levels are stored as they are. Below, the width splits into parts of 4, 2 and 1 bits (low
+    // bits first), each spread across byte lanes so the kernels unpack with shifts and masks: the
+    // 4-bit part is 32 bytes (byte b: dim b in the low nibble, dim b + 32 in the high one), the
+    // 2-bit part 16 bytes (byte b: dims b, b + 16, b + 32 and b + 48), the 1-bit part a 64-bit mask
+    // (bit j: dim j)
+    // TODO(@lkuffo, mid): SIMD PackRecord and UnpackRecord (every build, append and split encodes
+    // rows)
+    static void PackRecord(
+        const uint8_t* PDX_RESTRICT levels,
+        uint32_t width,
+        uint8_t* PDX_RESTRICT record
+    ) {
         static_assert(SAQ_CHUNK_SIZE == 64, "the 1-bit part is a 64-bit mask");
         if (width == SAQ_MAX_CODE_WIDTH) {
             std::memcpy(record, levels, SAQ_CHUNK_SIZE);
@@ -457,7 +465,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         if ((width & 4u) != 0) {
             for (size_t byte_idx = 0; byte_idx < SAQ_CHUNK_SIZE / 2; ++byte_idx) {
                 record[byte_idx] = static_cast<uint8_t>(
-                    (levels[byte_idx] & 0xFu) | ((levels[byte_idx + SAQ_CHUNK_SIZE / 2] & 0xFu) << 4)
+                    (levels[byte_idx] & 0xFu) |
+                    ((levels[byte_idx + SAQ_CHUNK_SIZE / 2] & 0xFu) << 4)
                 );
             }
             record += SAQ_CHUNK_SIZE / 2;
@@ -467,7 +476,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             for (size_t byte_idx = 0; byte_idx < SAQ_CHUNK_SIZE / 4; ++byte_idx) {
                 uint32_t packed = 0;
                 for (size_t lane = 0; lane < 4; ++lane) {
-                    packed |= ((levels[byte_idx + lane * SAQ_CHUNK_SIZE / 4] >> shift) & 3u) << (2 * lane);
+                    packed |= ((levels[byte_idx + lane * SAQ_CHUNK_SIZE / 4] >> shift) & 3u)
+                              << (2 * lane);
                 }
                 record[byte_idx] = static_cast<uint8_t>(packed);
             }
@@ -477,13 +487,18 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         if ((width & 1u) != 0) {
             uint64_t bits = 0;
             for (size_t dimension_idx = 0; dimension_idx < SAQ_CHUNK_SIZE; ++dimension_idx) {
-                bits |= static_cast<uint64_t>((levels[dimension_idx] >> shift) & 1u) << dimension_idx;
+                bits |= static_cast<uint64_t>((levels[dimension_idx] >> shift) & 1u)
+                        << dimension_idx;
             }
             std::memcpy(record, &bits, sizeof(bits));
         }
     }
 
-    static void UnpackRecord(const uint8_t* PDX_RESTRICT record, uint32_t width, uint8_t* PDX_RESTRICT levels) {
+    static void UnpackRecord(
+        const uint8_t* PDX_RESTRICT record,
+        uint32_t width,
+        uint8_t* PDX_RESTRICT levels
+    ) {
         if (width == SAQ_MAX_CODE_WIDTH) {
             std::memcpy(levels, record, SAQ_CHUNK_SIZE);
             return;
@@ -512,7 +527,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             uint64_t bits;
             std::memcpy(&bits, record, sizeof(bits));
             for (size_t dimension_idx = 0; dimension_idx < SAQ_CHUNK_SIZE; ++dimension_idx) {
-                levels[dimension_idx] |= static_cast<uint8_t>(((bits >> dimension_idx) & 1u) << shift);
+                levels[dimension_idx] |=
+                    static_cast<uint8_t>(((bits >> dimension_idx) & 1u) << shift);
             }
         }
     }

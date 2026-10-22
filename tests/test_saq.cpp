@@ -222,7 +222,8 @@ TEST_F(SAQQuantizerTest, ClusterKeepsEncodedEmbeddings) {
     const size_t stride = cluster.max_capacity;
     for (const uint32_t position : {7u, 63u}) {
         const uint8_t* row = encoded.data() + position * row_size;
-        for (size_t group_idx = 0; group_idx < PDX::SAQ_CHUNK_SIZE / PDX::U8_INTERLEAVE_SIZE; ++group_idx) {
+        for (size_t group_idx = 0; group_idx < PDX::SAQ_CHUNK_SIZE / PDX::U8_INTERLEAVE_SIZE;
+             ++group_idx) {
             const size_t offset = group_idx * PDX::U8_INTERLEAVE_SIZE;
             EXPECT_EQ(
                 0,
@@ -237,11 +238,15 @@ TEST_F(SAQQuantizerTest, ClusterKeepsEncodedEmbeddings) {
             const size_t offset = model.chunk_record_offsets[chunk_idx];
             const size_t size = model.chunk_record_offsets[chunk_idx + 1] - offset;
             EXPECT_EQ(
-                0, std::memcmp(cluster.data.get() + stride * offset + position * size, row + offset, size)
+                0,
+                std::memcmp(
+                    cluster.data.get() + stride * offset + position * size, row + offset, size
+                )
             );
         }
         for (uint32_t factor_idx = 0; factor_idx <= model.num_segments; ++factor_idx) {
-            const size_t offset = model.chunk_record_offsets[model.num_chunks] + factor_idx * sizeof(uint16_t);
+            const size_t offset =
+                model.chunk_record_offsets[model.num_chunks] + factor_idx * sizeof(uint16_t);
             EXPECT_EQ(
                 0,
                 std::memcmp(
@@ -278,7 +283,9 @@ TEST_F(SAQQuantizerTest, ClusterKeepsEncodedEmbeddings) {
     PDX::Cluster<PDX::SAQ> loaded(cluster.num_embeddings, cluster.num_embeddings + 1, format);
     PDX::StreamReader reader{stream};
     loaded.LoadPDXData(reader);
-    std::memcpy(loaded.indices.get(), cluster.indices.get(), cluster.num_embeddings * sizeof(uint32_t));
+    std::memcpy(
+        loaded.indices.get(), cluster.indices.get(), cluster.num_embeddings * sizeof(uint32_t)
+    );
     expect_embeddings(loaded);
 }
 
@@ -291,7 +298,12 @@ TEST(SAQPruningBoundTest, CalibratedBoundKeepsRecallAndPrunes) {
     constexpr size_t d = TestUtils::MAX_D;
     const auto data = TestUtils::LoadTestData(d);
     const auto gt = TestUtils::ComputeBruteForceKNN(
-        data.train.data(), data.queries.data(), TestUtils::N_TRAIN, TestUtils::N_QUERIES, d, TestUtils::KNN
+        data.train.data(),
+        data.queries.data(),
+        TestUtils::N_TRAIN,
+        TestUtils::N_QUERIES,
+        d,
+        TestUtils::KNN
     );
     const auto recall_at = [&](float significance) {
         PDX::PDXIndexConfig config{
@@ -321,7 +333,12 @@ TEST(SAQPruningBoundTest, RecalibrationOnTheIndexRowsKeepsRecall) {
     constexpr size_t d = TestUtils::MAX_D;
     const auto data = TestUtils::LoadTestData(d);
     const auto gt = TestUtils::ComputeBruteForceKNN(
-        data.train.data(), data.queries.data(), TestUtils::N_TRAIN, TestUtils::N_QUERIES, d, TestUtils::KNN
+        data.train.data(),
+        data.queries.data(),
+        TestUtils::N_TRAIN,
+        TestUtils::N_QUERIES,
+        d,
+        TestUtils::KNN
     );
     PDX::PDXIndexConfig config{
         .num_dimensions = static_cast<uint32_t>(d),
