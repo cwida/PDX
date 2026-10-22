@@ -662,36 +662,9 @@ class PDXearch {
         if (n_vectors == 0) {
             return;
         }
-        const SAQModel& model = pdx_data.saq_model;
-        const auto* rescales = reinterpret_cast<const uint16_t*>(
-            data + buffer_stride * model.chunk_record_offsets[model.num_chunks]
+        ComputeSAQEstimates(
+            data, n_vectors, buffer_stride, pdx_data.saq_model, saq_query, pruning_distances
         );
-        const int8_t* query_codes = saq_query.GetCodesPtr();
-        const float* dot_scales = saq_query.GetChunkDotScalesPtr();
-        const float* dot_offsets = saq_query.GetChunkDotOffsetsPtr();
-        distance_computer_t::ComputeHeadEstimates(
-            data,
-            n_vectors,
-            buffer_stride,
-            query_codes,
-            dot_scales[0],
-            dot_offsets[0],
-            saq_query.GetResidualSquaredNorm(),
-            rescales,
-            rescales + model.num_segments * buffer_stride,
-            pruning_distances
-        );
-        for (uint32_t chunk_idx = 1; chunk_idx < model.num_chunks; ++chunk_idx) {
-            distance_computer_t::GetAccumulateTailEstimates(model.chunk_widths[chunk_idx])(
-                data + buffer_stride * model.chunk_record_offsets[chunk_idx],
-                n_vectors,
-                query_codes + static_cast<size_t>(chunk_idx) * SAQ_CHUNK_SIZE,
-                dot_scales[chunk_idx],
-                dot_offsets[chunk_idx],
-                rescales + model.chunk_segments[chunk_idx] * buffer_stride,
-                pruning_distances
-            );
-        }
         MaskDistancesWithTombstones(tombstones, pruning_distances);
         size_t n_candidates = 0;
         InitPositionsArray<FILTERED>(

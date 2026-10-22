@@ -564,11 +564,6 @@ class PDXIndex : public IPDXIndex {
             );
             index.saq_model = std::move(saq_model);
             index.saq_chunk_epsilons.reset(new float[index.saq_model.num_chunks]);
-            std::fill_n(
-                index.saq_chunk_epsilons.get(),
-                index.saq_model.num_chunks,
-                std::numeric_limits<float>::infinity()
-            );
         } else {
             index = PDX::IVF<Q>(
                 num_dimensions,
@@ -622,6 +617,11 @@ class PDXIndex : public IPDXIndex {
             config.max_cluster_size,
             config.expect_appends
         );
+        if constexpr (Q == PDX::SAQ) {
+            CalibrateSAQPruningBoundOnSample(
+                ivf_utils, row_ids, preprocessed, num_embeddings, /*is_data_transformed=*/true
+            );
+        }
 
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         BuildRowIdClusterMapping();
@@ -742,6 +742,35 @@ class PDXIndex : public IPDXIndex {
         index.ComputeClusterOffsets();
     }
 
+    // For DuckIR: recalibrates the SAQ pruning bound on rows of this index, taken as BulkAppend takes
+    // them (e.g. once its row group stops receiving appends)
+    void CalibratePruningBound(
+        const size_t* row_ids,
+        const float* embeddings,
+        const size_t num_embeddings
+    ) {
+        static_assert(Q == SAQ, "Only SAQ indexes calibrate a pruning bound");
+        if (num_embeddings == 0) {
+            throw std::invalid_argument("CalibratePruningBound: no rows to calibrate on");
+        }
+        if (index.num_clusters == 0) {
+            throw std::logic_error("CalibratePruningBound: the index is not built");
+        }
+        if (searcher->cluster_source) {
+            throw std::logic_error(
+                "CalibratePruningBound: the index was loaded without its clusters' data"
+            );
+        }
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        CalibrateSAQPruningBoundOnSample(
+            IVFUtils(GetExecutor(), &GetAllocator()),
+            row_ids,
+            embeddings,
+            num_embeddings,
+            config.is_data_transformed
+        );
+    }
+
   private:
     static constexpr PDXIndexType GetIndexType() {
         if constexpr (Q == F32)
@@ -787,6 +816,50 @@ class PDXIndex : public IPDXIndex {
         index.saq_model = std::move(fit.model);
         return ivf_utils.NormalizeAndRotate(
             fit_input, num_embeddings, num_dimensions, /*normalize=*/false, *pruner
+        );
+    }
+
+    // Calibrates the SAQ pruning bound on up to SAQ_CALIBRATION_QUERIES of these rows of the index,
+    // sampled with the config's seed and transformed unless they already are
+    void CalibrateSAQPruningBoundOnSample(
+        const IVFUtils& ivf_utils,
+        const size_t* row_ids,
+        const float* embeddings,
+        size_t num_embeddings,
+        bool is_data_transformed
+    ) {
+        const uint32_t num_dimensions = index.num_dimensions;
+        const size_t num_pseudo_queries = std::min(num_embeddings, SAQ_CALIBRATION_QUERIES);
+        auto positions = skmeans::AllocateBuffer<size_t>(GetAllocator(), num_embeddings);
+        std::iota(positions.get(), positions.get() + num_embeddings, size_t{0});
+        std::mt19937 generator(config.seed);
+        for (size_t i = 0; i < num_pseudo_queries; ++i) {
+            std::uniform_int_distribution<size_t> pick(i, num_embeddings - 1);
+            std::swap(positions[i], positions[pick(generator)]);
+        }
+        auto sample =
+            skmeans::AllocateBuffer<float>(GetAllocator(), num_pseudo_queries * num_dimensions);
+        std::unique_ptr<size_t[]> sample_row_ids(new size_t[num_pseudo_queries]);
+        for (size_t i = 0; i < num_pseudo_queries; ++i) {
+            std::memcpy(
+                sample.get() + i * num_dimensions,
+                embeddings + positions[i] * num_dimensions,
+                num_dimensions * sizeof(float)
+            );
+            sample_row_ids[i] = row_ids[positions[i]];
+        }
+        skmeans::AllocatedBuffer<float> transformed;
+        if (!is_data_transformed) {
+            transformed = ivf_utils.NormalizeAndRotate(
+                sample.get(), num_pseudo_queries, num_dimensions, index.is_normalized, *pruner
+            );
+        }
+        ivf_utils.CalibrateSAQPruningBound(
+            index,
+            is_data_transformed ? sample.get() : transformed.get(),
+            sample_row_ids.get(),
+            num_pseudo_queries,
+            config.saq_pruning_significance
         );
     }
 

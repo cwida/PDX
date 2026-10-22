@@ -118,6 +118,11 @@ static constexpr uint32_t SAQ_MAX_CODE_WIDTH = 8;
 static constexpr size_t SAQ_FIT_SAMPLE_SIZE = 122880;
 // The SAQ scans read and write up to one batch (16 lanes) past the last vector
 static constexpr size_t SAQ_SCAN_PADDING = 16;
+// The SAQ pruning bound's calibration: rows of the index as queries, each against its nearest
+// neighbours by estimate in its nearest clusters
+static constexpr size_t SAQ_CALIBRATION_QUERIES = 1000;
+static constexpr uint32_t SAQ_CALIBRATION_CLUSTERS = 16;
+static constexpr size_t SAQ_CALIBRATION_NEIGHBORS = 20;
 
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most

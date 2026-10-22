@@ -727,4 +727,45 @@ class SAQQuery {
     float residual_squared_norm = 0.0f;
 };
 
+// Every vector's estimate over all of its chunks, from a cluster's SAQ data whose sections hold
+// stride slots; estimates has room for n_vectors + SAQ_SCAN_PADDING values
+inline void ComputeSAQEstimates(
+    const uint8_t* data,
+    size_t n_vectors,
+    size_t stride,
+    const SAQModel& model,
+    const SAQQuery& query,
+    float* estimates
+) {
+    using computer = DistanceComputer<DistanceMetric::L2SQ, SAQ>;
+    const auto* rescales =
+        reinterpret_cast<const uint16_t*>(data + stride * model.chunk_record_offsets[model.num_chunks]);
+    const int8_t* query_codes = query.GetCodesPtr();
+    const float* dot_scales = query.GetChunkDotScalesPtr();
+    const float* dot_offsets = query.GetChunkDotOffsetsPtr();
+    computer::ComputeHeadEstimates(
+        data,
+        n_vectors,
+        stride,
+        query_codes,
+        dot_scales[0],
+        dot_offsets[0],
+        query.GetResidualSquaredNorm(),
+        rescales,
+        rescales + model.num_segments * stride,
+        estimates
+    );
+    for (uint32_t chunk_idx = 1; chunk_idx < model.num_chunks; ++chunk_idx) {
+        computer::GetAccumulateTailEstimates(model.chunk_widths[chunk_idx])(
+            data + stride * model.chunk_record_offsets[chunk_idx],
+            n_vectors,
+            query_codes + static_cast<size_t>(chunk_idx) * SAQ_CHUNK_SIZE,
+            dot_scales[chunk_idx],
+            dot_offsets[chunk_idx],
+            rescales + model.chunk_segments[chunk_idx] * stride,
+            estimates
+        );
+    }
+}
+
 } // namespace PDX

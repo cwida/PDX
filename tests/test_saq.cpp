@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstring>
 #include <gtest/gtest.h>
+#include <numeric>
 #include <sstream>
 #include <vector>
 
@@ -279,6 +280,74 @@ TEST_F(SAQQuantizerTest, ClusterKeepsEncodedEmbeddings) {
     loaded.LoadPDXData(reader);
     std::memcpy(loaded.indices.get(), cluster.indices.get(), cluster.num_embeddings * sizeof(uint32_t));
     expect_embeddings(loaded);
+}
+
+static constexpr uint32_t PRUNING_TEST_N_PROBE = 16;
+static constexpr float PRUNING_RECALL_TOLERANCE = 0.01f;
+
+// The bound calibrated at P_s 0.01 keeps the recall of one that barely prunes (P_s 1e-6), and a
+// loose one (P_s 0.5) prunes true neighbours
+TEST(SAQPruningBoundTest, CalibratedBoundKeepsRecallAndPrunes) {
+    constexpr size_t d = TestUtils::MAX_D;
+    const auto data = TestUtils::LoadTestData(d);
+    const auto gt = TestUtils::ComputeBruteForceKNN(
+        data.train.data(), data.queries.data(), TestUtils::N_TRAIN, TestUtils::N_QUERIES, d, TestUtils::KNN
+    );
+    const auto recall_at = [&](float significance) {
+        PDX::PDXIndexConfig config{
+            .num_dimensions = static_cast<uint32_t>(d),
+            .distance_metric = PDX::DistanceMetric::L2SQ,
+            .seed = TestUtils::SEED,
+            .normalize = true,
+            .sampling_fraction = 1.0f,
+            .hierarchical_indexing = true,
+        };
+        config.saq_pruning_significance = significance;
+        auto index = TestUtils::BuildIndexWithConfig(
+            "pdx_saq3", config, data.train.data(), TestUtils::N_TRAIN
+        );
+        index->SetNProbe(PRUNING_TEST_N_PROBE);
+        return TestUtils::ComputeAverageRecall(
+            *index, data.queries.data(), TestUtils::N_QUERIES, d, TestUtils::KNN, gt
+        );
+    };
+    const float barely_pruned_recall = recall_at(1e-6f);
+    EXPECT_GE(recall_at(0.01f), barely_pruned_recall - PRUNING_RECALL_TOLERANCE);
+    EXPECT_LT(recall_at(0.5f), barely_pruned_recall);
+}
+
+// Recalibrating an index on its own rows keeps its recall
+TEST(SAQPruningBoundTest, RecalibrationOnTheIndexRowsKeepsRecall) {
+    constexpr size_t d = TestUtils::MAX_D;
+    const auto data = TestUtils::LoadTestData(d);
+    const auto gt = TestUtils::ComputeBruteForceKNN(
+        data.train.data(), data.queries.data(), TestUtils::N_TRAIN, TestUtils::N_QUERIES, d, TestUtils::KNN
+    );
+    PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+    };
+    PDX::PDXIndexSAQ index(config);
+    index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    index.SetNProbe(PRUNING_TEST_N_PROBE);
+    const float built_recall = TestUtils::ComputeAverageRecall(
+        index, data.queries.data(), TestUtils::N_QUERIES, d, TestUtils::KNN, gt
+    );
+
+    std::vector<size_t> row_ids(TestUtils::N_TRAIN);
+    std::iota(row_ids.begin(), row_ids.end(), 0);
+    index.CalibratePruningBound(row_ids.data(), data.train.data(), TestUtils::N_TRAIN);
+    EXPECT_NEAR(
+        TestUtils::ComputeAverageRecall(
+            index, data.queries.data(), TestUtils::N_QUERIES, d, TestUtils::KNN, gt
+        ),
+        built_recall,
+        PRUNING_RECALL_TOLERANCE
+    );
 }
 
 } // namespace
