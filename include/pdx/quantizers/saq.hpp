@@ -406,7 +406,8 @@ class SAQQuantizer : public Quantizer {
         std::make_heap(heap, heap + heap_size, greater);
         while (heap_size > 0) {
             std::pop_heap(heap, heap + heap_size, greater);
-            const auto [scale, i] = heap[--heap_size];
+            --heap_size;
+            const auto [scale, i] = heap[heap_size];
             levels[i] += 1;
             const int32_t level = levels[i];
             squared_denominator += static_cast<double>(2 * level);
