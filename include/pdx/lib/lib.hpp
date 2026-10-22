@@ -66,10 +66,13 @@ class PyPDXIndex {
             index = std::make_unique<PDXTreeIndexF32>(config);
         } else if (index_type == "pdx_tree_u8") {
             index = std::make_unique<PDXTreeIndexU8>(config);
+        } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+            config.saq_bits_per_dimension = index_type == "pdx_saq3" ? 3 : 4;
+            index = std::make_unique<PDXIndexSAQ>(config);
         } else {
             throw std::runtime_error(
                 "Unknown index type: " + index_type +
-                ". Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8"
+                ". Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4"
             );
         }
         // NOLINTEND(bugprone-branch-clone)

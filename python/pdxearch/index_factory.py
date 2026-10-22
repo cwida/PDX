@@ -125,6 +125,67 @@ class IndexPDXIVFSQ8:
         return self._index.get_in_memory_size_in_bytes()
 
 
+class IndexPDXIVFSAQ:
+    """Single-level IVF index (SAQ: PCA-segmented quantization at 3 or 4 bits per dimension)."""
+
+    def __init__(
+        self,
+        *,
+        num_dimensions: int,
+        bits: int = 3,
+        distance_metric: str = "l2sq",
+        normalize: bool = True,
+        seed: int = 42,
+        num_clusters: int = 0,
+        sampling_fraction: float = 0.0,
+        kmeans_iters: int = 10,
+        hierarchical_indexing: bool = True,
+        n_threads: int = 0,
+    ) -> None:
+        if bits not in (3, 4):
+            raise ValueError(f"bits must be 3 or 4, got {bits}")
+        self._index = _PDXIndex(
+            f"pdx_saq{bits}", num_dimensions, METRIC_MAP[distance_metric],
+            seed, num_clusters, 0, normalize, sampling_fraction, kmeans_iters,
+            hierarchical_indexing, n_threads,
+        )
+
+    def build(self, data: np.ndarray) -> None:
+        self._index.build_index(np.ascontiguousarray(data, dtype=np.float32))
+
+    def search(self, query: np.ndarray, knn: int, nprobe: int = DEFAULT_NPROBE):
+        self._index.set_nprobe(nprobe)
+        return self._index.search(np.ascontiguousarray(query, dtype=np.float32), knn)
+
+    def filtered_search(self, query: np.ndarray, knn: int, row_ids: np.ndarray, nprobe: int = DEFAULT_NPROBE):
+        self._index.set_nprobe(nprobe)
+        return self._index.filtered_search(
+            np.ascontiguousarray(query, dtype=np.float32), knn,
+            np.ascontiguousarray(row_ids, dtype=np.uint64),
+        )
+
+    def append(self, row_id: int, embedding: np.ndarray) -> None:
+        self._index.append(row_id, np.ascontiguousarray(embedding, dtype=np.float32))
+
+    def delete(self, row_id: int) -> bool:
+        return self._index.delete(row_id)
+
+    def save(self, path: str) -> None:
+        self._index.save(path)
+
+    @property
+    def num_dimensions(self) -> int:
+        return self._index.get_num_dimensions()
+
+    @property
+    def num_clusters(self) -> int:
+        return self._index.get_num_clusters()
+
+    @property
+    def in_memory_size_bytes(self) -> int:
+        return self._index.get_in_memory_size_in_bytes()
+
+
 class IndexPDXIVFTree:
     """Two-level IVF index (F32)."""
 

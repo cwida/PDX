@@ -87,6 +87,9 @@ PDX programs have three parameters:
    - `pdx_tree_f32`: Tree IVF index with float32 vectors
    - `pdx_u8`: IVF index with 8-bit scalar quantization
    - `pdx_tree_u8`: Tree IVF index with 8-bit scalar quantization
+
+  Two more types take SAQ codes, in `BenchmarkEndToEnd`, `BenchmarkBulkAppend` and `BenchmarkSerialization`:
+   - `pdx_saq3` / `pdx_saq4`: IVF index with SAQ codes at 3 or 4 bits per dimension
 - `<dataset_name>` to specify the identifier of the dataset to use. If not given, it will try to use all the datasets set in [benchmark_utils.hpp](/include/utils/benchmark_utils.hpp) or [benchmark_utils.py](/benchmarks/python_scripts/benchmark_utils.py) in the Python scripts.
 - `<nprobe>` to specify the `nprobe` parameter on the IVF index, which controls the recall. If not given or `0`, it will use a series of parameters from 2 to 4096 set in the [benchmark_utils.hpp](/include/utils/benchmark_utils.hpp) or [benchmark_utils.py](/benchmarks/python_scripts/benchmark_utils.py) in the Python scripts.
 
