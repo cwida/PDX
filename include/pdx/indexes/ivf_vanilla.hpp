@@ -513,6 +513,15 @@ class PDXIndex : public IPDXIndex {
 
         assert(num_embeddings > 0);
 
+        if constexpr (Q == PDX::SAQ) {
+            const bool fits_saq = !config.is_data_transformed && (!pruner || owned_pruner);
+            if (!fits_saq && index.saq_model.num_dimensions == 0) {
+                throw std::invalid_argument(
+                    "BuildIndex: an SAQ index on a shared pruner or on transformed data needs the "
+                    "shared fit's model"
+                );
+            }
+        }
         skmeans::AllocatedBuffer<float> transformed;
         if (!config.is_data_transformed) {
             if constexpr (Q == PDX::SAQ) {
@@ -520,12 +529,6 @@ class PDXIndex : public IPDXIndex {
             } else {
                 transformed = ivf_utils.NormalizeAndRotate(
                     embeddings, num_embeddings, num_dimensions, normalize, *pruner
-                );
-            }
-        } else if constexpr (Q == PDX::SAQ) {
-            if (index.saq_model.num_dimensions == 0) {
-                throw std::invalid_argument(
-                    "BuildIndex: SAQ on transformed data needs the constructor of a shared fit"
                 );
             }
         }

@@ -636,6 +636,9 @@ class SAQQuantizer : public Quantizer {
                 best_units = u;
             }
         }
+        // TODO(@lkuffo, high): Fall back to a plan over the budget instead of throwing (the
+        // smallest, or the head outside the budget), so SAQ works below 166 (4 bits) and 248 (3
+        // bits) dimensions
         if (best_cost == infinity) {
             throw std::invalid_argument(
                 "No SAQ plan of " + std::to_string(d) + " dimensions fits " +

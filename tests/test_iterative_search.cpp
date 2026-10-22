@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <gtest/gtest.h>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <random>
 #include <string>
@@ -16,7 +17,20 @@
 
 namespace {
 
-static constexpr size_t D = 128;
+// The running test's dimensions, by its index type
+size_t D() {
+    return TestUtils::GetTestDimensions(::testing::WithParamInterface<std::string>::GetParam(), 128);
+}
+
+// The least exhaustive recall of each index type over the shared heap's partitions
+const std::map<std::string, float> SHARED_HEAP_MIN_RECALL = {
+    {"pdx_f32", 0.9f},
+    {"pdx_u8", 0.9f},
+    {"pdx_tree_f32", 0.9f},
+    {"pdx_tree_u8", 0.9f},
+    {"pdx_saq3", 0.40f},
+    {"pdx_saq4", 0.70f},
+};
 static constexpr size_t N_QUERIES = 20;
 
 template <typename T>
@@ -34,6 +48,8 @@ void ForIndexType(const std::string& index_type, F&& f) {
         f(Tag<PDX::PDXTreeIndexF32>{});
     } else if (index_type == "pdx_tree_u8") {
         f(Tag<PDX::PDXTreeIndexU8>{});
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        f(Tag<PDX::PDXIndexSAQ>{});
     } else {
         FAIL() << "Unknown index type: " << index_type;
     }
@@ -83,11 +99,11 @@ std::vector<size_t> EveryThirdId() {
 class IterativeSearchTest : public ::testing::TestWithParam<std::string> {};
 
 TEST_P(IterativeSearchTest, ChunkedExhaustiveMatchesSingleShot) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     index->SetNProbe(0);
     for (size_t q = 0; q < N_QUERIES; ++q) {
-        const float* query = data.queries.data() + q * D;
+        const float* query = data.queries.data() + q * D();
         auto expected = index->Search(query, TestUtils::KNN);
         PDX::TopKHeap top_k_heap;
         auto search_cursor =
@@ -98,11 +114,11 @@ TEST_P(IterativeSearchTest, ChunkedExhaustiveMatchesSingleShot) {
 
 // A step past the remaining clusters probes all of them, nearest first.
 TEST_P(IterativeSearchTest, NextWithHugeStepDrainsInOrder) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     index->SetNProbe(0);
     for (size_t q = 0; q < N_QUERIES; ++q) {
-        const float* query = data.queries.data() + q * D;
+        const float* query = data.queries.data() + q * D();
         auto expected = index->Search(query, TestUtils::KNN);
         PDX::TopKHeap top_k_heap;
         auto search_cursor =
@@ -118,11 +134,11 @@ TEST_P(IterativeSearchTest, NextWithHugeStepDrainsInOrder) {
 // A cursor started from GetClustersAccessOrder probes the same clusters, in the same order, as one
 // that ranks them.
 TEST_P(IterativeSearchTest, SharedClustersAccessOrderMatchesOwnRanking) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     const auto passing = EveryThirdId();
     for (size_t q = 0; q < N_QUERIES; ++q) {
-        const float* query = data.queries.data() + q * D;
+        const float* query = data.queries.data() + q * D();
         const auto clusters_access_order = index->GetClustersAccessOrder(query);
         ASSERT_EQ(clusters_access_order.size(), index->GetNumClusters());
         for (const std::vector<size_t>* filter :
@@ -152,12 +168,12 @@ TEST_P(IterativeSearchTest, SharedClustersAccessOrderMatchesOwnRanking) {
 // A cursor over a shared evaluator returns what a cursor filtered by the passing row ids returns,
 // for every query that shares the evaluator.
 TEST_P(IterativeSearchTest, SharedEvaluatorMatchesPassingRowIds) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     const auto passing = EveryThirdId();
     const auto evaluator = index->CreateSharedPredicateEvaluator(passing);
     for (size_t q = 0; q < N_QUERIES; ++q) {
-        const float* query = data.queries.data() + q * D;
+        const float* query = data.queries.data() + q * D();
         PDX::TopKHeap own_top_k_heap;
         auto own_cursor =
             index->BeginIterativeSearch(query, TestUtils::KNN, own_top_k_heap, &passing);
@@ -174,11 +190,11 @@ TEST_P(IterativeSearchTest, SharedEvaluatorMatchesPassingRowIds) {
 
 // GetClustersAccessOrder is GetDistancesToCentroids sorted.
 TEST_P(IterativeSearchTest, DistancesToCentroidsSortToTheAccessOrder) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     std::vector<float> distances(index->GetNumClusters());
     for (size_t q = 0; q < N_QUERIES; ++q) {
-        const float* query = data.queries.data() + q * D;
+        const float* query = data.queries.data() + q * D();
         index->GetDistancesToCentroids(query, false, distances.data());
         const auto clusters_access_order = index->GetClustersAccessOrder(query);
         for (size_t i = 1; i < clusters_access_order.size(); i++) {
@@ -188,8 +204,8 @@ TEST_P(IterativeSearchTest, DistancesToCentroidsSortToTheAccessOrder) {
 }
 
 TEST_P(IterativeSearchTest, NextAccountsForEveryNonEmptyCluster) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     size_t non_empty = 0;
     for (uint32_t c = 0; c < index->GetNumClusters(); c++) {
         non_empty += index->GetClusterSize(c) > 0;
@@ -215,13 +231,13 @@ TEST_P(IterativeSearchTest, NextAccountsForEveryNonEmptyCluster) {
 }
 
 TEST_P(IterativeSearchTest, FilteredChunkedMatchesSingleShot) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     index->SetNProbe(0);
     const auto passing = EveryThirdId();
     const std::unordered_set<uint32_t> passing_set(passing.begin(), passing.end());
     for (size_t q = 0; q < N_QUERIES; ++q) {
-        const float* query = data.queries.data() + q * D;
+        const float* query = data.queries.data() + q * D();
         auto expected = index->FilteredSearch(query, TestUtils::KNN, passing);
         PDX::TopKHeap top_k_heap;
         auto search_cursor =
@@ -235,8 +251,8 @@ TEST_P(IterativeSearchTest, FilteredChunkedMatchesSingleShot) {
 }
 
 TEST_P(IterativeSearchTest, FilteredQueueOnlyHoldsClustersWithPassingTuples) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     const std::vector<size_t> passing = {1234};
     PDX::TopKHeap top_k_heap;
     auto search_cursor =
@@ -248,8 +264,8 @@ TEST_P(IterativeSearchTest, FilteredQueueOnlyHoldsClustersWithPassingTuples) {
 }
 
 TEST_P(IterativeSearchTest, UnderfilledHeapReturnsAllPassingTuples) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     std::mt19937 rng(TestUtils::SEED);
     std::uniform_int_distribution<size_t> dist(0, TestUtils::N_TRAIN - 1);
     std::unordered_set<size_t> chosen;
@@ -262,7 +278,7 @@ TEST_P(IterativeSearchTest, UnderfilledHeapReturnsAllPassingTuples) {
     for (size_t q = 0; q < N_QUERIES; ++q) {
         PDX::TopKHeap top_k_heap;
         auto search_cursor =
-            index->BeginIterativeSearch(data.queries.data() + q * D, k, top_k_heap, &passing);
+            index->BeginIterativeSearch(data.queries.data() + q * D(), k, top_k_heap, &passing);
         auto results = Drain(*search_cursor, top_k_heap, k, 4);
         EXPECT_EQ(Ids(results), std::unordered_set<uint32_t>(passing.begin(), passing.end()));
         for (size_t i = 1; i < results.size(); ++i) {
@@ -272,8 +288,8 @@ TEST_P(IterativeSearchTest, UnderfilledHeapReturnsAllPassingTuples) {
 }
 
 TEST_P(IterativeSearchTest, ChunkSizeDoesNotChangeResults) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     const float* query = data.queries.data();
 
     PDX::TopKHeap baseline_top_k_heap;
@@ -294,15 +310,15 @@ TEST_P(IterativeSearchTest, ConcurrentCursorsOnOneIndex) {
 #if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
     GTEST_SKIP() << "Wasm without pthreads cannot start threads";
 #endif
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     index->SetNProbe(0);
     constexpr size_t N_THREADS = 4;
     constexpr size_t QUERIES_PER_THREAD = 5;
 
     std::vector<std::vector<PDX::KNNCandidate>> expected(N_THREADS * QUERIES_PER_THREAD);
     for (size_t q = 0; q < expected.size(); ++q) {
-        expected[q] = index->Search(data.queries.data() + q * D, TestUtils::KNN);
+        expected[q] = index->Search(data.queries.data() + q * D(), TestUtils::KNN);
     }
 
     std::vector<std::vector<PDX::KNNCandidate>> actual(expected.size());
@@ -314,7 +330,7 @@ TEST_P(IterativeSearchTest, ConcurrentCursorsOnOneIndex) {
                 const size_t q = t * QUERIES_PER_THREAD + i;
                 PDX::TopKHeap top_k_heap;
                 auto search_cursor = index->BeginIterativeSearch(
-                    data.queries.data() + q * D, TestUtils::KNN, top_k_heap, nullptr
+                    data.queries.data() + q * D(), TestUtils::KNN, top_k_heap, nullptr
                 );
                 while (!search_cursor->Done()) {
                     search_cursor->Next(3);
@@ -334,49 +350,51 @@ TEST_P(IterativeSearchTest, ConcurrentCursorsOnOneIndex) {
 // Four partitions of the data, one index each, one shared heap: the DuckDB row-group setting
 template <typename IndexT>
 void RunSharedHeapAcrossPartitions() {
-    auto data = TestUtils::LoadTestData(D);
+    auto data = TestUtils::LoadTestData(D());
     constexpr size_t N_PARTS = 4;
     const size_t part_size = TestUtils::N_TRAIN / N_PARTS;
 
     PDX::PDXIndexConfig config{
-        .num_dimensions = static_cast<uint32_t>(D),
+        .num_dimensions = static_cast<uint32_t>(D()),
         .distance_metric = PDX::DistanceMetric::L2SQ,
         .seed = TestUtils::SEED,
         .normalize = true,
         .sampling_fraction = 1.0f,
         .hierarchical_indexing = true,
     };
+    config.saq_bits_per_dimension =
+        TestUtils::GetSAQBitsPerDimension(::testing::WithParamInterface<std::string>::GetParam());
     std::vector<std::unique_ptr<IndexT>> parts;
     parts.reserve(N_PARTS);
     for (size_t p = 0; p < N_PARTS; ++p) {
         std::vector<size_t> row_ids(part_size);
         std::iota(row_ids.begin(), row_ids.end(), p * part_size);
         parts.push_back(std::make_unique<IndexT>(config));
-        parts.back()->BuildIndex(row_ids.data(), data.train.data() + p * part_size * D, part_size);
+        parts.back()->BuildIndex(row_ids.data(), data.train.data() + p * part_size * D(), part_size);
     }
 
     // The indexes normalize, so the brute-force ground truth must too
     std::vector<float> normalized_train = data.train;
     std::vector<float> normalized_queries = data.queries;
-    PDX::Quantizer normalizer(D);
+    PDX::Quantizer normalizer(D());
     for (size_t i = 0; i < TestUtils::N_TRAIN; ++i) {
-        normalizer.NormalizeQuery(&normalized_train[i * D], &normalized_train[i * D]);
+        normalizer.NormalizeQuery(&normalized_train[i * D()], &normalized_train[i * D()]);
     }
     for (size_t i = 0; i < N_QUERIES; ++i) {
-        normalizer.NormalizeQuery(&normalized_queries[i * D], &normalized_queries[i * D]);
+        normalizer.NormalizeQuery(&normalized_queries[i * D()], &normalized_queries[i * D()]);
     }
     auto gt = TestUtils::ComputeBruteForceKNN(
         normalized_train.data(),
         normalized_queries.data(),
         TestUtils::N_TRAIN,
         N_QUERIES,
-        D,
+        D(),
         TestUtils::KNN
     );
 
     float total_recall = 0.0f;
     for (size_t q = 0; q < N_QUERIES; ++q) {
-        const float* query = data.queries.data() + q * D;
+        const float* query = data.queries.data() + q * D();
         PDX::TopKHeap top_k_heap(/*thread_safe=*/true);
         std::vector<std::unique_ptr<PDX::IIterativeSearch>> search_cursors;
         search_cursors.reserve(parts.size());
@@ -401,7 +419,10 @@ void RunSharedHeapAcrossPartitions() {
         ASSERT_EQ(results.size(), TestUtils::KNN);
         total_recall += TestUtils::ComputeRecall(results, gt.indices[q], TestUtils::KNN);
     }
-    EXPECT_GE(total_recall / static_cast<float>(N_QUERIES), 0.9f);
+    EXPECT_GE(
+        total_recall / static_cast<float>(N_QUERIES),
+        SHARED_HEAP_MIN_RECALL.at(::testing::WithParamInterface<std::string>::GetParam())
+    );
 }
 
 TEST_P(IterativeSearchTest, SharedHeapAcrossPartitionsMatchesBruteForce) {
@@ -420,8 +441,8 @@ static constexpr size_t SPLIT_BUDGET_TOTAL = 64;
 // nprobe; the cursor never queues them. With every third id passing, every cluster has passing
 // tuples, so both probe the same 64 clusters in the same order.
 TEST_P(IterativeSearchTest, FilteredSplitProbeBudgetMatchesSingleShotNProbe) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     const auto passing = EveryThirdId();
     const std::unordered_set<uint32_t> passing_set(passing.begin(), passing.end());
     ASSERT_GE(index->GetNumClusters(), SPLIT_BUDGET_TOTAL);
@@ -435,7 +456,7 @@ TEST_P(IterativeSearchTest, FilteredSplitProbeBudgetMatchesSingleShotNProbe) {
     index->SetNProbe(SPLIT_BUDGET_TOTAL);
 
     for (size_t q = 0; q < N_QUERIES; ++q) {
-        const float* query = data.queries.data() + q * D;
+        const float* query = data.queries.data() + q * D();
         auto expected = index->FilteredSearch(query, TestUtils::KNN, passing);
         PDX::TopKHeap top_k_heap;
         auto search_cursor =
@@ -453,8 +474,8 @@ TEST_P(IterativeSearchTest, FilteredSplitProbeBudgetMatchesSingleShotNProbe) {
 TEST_P(IterativeSearchTest, NProbeOneProbesExactlyOneCluster) {
     ForIndexType(GetParam(), [](auto tag) {
         using IndexType = typename decltype(tag)::type;
-        auto data = TestUtils::LoadTestData(D);
-        auto base = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+        auto data = TestUtils::LoadTestData(D());
+        auto base = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
         auto& index = dynamic_cast<IndexType&>(*base);
         std::vector<uint32_t> cluster_of_row(TestUtils::N_TRAIN);
         for (uint32_t c = 0; c < index.GetNumClusters(); c++) {
@@ -465,7 +486,7 @@ TEST_P(IterativeSearchTest, NProbeOneProbesExactlyOneCluster) {
         index.SetNProbe(1);
         for (size_t q = 0; q < N_QUERIES; ++q) {
             const size_t accessed_before = index.GetNumVectorsAccessed();
-            auto results = index.Search(data.queries.data() + q * D, TestUtils::KNN);
+            auto results = index.Search(data.queries.data() + q * D(), TestUtils::KNN);
             ASSERT_FALSE(results.empty());
             const uint32_t probed = cluster_of_row[results[0].index];
             for (const auto& r : results) {
@@ -484,7 +505,7 @@ TEST_P(IterativeSearchTest, NProbeOneProbesExactlyOneCluster) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     IterativeSearchTest,
-    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 
@@ -493,8 +514,8 @@ INSTANTIATE_TEST_SUITE_P(
 class VanillaIterativeSearchTest : public ::testing::TestWithParam<std::string> {};
 
 TEST_P(VanillaIterativeSearchTest, SplitProbeBudgetMatchesSingleShotNProbe) {
-    auto data = TestUtils::LoadTestData(D);
-    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D);
+    auto data = TestUtils::LoadTestData(D());
+    auto index = TestUtils::BuildIndex(GetParam(), data.train.data(), TestUtils::N_TRAIN, D());
     ASSERT_GE(index->GetNumClusters(), SPLIT_BUDGET_TOTAL);
     for (uint32_t c = 0; c < index->GetNumClusters(); c++) {
         ASSERT_GT(index->GetClusterSize(c), 0u)
@@ -503,7 +524,7 @@ TEST_P(VanillaIterativeSearchTest, SplitProbeBudgetMatchesSingleShotNProbe) {
     index->SetNProbe(SPLIT_BUDGET_TOTAL);
 
     for (size_t q = 0; q < N_QUERIES; ++q) {
-        const float* query = data.queries.data() + q * D;
+        const float* query = data.queries.data() + q * D();
         auto expected = index->Search(query, TestUtils::KNN);
         PDX::TopKHeap top_k_heap;
         auto search_cursor =
@@ -519,7 +540,7 @@ TEST_P(VanillaIterativeSearchTest, SplitProbeBudgetMatchesSingleShotNProbe) {
 INSTANTIATE_TEST_SUITE_P(
     VanillaIndexTypes,
     VanillaIterativeSearchTest,
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

@@ -26,10 +26,25 @@ static constexpr size_t N_TOTAL = N_TRAIN + N_QUERIES;
 static constexpr unsigned int SEED = 42;
 static constexpr size_t KNN = 10;
 
+// SAQ plans fit next to their 8-bit head chunk only from about 166 (4 bits) and 248 (3 bits)
+// dimensions
+static constexpr size_t SAQ_TEST_DIMENSIONS = 256;
+
 struct TestData {
     std::vector<float> train;
     std::vector<float> queries;
 };
+
+// The dimensions an index type is tested at, for a suite at d
+inline size_t GetTestDimensions(const std::string& index_type, size_t d) {
+    const bool is_saq = index_type == "pdx_saq3" || index_type == "pdx_saq4";
+    return is_saq ? std::max(d, SAQ_TEST_DIMENSIONS) : d;
+}
+
+// The bits per dimension of an SAQ index type
+inline uint32_t GetSAQBitsPerDimension(const std::string& index_type) {
+    return index_type == "pdx_saq3" ? 3 : 4;
+}
 
 inline std::string TempPath(const std::string& name) {
     return (std::filesystem::temp_directory_path() / name).string();
@@ -216,6 +231,11 @@ inline std::unique_ptr<PDX::IPDXIndex> BuildIndex(
         auto p = std::make_unique<PDX::PDXTreeIndexU8>(config);
         p->BuildIndex(data, n);
         index = std::move(p);
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        config.saq_bits_per_dimension = GetSAQBitsPerDimension(index_type);
+        auto p = std::make_unique<PDX::PDXIndexSAQ>(config);
+        p->BuildIndex(data, n);
+        index = std::move(p);
     }
     return index;
 }
@@ -241,6 +261,12 @@ inline std::unique_ptr<PDX::IPDXIndex> BuildIndexWithConfig(
         index = std::move(p);
     } else if (index_type == "pdx_tree_u8") {
         auto p = std::make_unique<PDX::PDXTreeIndexU8>(config);
+        p->BuildIndex(data, n);
+        index = std::move(p);
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        PDX::PDXIndexConfig saq_config = config;
+        saq_config.saq_bits_per_dimension = GetSAQBitsPerDimension(index_type);
+        auto p = std::make_unique<PDX::PDXIndexSAQ>(saq_config);
         p->BuildIndex(data, n);
         index = std::move(p);
     }

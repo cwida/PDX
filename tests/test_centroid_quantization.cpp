@@ -22,12 +22,13 @@ static constexpr float MAINTENANCE_RECALL_TOLERANCE = 0.03f;
 static constexpr uint32_t MAX_CLUSTER_SIZE = 32;
 
 PDX::PDXIndexConfig MakeConfig(
+    size_t d,
     PDX::CentroidQuantization centroid_quantization,
     uint32_t max_cluster_size = 0,
     PDX::MemoryAllocator* allocator = nullptr
 ) {
     return PDX::PDXIndexConfig{
-        .num_dimensions = static_cast<uint32_t>(D),
+        .num_dimensions = static_cast<uint32_t>(d),
         .distance_metric = PDX::DistanceMetric::L2SQ,
         .seed = TestUtils::SEED,
         .normalize = true,
@@ -42,13 +43,14 @@ PDX::PDXIndexConfig MakeConfig(
 float ComputeCursorRecall(
     const PDX::IPDXIndex& index,
     const float* queries,
+    size_t d,
     const TestUtils::BruteForceResult& gt
 ) {
     float total_recall = 0.0f;
     for (size_t q = 0; q < N_QUERIES; ++q) {
         PDX::TopKHeap top_k_heap;
         auto search_cursor =
-            index.BeginIterativeSearch(queries + q * D, TestUtils::KNN, top_k_heap, nullptr);
+            index.BeginIterativeSearch(queries + q * d, TestUtils::KNN, top_k_heap, nullptr);
         search_cursor->Next(N_PROBE);
         total_recall += TestUtils::ComputeRecall(
             PDX::BuildResultSetFromHeap(TestUtils::KNN, top_k_heap.heap),
@@ -162,21 +164,22 @@ class CentroidQuantizationTest : public ::testing::TestWithParam<std::string> {}
 // Ranking by the quantized centroids keeps the recall of ranking by the float32 ones, single-shot
 // and on a cursor.
 TEST_P(CentroidQuantizationTest, RecallMatchesF32) {
-    auto data = TestUtils::LoadTestData(D);
+    const size_t d = TestUtils::GetTestDimensions(GetParam(), D);
+    auto data = TestUtils::LoadTestData(d);
     const auto gt = TestUtils::ComputeBruteForceKNN(
-        data.train.data(), data.queries.data(), TestUtils::N_TRAIN, N_QUERIES, D, TestUtils::KNN
+        data.train.data(), data.queries.data(), TestUtils::N_TRAIN, N_QUERIES, d, TestUtils::KNN
     );
     auto f32_index = TestUtils::BuildIndexWithConfig(
         GetParam(),
-        MakeConfig(PDX::CentroidQuantization::F32),
+        MakeConfig(d, PDX::CentroidQuantization::F32),
         data.train.data(),
         TestUtils::N_TRAIN
     );
     f32_index->SetNProbe(N_PROBE);
     const float f32_recall = TestUtils::ComputeAverageRecall(
-        *f32_index, data.queries.data(), N_QUERIES, D, TestUtils::KNN, gt
+        *f32_index, data.queries.data(), N_QUERIES, d, TestUtils::KNN, gt
     );
-    const float f32_cursor_recall = ComputeCursorRecall(*f32_index, data.queries.data(), gt);
+    const float f32_cursor_recall = ComputeCursorRecall(*f32_index, data.queries.data(), d, gt);
 
     for (const auto& test_case : TestUtils::QUANTIZED_CENTROIDS) {
         SCOPED_TRACE(
@@ -185,19 +188,19 @@ TEST_P(CentroidQuantizationTest, RecallMatchesF32) {
         );
         auto quantized_index = TestUtils::BuildIndexWithConfig(
             GetParam(),
-            MakeConfig(test_case.centroid_quantization),
+            MakeConfig(d, test_case.centroid_quantization),
             data.train.data(),
             TestUtils::N_TRAIN
         );
         quantized_index->SetNProbe(N_PROBE);
         EXPECT_GE(
             TestUtils::ComputeAverageRecall(
-                *quantized_index, data.queries.data(), N_QUERIES, D, TestUtils::KNN, gt
+                *quantized_index, data.queries.data(), N_QUERIES, d, TestUtils::KNN, gt
             ),
             f32_recall - test_case.recall_tolerance
         );
         EXPECT_GE(
-            ComputeCursorRecall(*quantized_index, data.queries.data(), gt),
+            ComputeCursorRecall(*quantized_index, data.queries.data(), d, gt),
             f32_cursor_recall - test_case.recall_tolerance
         );
     }
@@ -206,7 +209,8 @@ TEST_P(CentroidQuantizationTest, RecallMatchesF32) {
 // A CentroidRankingQuery built once ranks like the one each index builds, and an index of another
 // encoding or dimensionality rejects it.
 TEST_P(CentroidQuantizationTest, SharedRankingQueryRanksAsTheIndexOwn) {
-    auto data = TestUtils::LoadTestData(D);
+    const size_t d = TestUtils::GetTestDimensions(GetParam(), D);
+    auto data = TestUtils::LoadTestData(d);
     const float* query = data.queries.data();
     for (const auto& test_case : TestUtils::QUANTIZED_CENTROIDS) {
         SCOPED_TRACE(
@@ -215,11 +219,11 @@ TEST_P(CentroidQuantizationTest, SharedRankingQueryRanksAsTheIndexOwn) {
         );
         auto index = TestUtils::BuildIndexWithConfig(
             GetParam(),
-            MakeConfig(test_case.centroid_quantization),
+            MakeConfig(d, test_case.centroid_quantization),
             data.train.data(),
             TestUtils::N_TRAIN
         );
-        const PDX::CentroidRankingQuery ranking_query(query, D, test_case.centroid_quantization);
+        const PDX::CentroidRankingQuery ranking_query(query, d, test_case.centroid_quantization);
         const size_t num_clusters = index->GetNumClusters();
         std::vector<float> own_distances(num_clusters);
         std::vector<float> shared_distances(num_clusters);
@@ -245,9 +249,9 @@ TEST_P(CentroidQuantizationTest, SharedRankingQueryRanksAsTheIndexOwn) {
             EXPECT_EQ(shared_results[i].index, own_results[i].index) << "result " << i;
         }
 
-        const PDX::CentroidRankingQuery f32_ranking_query(query, D, PDX::CentroidQuantization::F32);
+        const PDX::CentroidRankingQuery f32_ranking_query(query, d, PDX::CentroidQuantization::F32);
         const PDX::CentroidRankingQuery fewer_dimensions_ranking_query(
-            query, D - 1, test_case.centroid_quantization
+            query, d - 1, test_case.centroid_quantization
         );
         EXPECT_THROW(
             index->GetDistancesToCentroids(
@@ -268,21 +272,22 @@ TEST_P(CentroidQuantizationTest, SharedRankingQueryRanksAsTheIndexOwn) {
 // place rows by the decoded centroids: every live row stays indexed, recall stays close to
 // float32's and the allocator counts the encoded centroids.
 TEST_P(CentroidQuantizationTest, MaintenanceKeepsRowsRecallAndAccounting) {
-    auto data = TestUtils::LoadTestData(D);
+    const size_t d = TestUtils::GetTestDimensions(GetParam(), D);
+    auto data = TestUtils::LoadTestData(d);
     constexpr size_t n_build = TestUtils::N_TRAIN / 2;
     constexpr size_t n_bulk_append = TestUtils::N_TRAIN / 4;
     constexpr size_t row_id_step_kept = 5;
     auto is_deleted = [](size_t row_id) { return row_id % row_id_step_kept != 0; };
-    std::vector<float> kept_rows(TestUtils::N_TRAIN / row_id_step_kept * D);
+    std::vector<float> kept_rows(TestUtils::N_TRAIN / row_id_step_kept * d);
     for (size_t i = 0; i < TestUtils::N_TRAIN / row_id_step_kept; ++i) {
-        std::copy_n(data.train.data() + i * row_id_step_kept * D, D, kept_rows.data() + i * D);
+        std::copy_n(data.train.data() + i * row_id_step_kept * d, d, kept_rows.data() + i * d);
     }
     auto gt = TestUtils::ComputeBruteForceKNN(
         kept_rows.data(),
         data.queries.data(),
         TestUtils::N_TRAIN / row_id_step_kept,
         N_QUERIES,
-        D,
+        d,
         TestUtils::KNN
     );
     for (auto& neighbor_ids : gt.indices) {
@@ -298,15 +303,15 @@ TEST_P(CentroidQuantizationTest, MaintenanceKeepsRowsRecallAndAccounting) {
         TestUtils::CountingAllocator allocator;
         auto index = TestUtils::BuildIndexWithConfig(
             GetParam(),
-            MakeConfig(centroid_quantization, MAX_CLUSTER_SIZE, &allocator),
+            MakeConfig(d, centroid_quantization, MAX_CLUSTER_SIZE, &allocator),
             data.train.data(),
             n_build
         );
         std::vector<size_t> row_ids(n_bulk_append);
         std::iota(row_ids.begin(), row_ids.end(), n_build);
-        index->BulkAppend(row_ids.data(), data.train.data() + n_build * D, n_bulk_append);
+        index->BulkAppend(row_ids.data(), data.train.data() + n_build * d, n_bulk_append);
         for (size_t row_id = n_build + n_bulk_append; row_id < TestUtils::N_TRAIN; ++row_id) {
-            index->Append(row_id, data.train.data() + row_id * D);
+            index->Append(row_id, data.train.data() + row_id * d);
         }
         for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; ++row_id) {
             if (is_deleted(row_id)) {
@@ -323,7 +328,7 @@ TEST_P(CentroidQuantizationTest, MaintenanceKeepsRowsRecallAndAccounting) {
         );
         index->SetNProbe(N_PROBE);
         return TestUtils::ComputeAverageRecall(
-            *index, data.queries.data(), N_QUERIES, D, TestUtils::KNN, gt
+            *index, data.queries.data(), N_QUERIES, d, TestUtils::KNN, gt
         );
     };
     // The cluster structures diverge (MAINTENANCE_RECALL_TOLERANCE), on top of the encoding's own
@@ -341,7 +346,7 @@ TEST_P(CentroidQuantizationTest, MaintenanceKeepsRowsRecallAndAccounting) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     CentroidQuantizationTest,
-    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 
@@ -352,10 +357,11 @@ class VanillaCentroidQuantizationTest : public ::testing::TestWithParam<std::str
 // One clustering, so the indexes differ only by their centroids: d floats each in F32, the codes
 // and their LVQParams in LVQ, plus its trailing padding.
 TEST_P(VanillaCentroidQuantizationTest, QuantizedCentroidsSaveTheirBytes) {
-    auto data = TestUtils::LoadTestData(D);
+    const size_t d = TestUtils::GetTestDimensions(GetParam(), D);
+    auto data = TestUtils::LoadTestData(d);
     auto f32_index = TestUtils::BuildIndexWithConfig(
         GetParam(),
-        MakeConfig(PDX::CentroidQuantization::F32),
+        MakeConfig(d, PDX::CentroidQuantization::F32),
         data.train.data(),
         TestUtils::N_TRAIN
     );
@@ -366,13 +372,13 @@ TEST_P(VanillaCentroidQuantizationTest, QuantizedCentroidsSaveTheirBytes) {
         );
         auto quantized_index = TestUtils::BuildIndexWithConfig(
             GetParam(),
-            MakeConfig(test_case.centroid_quantization),
+            MakeConfig(d, test_case.centroid_quantization),
             data.train.data(),
             TestUtils::N_TRAIN
         );
         ASSERT_EQ(f32_index->GetNumClusters(), quantized_index->GetNumClusters());
         const size_t saved_bytes_per_centroid =
-            D * sizeof(float) - test_case.encoded_centroid_size_in_bytes(D);
+            d * sizeof(float) - test_case.encoded_centroid_size_in_bytes(d);
         EXPECT_EQ(
             f32_index->GetInMemorySizeInBytes() - quantized_index->GetInMemorySizeInBytes(),
             f32_index->GetNumClusters() * saved_bytes_per_centroid -
@@ -384,7 +390,7 @@ TEST_P(VanillaCentroidQuantizationTest, QuantizedCentroidsSaveTheirBytes) {
 INSTANTIATE_TEST_SUITE_P(
     VanillaIndexTypes,
     VanillaCentroidQuantizationTest,
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

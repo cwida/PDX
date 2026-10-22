@@ -27,6 +27,9 @@ void BuildAndSave(
         .normalize = true,
         .sampling_fraction = 1.0f
     };
+    if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        index_config.saq_bits_per_dimension = index_type == "pdx_saq3" ? 3 : 4;
+    }
 
     std::cout << "Building " << index_type << " index...\n";
     auto build_start = std::chrono::high_resolution_clock::now();
@@ -49,7 +52,8 @@ void BuildAndSave(
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <dataset> [index_type]\n";
-        std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, "
+                     "pdx_saq4\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
@@ -99,9 +103,11 @@ int main(int argc, char* argv[]) {
         BuildAndSave<PDX::PDXTreeIndexF32>(info, dataset, index_type, data.data());
     } else if (index_type == "pdx_tree_u8") {
         BuildAndSave<PDX::PDXTreeIndexU8>(info, dataset, index_type, data.data());
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        BuildAndSave<PDX::PDXIndexSAQ>(info, dataset, index_type, data.data());
     } else {
         std::cerr << "Unknown index type: " << index_type << "\n";
-        std::cerr << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4\n";
         return 1;
     }
 

@@ -9,7 +9,9 @@
 #include "test_utils.hpp"
 
 int main() {
-    std::vector<std::string> index_types = {"pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"};
+    std::vector<std::string> index_types = {
+        "pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "pdx_saq3", "pdx_saq4"
+    };
     std::vector<size_t> dimensions = {384};
     std::vector<size_t> nprobes = {1, 2, 4, 8, 16, 32, 64};
 

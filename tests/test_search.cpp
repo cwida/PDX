@@ -55,12 +55,41 @@ const std::map<std::tuple<std::string, size_t, size_t>, float> RECALL_GROUND_TRU
     {{"pdx_tree_u8", 384, 32}, 0.6622f},
     {{"pdx_tree_u8", 384, 64}, 0.7196f},
     {{"pdx_tree_u8", 384, 142}, 0.9778f},
+    // pdx_saq3, d=384, clusters=142
+    {{"pdx_saq3", 384, 1}, 0.3792f},
+    {{"pdx_saq3", 384, 2}, 0.4182f},
+    {{"pdx_saq3", 384, 4}, 0.4564f},
+    {{"pdx_saq3", 384, 8}, 0.4998f},
+    {{"pdx_saq3", 384, 16}, 0.5548f},
+    {{"pdx_saq3", 384, 32}, 0.6096f},
+    {{"pdx_saq3", 384, 64}, 0.6788f},
+    {{"pdx_saq3", 384, 142}, 0.7126f},
+    // pdx_saq4, d=384, clusters=142
+    {{"pdx_saq4", 384, 1}, 0.3986f},
+    {{"pdx_saq4", 384, 2}, 0.4414f},
+    {{"pdx_saq4", 384, 4}, 0.4882f},
+    {{"pdx_saq4", 384, 8}, 0.5444f},
+    {{"pdx_saq4", 384, 16}, 0.6170f},
+    {{"pdx_saq4", 384, 32}, 0.7032f},
+    {{"pdx_saq4", 384, 64}, 0.8036f},
+    {{"pdx_saq4", 384, 142}, 0.8636f},
 };
 // clang-format on
+
+// The least exhaustive recall of each index type on the cosine blobs
+const std::map<std::string, float> COSINE_EXHAUSTIVE_MIN_RECALL = {
+    {"pdx_f32", 0.95f},
+    {"pdx_u8", 0.90f},
+    {"pdx_saq3", 0.70f},
+    {"pdx_saq4", 0.85f},
+};
 
 static constexpr size_t D = 384;
 static constexpr float RECALL_TOLERANCE = 0.02f;
 static constexpr float QUANTIZATION_RECALL_TOLERANCE = 0.05f;
+// The fewest dimensions whose SAQ plan fits its budget next to the 8-bit head chunk
+static constexpr size_t SAQ3_MIN_PLAN_DIMENSIONS = 248;
+static constexpr size_t SAQ4_MIN_PLAN_DIMENSIONS = 166;
 
 class SearchTest : public ::testing::TestWithParam<std::string> {
   protected:
@@ -230,7 +259,7 @@ TEST(QuantizationTest, U8RecallWithinBound) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     SearchTest,
-    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 
@@ -251,6 +280,12 @@ TEST_P(UncommonDimTest, RecallMonotonicAndExhaustiveNearPerfect) {
     std::vector<std::string> types = {"pdx_f32"};
     if (d >= 10) {
         types.push_back("pdx_u8");
+    }
+    if (d >= SAQ3_MIN_PLAN_DIMENSIONS) {
+        types.push_back("pdx_saq3");
+    }
+    if (d >= SAQ4_MIN_PLAN_DIMENSIONS) {
+        types.push_back("pdx_saq4");
     }
     for (const auto& index_type : types) {
         SCOPED_TRACE(index_type);
@@ -431,17 +466,14 @@ TEST_P(CosineTest, CosineExhaustiveRecall) {
     }
     float recall = total_recall / static_cast<float>(NQ);
 
-    if (index_type == "pdx_f32") {
-        EXPECT_GE(recall, 0.95f) << "Cosine F32 exhaustive recall too low: " << recall;
-    } else {
-        EXPECT_GE(recall, 0.90f) << "Cosine U8 exhaustive recall too low: " << recall;
-    }
+    EXPECT_GE(recall, COSINE_EXHAUSTIVE_MIN_RECALL.at(index_type))
+        << "Cosine " << index_type << " exhaustive recall too low: " << recall;
 }
 
 INSTANTIATE_TEST_SUITE_P(
     CosineMetric,
     CosineTest,
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 
@@ -530,7 +562,7 @@ TEST_P(SeedTest, DifferentSeedProducesDifferentRotation) {
 INSTANTIATE_TEST_SUITE_P(
     SeedDeterminism,
     SeedTest,
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 
