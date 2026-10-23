@@ -573,6 +573,82 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         return num_kept;
     }
 
+    // ScanHead over the vectors at positions only, 8 positions per batch with one gather per
+    // group; keeps those below threshold, compacted in place
+    static size_t ScanHeadPruning(
+        const uint8_t* PDX_RESTRICT head,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT squared_norms,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales,
+        size_t num_positions
+    ) {
+        int32_t group_codes[NUM_HEAD_GROUPS];
+        std::memcpy(group_codes, query_codes, sizeof(group_codes));
+        const __m256 dot_scale_vec = _mm256_set1_ps(dot_scale);
+        const __m256 dot_offset_vec = _mm256_set1_ps(dot_offset);
+        const __m256 query_squared_norm_vec = _mm256_set1_ps(query_squared_norm);
+        const __m256 threshold_vec = _mm256_set1_ps(threshold);
+        size_t num_kept = 0;
+        for (size_t position_idx = 0; position_idx < num_positions; position_idx += 8) {
+            const size_t num_valid = std::min<size_t>(8, num_positions - position_idx);
+            // Lanes past the last position hold position 0, which every gather can read
+            const __m256i position_vec = _mm256_maskload_epi32(
+                reinterpret_cast<const int*>(positions + position_idx), ValidLanes8(num_valid)
+            );
+            const __m256i level_offsets = _mm256_slli_epi32(position_vec, 2);
+            __m256i dots[4] = {
+                _mm256_setzero_si256(),
+                _mm256_setzero_si256(),
+                _mm256_setzero_si256(),
+                _mm256_setzero_si256()
+            };
+            for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
+                const __m256i group_vectors = _mm256_i32gather_epi32(
+                    reinterpret_cast<const int*>(head + group_idx * U8_INTERLEAVE_SIZE * stride),
+                    level_offsets,
+                    1
+                );
+                dots[group_idx % 4] =
+                    AddHeadGroupDots(dots[group_idx % 4], group_vectors, group_codes[group_idx]);
+            }
+            const __m256i dot = FinishHeadDots(_mm256_add_epi32(
+                _mm256_add_epi32(dots[0], dots[1]), _mm256_add_epi32(dots[2], dots[3])
+            ));
+            uint16_t lane_rescales[8] = {};
+            uint16_t lane_squared_norms[8] = {};
+            for (size_t lane = 0; lane < num_valid; ++lane) {
+                lane_rescales[lane] = head_rescales[positions[position_idx + lane]];
+                lane_squared_norms[lane] = squared_norms[positions[position_idx + lane]];
+            }
+            const __m256 rescale = LoadHalves8(lane_rescales);
+            const __m256 estimate = _mm256_fmadd_ps(
+                rescale,
+                _mm256_fmsub_ps(_mm256_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
+                _mm256_add_ps(LoadHalves8(lane_squared_norms), query_squared_norm_vec)
+            );
+            num_kept += Compact8(
+                static_cast<uint32_t>(
+                    _mm256_movemask_ps(_mm256_cmp_ps(estimate, threshold_vec, _CMP_LT_OQ))
+                ) & ((1u << num_valid) - 1),
+                position_vec,
+                estimate,
+                rescale,
+                positions + num_kept,
+                estimates + num_kept,
+                rescales + num_kept
+            );
+        }
+        return num_kept;
+    }
+
     template <uint32_t WIDTH>
     static size_t ScanTail(
         const uint8_t* PDX_RESTRICT records,

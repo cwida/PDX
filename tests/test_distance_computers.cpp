@@ -504,6 +504,93 @@ TEST_F(DistanceComputerTest, SAQ_ScanHead_SIMD_MatchesScalar) {
     }
 }
 
+// The head over the passing positions keeps what ScanHead keeps with the same selection
+TEST_F(DistanceComputerTest, SAQ_ScanHeadPruning_MatchesScanHead) {
+    using scalar_computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
+    using computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
+    using PruningKernel = decltype(&scalar_computer::ScanHeadPruning);
+    const PruningKernel kernels[] = {scalar_computer::ScanHeadPruning, computer::ScanHeadPruning};
+    std::mt19937 rng(42);
+    for (const size_t num_vectors : {1, 5, 16, 33, 100}) {
+        for (const uint32_t passing_percent : {5u, 50u, 100u}) {
+            SCOPED_TRACE(
+                "n=" + std::to_string(num_vectors) + ", passing=" + std::to_string(passing_percent)
+            );
+            const size_t stride = num_vectors + 7;
+            std::vector<uint8_t> head(stride * PDX::SAQ_CHUNK_SIZE);
+            for (auto& level : head) {
+                level = static_cast<uint8_t>(rng() % 256);
+            }
+            const auto query_codes = RandomQueryCodes(rng);
+            const auto head_rescales = RandomHalves(num_vectors, 0.001f, 0.01f, rng);
+            const auto squared_norms = RandomHalves(num_vectors, 0.5f, 2.0f, rng);
+            std::vector<uint8_t> selection(num_vectors);
+            std::vector<uint32_t> passing;
+            for (size_t vector_idx = 0; vector_idx < num_vectors; ++vector_idx) {
+                selection[vector_idx] = static_cast<uint8_t>(rng() % 100 < passing_percent);
+                if (selection[vector_idx] != 0) {
+                    passing.push_back(static_cast<uint32_t>(vector_idx));
+                }
+            }
+            const auto scan_head = [&](float threshold, SAQSurvivors& survivors) {
+                return scalar_computer::ScanHead(
+                    head.data(),
+                    num_vectors,
+                    stride,
+                    query_codes.data(),
+                    -0.02f,
+                    1.5f,
+                    0.7f,
+                    head_rescales.data(),
+                    squared_norms.data(),
+                    selection.data(),
+                    threshold,
+                    survivors.positions.data(),
+                    survivors.estimates.data(),
+                    survivors.rescales.data()
+                );
+            };
+            const auto scan_passing =
+                [&](PruningKernel kernel, float threshold, SAQSurvivors& survivors) {
+                    std::copy(passing.begin(), passing.end(), survivors.positions.begin());
+                    return kernel(
+                        head.data(),
+                        stride,
+                        query_codes.data(),
+                        -0.02f,
+                        1.5f,
+                        0.7f,
+                        head_rescales.data(),
+                        squared_norms.data(),
+                        threshold,
+                        survivors.positions.data(),
+                        survivors.estimates.data(),
+                        survivors.rescales.data(),
+                        passing.size()
+                    );
+                };
+            SAQSurvivors all(num_vectors);
+            const size_t num_all = scan_head(std::numeric_limits<float>::infinity(), all);
+            std::vector<float> all_estimates(
+                all.estimates.begin(), all.estimates.begin() + num_all
+            );
+            std::vector<float> thresholds = {std::numeric_limits<float>::infinity()};
+            if (num_all >= 2) {
+                thresholds.push_back(ThresholdBetween(all_estimates, num_all / 2 - 1));
+            }
+            for (const float threshold : thresholds) {
+                SAQSurvivors expected(num_vectors);
+                const size_t num_expected = scan_head(threshold, expected);
+                for (const PruningKernel kernel : kernels) {
+                    SAQSurvivors actual(num_vectors);
+                    const size_t num_actual = scan_passing(kernel, threshold, actual);
+                    ExpectSameSurvivors(expected, num_expected, actual, num_actual);
+                }
+            }
+        }
+    }
+}
+
 std::vector<uint8_t> PackRecords(
     const std::vector<uint8_t>& levels,
     size_t num_records,

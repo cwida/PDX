@@ -89,6 +89,7 @@ class DistanceComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
     );
 
     constexpr static auto ScanHead = computer::ScanHead;
+    constexpr static auto ScanHeadPruning = computer::ScanHeadPruning;
     constexpr static auto PackRecord = ScalarComputer<DistanceMetric::L2SQ, SAQ>::PackRecord;
     constexpr static auto UnpackRecord = ScalarComputer<DistanceMetric::L2SQ, SAQ>::UnpackRecord;
 

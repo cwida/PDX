@@ -703,6 +703,9 @@ class IVFUtils : public skmeans::AllocatorHolder {
                 for (uint32_t j = 0; j < d; ++j) {
                     query_residual[j] = pseudo_query[j] - model.rotated_mean[j];
                 }
+                // TODO(@lkuffo, high): Rank every pseudo-query at once with one blocked GEMM top-k
+                // (BatchComputer::FindKNearestNeighbors over the decoded centroids): this streams
+                // all K centroids per pseudo-query, seconds at 100K clusters
                 index.centroids.ComputeDistancesToCentroids(pseudo_query, cluster_distances.get());
                 std::iota(cluster_order.get(), cluster_order.get() + index.num_clusters, 0u);
                 std::partial_sort(

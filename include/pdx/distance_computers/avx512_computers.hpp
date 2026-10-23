@@ -477,6 +477,86 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         return num_kept;
     }
 
+    // ScanHead over the vectors at positions only, 16 positions per batch with one gather per
+    // group; keeps those below threshold, compacted in place
+    static size_t ScanHeadPruning(
+        const uint8_t* PDX_RESTRICT head,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT squared_norms,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales,
+        size_t num_positions
+    ) {
+        __m512i query_groups[NUM_HEAD_GROUPS];
+        LoadHeadQuery(query_codes, query_groups);
+        const __m512 dot_scale_vec = _mm512_set1_ps(dot_scale);
+        const __m512 dot_offset_vec = _mm512_set1_ps(dot_offset);
+        const __m512 query_squared_norm_vec = _mm512_set1_ps(query_squared_norm);
+        const __m512 threshold_vec = _mm512_set1_ps(threshold);
+        size_t num_kept = 0;
+        for (size_t position_idx = 0; position_idx < num_positions; position_idx += 16) {
+            const size_t remaining = num_positions - position_idx;
+            const __mmask16 valid = remaining >= 16 ? static_cast<__mmask16>(0xFFFF)
+                                                    : static_cast<__mmask16>((1u << remaining) - 1);
+            const __m512i position_vec = _mm512_maskz_loadu_epi32(valid, positions + position_idx);
+            const __m512i level_offsets = _mm512_slli_epi32(position_vec, 2);
+            __m512i dots[4] = {
+                _mm512_setzero_si512(),
+                _mm512_setzero_si512(),
+                _mm512_setzero_si512(),
+                _mm512_setzero_si512()
+            };
+            for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
+                dots[group_idx % 4] = _mm512_dpbusd_epi32(
+                    dots[group_idx % 4],
+                    _mm512_mask_i32gather_epi32(
+                        _mm512_setzero_si512(),
+                        valid,
+                        level_offsets,
+                        head + group_idx * U8_INTERLEAVE_SIZE * stride,
+                        1
+                    ),
+                    query_groups[group_idx]
+                );
+            }
+            const __m512i dot = _mm512_add_epi32(
+                _mm512_add_epi32(dots[0], dots[1]), _mm512_add_epi32(dots[2], dots[3])
+            );
+            // Each gather reads 4 bytes from a half; the low 2 are the position's
+            const __m512i half_offsets = _mm512_slli_epi32(position_vec, 1);
+            const __m512 rescale =
+                _mm512_cvtph_ps(_mm512_cvtepi32_epi16(_mm512_mask_i32gather_epi32(
+                    _mm512_setzero_si512(), valid, half_offsets, head_rescales, 1
+                )));
+            const __m512 squared_norm =
+                _mm512_cvtph_ps(_mm512_cvtepi32_epi16(_mm512_mask_i32gather_epi32(
+                    _mm512_setzero_si512(), valid, half_offsets, squared_norms, 1
+                )));
+            const __m512 estimate = _mm512_fmadd_ps(
+                rescale,
+                _mm512_fmsub_ps(_mm512_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
+                _mm512_add_ps(squared_norm, query_squared_norm_vec)
+            );
+            num_kept += Compact16(
+                _mm512_mask_cmp_ps_mask(valid, estimate, threshold_vec, _CMP_LT_OQ),
+                position_vec,
+                estimate,
+                rescale,
+                positions + num_kept,
+                estimates + num_kept,
+                rescales + num_kept
+            );
+        }
+        return num_kept;
+    }
+
     template <uint32_t WIDTH>
     static size_t ScanTail(
         const uint8_t* PDX_RESTRICT records,

@@ -160,7 +160,9 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
 - **Search**: `ProbeClusterData` runs `SAQStart` (every chunk of every vector, `ComputeSAQEstimates`) while the heap holds
   fewer than k, else `SAQPrune`: `ScanHead` over every vector (the selection vector applied), then `ScanTail<W>` per chunk
   over the survivors against τ + margin_k (the last chunk at τ); tombstones drop at the merge. The query is int8 per
-  chunk (`SAQQuery`).
+  chunk (`SAQQuery`). Filtered, by the cluster's passing fraction: below `SAQ_PRUNING_START_MAX_PASSING_FRACTION`
+  (70%) the first clusters take `SAQPrune` too (τ = +∞ until the heap holds k), and below
+  `SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION` (10%) its head is `ScanHeadPruning` over the passing positions.
 - **Pruning bound**: margin_k = ε_k·√(|q_c unseen|²·remaining variance). `IVFUtils::CalibrateSAQPruningBound` estimates
   ε at `saq_pruning_significance` (0.01), DADE-style (arXiv 2411.17229): the (1 − P_s) quantile of the unseen term's
   ratio over `SAQ_CALIBRATION_QUERIES` sampled rows, each against its `SAQ_CALIBRATION_NEIGHBORS` nearest neighbours by
@@ -235,7 +237,8 @@ Performance-critical — weigh every copy/allocation.
 can claim it on CPUs that lack it), else a widening `vmlal_s16`),
   `MinMax`, `QuantizeToU8`/`U4`, `DequantizeFromU4` and `QuantizeToInt8`. The SIMD backends hand their scalar
   remainders to `ScalarComputer` (`scalar_computer`). `DistanceComputer<L2SQ, SAQ>` holds SAQ's kernels on every backend:
-  `ScanHead`, `ScanTail<W>` (per-chunk table `GetScanTail(w)`), the no-pruning pair `ComputeHeadEstimates` /
+  `ScanHead`, `ScanHeadPruning` (the head over given positions, gathered), `ScanTail<W>` (per-chunk table
+  `GetScanTail(w)`), the no-pruning pair `ComputeHeadEstimates` /
   `AccumulateTailEstimates<W>`, and the T2 `PackRecord`/`UnpackRecord` (scalar for now, TODO SIMD); the scans read and
   write up to `SAQ_SCAN_PADDING` lanes past the last vector.
   **All** SIMD lives in `include/pdx/distance_computers/` (`neon_computers.hpp`, `avx2_computers.hpp`,

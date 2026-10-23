@@ -642,9 +642,8 @@ class PDXearch {
     }
 
     // The SAQ scan of a cluster while the heap holds fewer than k: every vector's estimate over all
-    // of its chunks, then the live (and passing) ones into the heap
-    // TODO(@lkuffo, high): Benchmark choosing like FilteredStart: with few passing rows, the
-    // pruning kernels at an infinite threshold instead of every chunk of every vector
+    // of its chunks, then the live (and passing) ones into the heap. Filtered clusters with fewer
+    // than SAQ_PRUNING_START_MAX_PASSING_FRACTION passing take SAQPrune instead
     template <bool FILTERED = false>
     void SAQStart(
         const data_t* data,
@@ -697,7 +696,8 @@ class PDXearch {
         float* pruning_rescales,
         TopKHeap& top_k_heap,
         const tombstones_t& tombstones,
-        const uint8_t* selection_vector = nullptr
+        const uint8_t* selection_vector = nullptr,
+        uint32_t passing_tuples = 0
     ) {
         if (n_vectors == 0) {
             return;
@@ -714,24 +714,46 @@ class PDXearch {
         const int8_t* query_codes = saq_query.GetCodesPtr();
         const float* dot_scales = saq_query.GetChunkDotScalesPtr();
         const float* dot_offsets = saq_query.GetChunkDotOffsetsPtr();
-        // TODO(@lkuffo, high): Benchmark a head kernel that reads only the passing positions (when
-        // 1-2 rows of a cluster pass, random access may beat scanning every head)
-        size_t n_survivors = distance_computer_t::ScanHead(
-            data,
-            n_vectors,
-            buffer_stride,
-            query_codes,
-            dot_scales[0],
-            dot_offsets[0],
-            saq_query.GetResidualSquaredNorm(),
-            rescales,
-            rescales + model.num_segments * buffer_stride,
-            selection_vector,
-            chunk_threshold(0),
-            pruning_positions,
-            pruning_distances,
-            pruning_rescales
-        );
+        size_t n_survivors = 0;
+        if (selection_vector != nullptr &&
+            static_cast<float>(passing_tuples) <
+                SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION * static_cast<float>(n_vectors)) {
+            InitPositionsArrayFromSelectionVector(
+                n_vectors, n_survivors, pruning_positions, selection_vector
+            );
+            n_survivors = distance_computer_t::ScanHeadPruning(
+                data,
+                buffer_stride,
+                query_codes,
+                dot_scales[0],
+                dot_offsets[0],
+                saq_query.GetResidualSquaredNorm(),
+                rescales,
+                rescales + model.num_segments * buffer_stride,
+                chunk_threshold(0),
+                pruning_positions,
+                pruning_distances,
+                pruning_rescales,
+                n_survivors
+            );
+        } else {
+            n_survivors = distance_computer_t::ScanHead(
+                data,
+                n_vectors,
+                buffer_stride,
+                query_codes,
+                dot_scales[0],
+                dot_offsets[0],
+                saq_query.GetResidualSquaredNorm(),
+                rescales,
+                rescales + model.num_segments * buffer_stride,
+                selection_vector,
+                chunk_threshold(0),
+                pruning_positions,
+                pruning_distances,
+                pruning_rescales
+            );
+        }
         uint32_t segment_idx = model.chunk_segments[0];
         for (uint32_t chunk_idx = 1; chunk_idx < model.num_chunks && n_survivors > 0; ++chunk_idx) {
             const uint16_t* segment_rescales = nullptr;
@@ -888,8 +910,15 @@ class PDXearch {
                 passing_tuples = selection.second;
             }
             if constexpr (Q == SAQ) {
+                // With few passing rows the first clusters take the pruning kernels too, at the
+                // +inf threshold of a heap that holds fewer than k
+                const bool start_with_pruning_kernels =
+                    FILTERED && static_cast<float>(passing_tuples) <
+                                    SAQ_PRUNING_START_MAX_PASSING_FRACTION *
+                                        static_cast<float>(cluster.used_capacity);
                 if (top_k_heap->kth_distance.load(std::memory_order_relaxed) ==
-                    TopKHeap::NOT_FULL_KTH_DISTANCE) {
+                        TopKHeap::NOT_FULL_KTH_DISTANCE &&
+                    !start_with_pruning_kernels) {
                     s.template SAQStart<FILTERED>(
                         data,
                         cluster.used_capacity,
@@ -917,7 +946,8 @@ class PDXearch {
                         saq_rescales.get(),
                         *top_k_heap,
                         cluster.tombstones,
-                        selection_vector
+                        selection_vector,
+                        passing_tuples
                     );
                 }
             } else {

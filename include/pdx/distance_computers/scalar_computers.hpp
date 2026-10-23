@@ -344,6 +344,51 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         return num_kept;
     }
 
+    // ScanHead over the vectors at positions only (e.g. the rows passing a filter); keeps those
+    // below threshold, compacted in place
+    static size_t ScanHeadPruning(
+        const uint8_t* PDX_RESTRICT head,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT squared_norms,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales,
+        size_t num_positions
+    ) {
+        size_t num_kept = 0;
+        for (size_t position_idx = 0; position_idx < num_positions; ++position_idx) {
+            const uint32_t position = positions[position_idx];
+            int32_t dot = 0;
+            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                 ++group_idx) {
+                const uint8_t* levels = head + group_idx * U8_INTERLEAVE_SIZE * stride +
+                                        static_cast<size_t>(position) * U8_INTERLEAVE_SIZE;
+                for (size_t k = 0; k < U8_INTERLEAVE_SIZE; ++k) {
+                    dot += query_codes[group_idx * U8_INTERLEAVE_SIZE + k] * levels[k];
+                }
+            }
+            const float rescale =
+                ReadHalf(reinterpret_cast<const uint8_t*>(head_rescales + position));
+            const float squared_norm =
+                ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + position));
+            const float estimate = rescale * (static_cast<float>(dot) * dot_scale - dot_offset) +
+                                   (squared_norm + query_squared_norm);
+            if (estimate < threshold) {
+                positions[num_kept] = position;
+                estimates[num_kept] = estimate;
+                rescales[num_kept] = rescale;
+                ++num_kept;
+            }
+        }
+        return num_kept;
+    }
+
     // One tail chunk for the survivors, each vector's record in PackRecord's format.
     // segment_rescales: the rescales of the segment this chunk starts (null when it continues the
     // survivors' segment)

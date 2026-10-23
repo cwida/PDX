@@ -123,6 +123,11 @@ static constexpr size_t SAQ_SCAN_PADDING = 16;
 static constexpr size_t SAQ_CALIBRATION_QUERIES = 1000;
 static constexpr uint32_t SAQ_CALIBRATION_CLUSTERS = 16;
 static constexpr size_t SAQ_CALIBRATION_NEIGHBORS = 20;
+// Filtered SAQ scans by the fraction of a cluster's rows that pass: below the first, the start runs
+// the pruning kernels (the rows that don't pass skip their tail chunks); below the second, the head
+// reads only the passing rows instead of scanning every row
+static constexpr float SAQ_PRUNING_START_MAX_PASSING_FRACTION = 0.70f;
+static constexpr float SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION = 0.10f;
 
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most
