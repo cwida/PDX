@@ -782,7 +782,321 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         }
     }
 
+    // The codec's kernels (scalar_computer documents them), 16 values per step
+    using scalar_computer = ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ>;
+
+    static float ComputeResidual(
+        const float* PDX_RESTRICT embedding,
+        const float* PDX_RESTRICT mean,
+        size_t num_dimensions,
+        float* PDX_RESTRICT residual
+    ) {
+        Float32x16 accumulator = Zero16();
+        size_t j = 0;
+        for (; j + 16 <= num_dimensions; j += 16) {
+            const Float32x16 value = Sub16(Load16(embedding + j), Load16(mean + j));
+            Store16(residual + j, value);
+            accumulator = Fma16(value, value, accumulator);
+        }
+        float squared_norm = ReduceAdd16(accumulator);
+        if (j < num_dimensions) {
+            squared_norm += scalar_computer::ComputeResidual(
+                embedding + j, mean + j, num_dimensions - j, residual + j
+            );
+        }
+        return squared_norm;
+    }
+
+    static float EncodeSegment(
+        const float* PDX_RESTRICT values,
+        size_t num_values,
+        uint32_t width,
+        float scale,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        if (num_values % 16 != 0) {
+            return scalar_computer::EncodeSegment(values, num_values, width, scale, codes);
+        }
+        const int32_t half = int32_t{1} << (width - 1);
+        const int32_t max_level = half - 1;
+        Float32x16 squares = Zero16();
+        for (size_t j = 0; j < num_values; j += 16) {
+            const Float32x16 value = Load16(values + j);
+            squares = Fma16(value, value, squares);
+        }
+        const float squared_norm = ReduceAdd16(squares);
+        if (squared_norm <= 0.0f) {
+            std::fill_n(codes, num_values, static_cast<uint8_t>(half));
+            return 0.0f;
+        }
+        const Float32x16 epsilon = Set16(SAQ_LEVEL_ROUNDING_EPSILON);
+        const Float32x16 point_five = Set16(0.5f);
+        float k = scale / std::sqrt(squared_norm);
+        if (max_level > 0) {
+            float best_objective = -1.0f;
+            float best_k = k;
+            for (uint32_t point = 0; point < SAQ_SCALE_GRID_POINTS; ++point) {
+                const float candidate = k * scalar_computer::GridPointFactor(point);
+                const Float32x16 candidate_vec = Set16(candidate);
+                Float32x16 numerator = Zero16();
+                Float32x16 denominator = Zero16();
+                for (size_t j = 0; j < num_values; j += 16) {
+                    const Float32x16 magnitude = Abs16(Load16(values + j));
+                    const Float32x16 value = Add16(
+                        ToFloat32x16(Levels16(Fma16(magnitude, candidate_vec, epsilon), max_level)),
+                        point_five
+                    );
+                    numerator = Fma16(value, magnitude, numerator);
+                    denominator = Fma16(value, value, denominator);
+                }
+                const float objective =
+                    ReduceAdd16(numerator) / std::sqrt(ReduceAdd16(denominator));
+                if (objective > best_objective) {
+                    best_objective = objective;
+                    best_k = candidate;
+                }
+            }
+            k = best_k;
+        }
+        const Float32x16 k_vec = Set16(k);
+        Float32x16 inner_product = Zero16();
+        for (size_t j = 0; j < num_values; j += 16) {
+            const Float32x16 value = Load16(values + j);
+            const Float32x16 magnitude = Abs16(value);
+            const Int32x16 level = Levels16(Fma16(magnitude, k_vec, epsilon), max_level);
+            inner_product = Fma16(Add16(ToFloat32x16(level), point_five), magnitude, inner_product);
+            StoreCodes16(codes + j, level, value, half);
+        }
+        return squared_norm / ReduceAdd16(inner_product);
+    }
+
+    static void PackRecord(
+        const uint8_t* PDX_RESTRICT levels,
+        uint32_t width,
+        uint8_t* PDX_RESTRICT record
+    ) {
+        static constexpr void (*PACK_RECORDS[SAQ_MAX_CODE_WIDTH + 1])(const uint8_t*, uint8_t*) =
+            {nullptr,
+             PackRecordOfWidth<1>,
+             PackRecordOfWidth<2>,
+             PackRecordOfWidth<3>,
+             PackRecordOfWidth<4>,
+             PackRecordOfWidth<5>,
+             PackRecordOfWidth<6>,
+             PackRecordOfWidth<7>,
+             PackRecordOfWidth<8>};
+        PACK_RECORDS[width](levels, record);
+    }
+
+    static void DecodeRecord(
+        const uint8_t* PDX_RESTRICT record,
+        uint32_t width,
+        float rescale,
+        float center,
+        const float* PDX_RESTRICT mean,
+        size_t num_values,
+        float* PDX_RESTRICT out
+    ) {
+        if (num_values != SAQ_CHUNK_SIZE) {
+            scalar_computer::DecodeRecord(record, width, rescale, center, mean, num_values, out);
+            return;
+        }
+        static constexpr void (*DECODE_RECORDS
+                                   [SAQ_MAX_CODE_WIDTH +
+                                    1])(const uint8_t*, float, float, const float*, float*) =
+            {nullptr,
+             DecodeRecordOfWidth<1>,
+             DecodeRecordOfWidth<2>,
+             DecodeRecordOfWidth<3>,
+             DecodeRecordOfWidth<4>,
+             DecodeRecordOfWidth<5>,
+             DecodeRecordOfWidth<6>,
+             DecodeRecordOfWidth<7>,
+             DecodeRecordOfWidth<8>};
+        DECODE_RECORDS[width](record, rescale, center, mean, out);
+    }
+
   private:
+    // 16 lanes in 2 registers, the codec's unit of work
+    struct Float32x16 {
+        __m256 low, high;
+    };
+    struct Int32x16 {
+        __m256i low, high;
+    };
+
+    static Float32x16 Zero16() { return Set16(0.0f); }
+
+    static Float32x16 Set16(float x) {
+        const __m256 v = _mm256_set1_ps(x);
+        return {v, v};
+    }
+
+    static Float32x16 Load16(const float* PDX_RESTRICT p) {
+        return {_mm256_loadu_ps(p), _mm256_loadu_ps(p + 8)};
+    }
+
+    static void Store16(float* PDX_RESTRICT p, const Float32x16& a) {
+        _mm256_storeu_ps(p, a.low);
+        _mm256_storeu_ps(p + 8, a.high);
+    }
+
+    static Float32x16 Sub16(const Float32x16& a, const Float32x16& b) {
+        return {_mm256_sub_ps(a.low, b.low), _mm256_sub_ps(a.high, b.high)};
+    }
+
+    static Float32x16 Add16(const Float32x16& a, const Float32x16& b) {
+        return {_mm256_add_ps(a.low, b.low), _mm256_add_ps(a.high, b.high)};
+    }
+
+    // a * b + c
+    static Float32x16 Fma16(const Float32x16& a, const Float32x16& b, const Float32x16& c) {
+        return {_mm256_fmadd_ps(a.low, b.low, c.low), _mm256_fmadd_ps(a.high, b.high, c.high)};
+    }
+
+    static Float32x16 Abs16(const Float32x16& a) {
+        const __m256 magnitude_mask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7FFFFFFF));
+        return {_mm256_and_ps(a.low, magnitude_mask), _mm256_and_ps(a.high, magnitude_mask)};
+    }
+
+    static float ReduceAdd16(const Float32x16& a) {
+        const __m256 sum = _mm256_add_ps(a.low, a.high);
+        __m128 halves = _mm_add_ps(_mm256_castps256_ps128(sum), _mm256_extractf128_ps(sum, 1));
+        halves = _mm_hadd_ps(halves, halves);
+        return _mm_cvtss_f32(_mm_hadd_ps(halves, halves));
+    }
+
+    // min(trunc(x), max_level)
+    static Int32x16 Levels16(const Float32x16& x, int32_t max_level) {
+        const __m256i max_vec = _mm256_set1_epi32(max_level);
+        return {
+            _mm256_min_epi32(_mm256_cvttps_epi32(x.low), max_vec),
+            _mm256_min_epi32(_mm256_cvttps_epi32(x.high), max_vec)
+        };
+    }
+
+    static Float32x16 ToFloat32x16(const Int32x16& a) {
+        return {_mm256_cvtepi32_ps(a.low), _mm256_cvtepi32_ps(a.high)};
+    }
+
+    // The bytes half + level where value >= 0, half - 1 - level (half + ~level) elsewhere
+    static void StoreCodes16(
+        uint8_t* PDX_RESTRICT codes,
+        const Int32x16& level,
+        const Float32x16& value,
+        int32_t half
+    ) {
+        const __m256 zero = _mm256_setzero_ps();
+        const __m256i half_vec = _mm256_set1_epi32(half);
+        const __m256i low_codes = _mm256_add_epi32(
+            half_vec,
+            _mm256_xor_si256(
+                level.low, _mm256_castps_si256(_mm256_cmp_ps(value.low, zero, _CMP_LT_OQ))
+            )
+        );
+        const __m256i high_codes = _mm256_add_epi32(
+            half_vec,
+            _mm256_xor_si256(
+                level.high, _mm256_castps_si256(_mm256_cmp_ps(value.high, zero, _CMP_LT_OQ))
+            )
+        );
+        // packus interleaves the 128-bit lanes; the permute puts the 16 words back in order
+        const __m256i words =
+            _mm256_permute4x64_epi64(_mm256_packus_epi32(low_codes, high_codes), 0xD8);
+        _mm_storeu_si128(
+            reinterpret_cast<__m128i*>(codes),
+            _mm_packus_epi16(_mm256_castsi256_si128(words), _mm256_extracti128_si256(words, 1))
+        );
+    }
+
+    // ScalarComputer::PackRecord for one width
+    template <uint32_t WIDTH>
+    static void PackRecordOfWidth(
+        const uint8_t* PDX_RESTRICT levels,
+        uint8_t* PDX_RESTRICT record
+    ) {
+        const __m256i low_levels = LoadBytes32(levels);
+        const __m256i high_levels = LoadBytes32(levels + 32);
+        if constexpr (WIDTH == 8) {
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(record), low_levels);
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(record + 32), high_levels);
+            return;
+        }
+        if constexpr ((WIDTH & 4u) != 0) {
+            const __m256i bytes = _mm256_or_si256(
+                _mm256_and_si256(low_levels, _mm256_set1_epi8(0x0F)),
+                _mm256_and_si256(
+                    _mm256_slli_epi16(high_levels, 4), _mm256_set1_epi8(static_cast<char>(0xF0))
+                )
+            );
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(record), bytes);
+            record += 32;
+        }
+        if constexpr ((WIDTH & 2u) != 0) {
+            constexpr int SHIFT = (WIDTH & 4u) != 0 ? 4 : 0;
+            const __m256i two_bit_mask = _mm256_set1_epi8(3);
+            const __m256i low_parts =
+                _mm256_and_si256(_mm256_srli_epi16(low_levels, SHIFT), two_bit_mask);
+            const __m256i high_parts =
+                _mm256_and_si256(_mm256_srli_epi16(high_levels, SHIFT), two_bit_mask);
+            const __m128i bytes = _mm_or_si128(
+                _mm_or_si128(
+                    _mm256_castsi256_si128(low_parts),
+                    _mm_slli_epi16(_mm256_extracti128_si256(low_parts, 1), 2)
+                ),
+                _mm_or_si128(
+                    _mm_slli_epi16(_mm256_castsi256_si128(high_parts), 4),
+                    _mm_slli_epi16(_mm256_extracti128_si256(high_parts, 1), 6)
+                )
+            );
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(record), bytes);
+            record += 16;
+        }
+        if constexpr ((WIDTH & 1u) != 0) {
+            // Each level's top bit to its byte's bit 7, then one movemask per 32 levels
+            constexpr int UP = 8 - static_cast<int>(WIDTH);
+            const auto low_mask =
+                static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_slli_epi16(low_levels, UP)));
+            const auto high_mask =
+                static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_slli_epi16(high_levels, UP)));
+            const uint64_t bits =
+                static_cast<uint64_t>(low_mask) | (static_cast<uint64_t>(high_mask) << 32);
+            std::memcpy(record, &bits, sizeof(bits));
+        }
+    }
+
+    // ScalarComputer::DecodeRecord for one width and a whole chunk, levels widened in registers
+    template <uint32_t WIDTH>
+    static void DecodeRecordOfWidth(
+        const uint8_t* PDX_RESTRICT record,
+        float rescale,
+        float center,
+        const float* PDX_RESTRICT mean,
+        float* PDX_RESTRICT out
+    ) {
+        __m256i levels[2];
+        UnpackLevels<WIDTH>(record, levels);
+        const __m256 rescale_vec = _mm256_set1_ps(rescale);
+        const __m256 center_vec = _mm256_set1_ps(center);
+        for (size_t half_idx = 0; half_idx < 2; ++half_idx) {
+            const __m128i low = _mm256_castsi256_si128(levels[half_idx]);
+            const __m128i high = _mm256_extracti128_si256(levels[half_idx], 1);
+            const __m128i pieces[4] = {low, _mm_srli_si128(low, 8), high, _mm_srli_si128(high, 8)};
+            for (size_t piece = 0; piece < 4; ++piece) {
+                const size_t offset = 32 * half_idx + 8 * piece;
+                const __m256 floats = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(pieces[piece]));
+                _mm256_storeu_ps(
+                    out + offset,
+                    _mm256_fmadd_ps(
+                        _mm256_sub_ps(floats, center_vec),
+                        rescale_vec,
+                        _mm256_loadu_ps(mean + offset)
+                    )
+                );
+            }
+        }
+    }
+
     static __m256i LoadBytes32(const void* address) {
         return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(address));
     }

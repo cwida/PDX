@@ -937,7 +937,339 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         }
     }
 
+    // The codec's kernels (scalar_computer documents them), 16 values per step
+    static float ComputeResidual(
+        const float* PDX_RESTRICT embedding,
+        const float* PDX_RESTRICT mean,
+        size_t num_dimensions,
+        float* PDX_RESTRICT residual
+    ) {
+        Float32x16 accumulator = Zero16();
+        size_t j = 0;
+        for (; j + 16 <= num_dimensions; j += 16) {
+            const Float32x16 value = Sub16(Load16(embedding + j), Load16(mean + j));
+            Store16(residual + j, value);
+            accumulator = Fma16(value, value, accumulator);
+        }
+        float squared_norm = ReduceAdd16(accumulator);
+        if (j < num_dimensions) {
+            squared_norm += scalar_computer::ComputeResidual(
+                embedding + j, mean + j, num_dimensions - j, residual + j
+            );
+        }
+        return squared_norm;
+    }
+
+    static float EncodeSegment(
+        const float* PDX_RESTRICT values,
+        size_t num_values,
+        uint32_t width,
+        float scale,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        if (num_values % 16 != 0) {
+            return scalar_computer::EncodeSegment(values, num_values, width, scale, codes);
+        }
+        const int32_t half = int32_t{1} << (width - 1);
+        const int32_t max_level = half - 1;
+        Float32x16 squares = Zero16();
+        for (size_t j = 0; j < num_values; j += 16) {
+            const Float32x16 value = Load16(values + j);
+            squares = Fma16(value, value, squares);
+        }
+        const float squared_norm = ReduceAdd16(squares);
+        if (squared_norm <= 0.0f) {
+            std::fill_n(codes, num_values, static_cast<uint8_t>(half));
+            return 0.0f;
+        }
+        const Float32x16 epsilon = Set16(SAQ_LEVEL_ROUNDING_EPSILON);
+        const Float32x16 point_five = Set16(0.5f);
+        float k = scale / std::sqrt(squared_norm);
+        if (max_level > 0) {
+            float best_objective = -1.0f;
+            float best_k = k;
+            for (uint32_t point = 0; point < SAQ_SCALE_GRID_POINTS; ++point) {
+                const float candidate = k * scalar_computer::GridPointFactor(point);
+                const Float32x16 candidate_vec = Set16(candidate);
+                Float32x16 numerator = Zero16();
+                Float32x16 denominator = Zero16();
+                for (size_t j = 0; j < num_values; j += 16) {
+                    const Float32x16 magnitude = Abs16(Load16(values + j));
+                    const Float32x16 value = Add16(
+                        ToFloat32x16(Levels16(Fma16(magnitude, candidate_vec, epsilon), max_level)),
+                        point_five
+                    );
+                    numerator = Fma16(value, magnitude, numerator);
+                    denominator = Fma16(value, value, denominator);
+                }
+                const float objective =
+                    ReduceAdd16(numerator) / std::sqrt(ReduceAdd16(denominator));
+                if (objective > best_objective) {
+                    best_objective = objective;
+                    best_k = candidate;
+                }
+            }
+            k = best_k;
+        }
+        const Float32x16 k_vec = Set16(k);
+        Float32x16 inner_product = Zero16();
+        for (size_t j = 0; j < num_values; j += 16) {
+            const Float32x16 value = Load16(values + j);
+            const Float32x16 magnitude = Abs16(value);
+            const Int32x16 level = Levels16(Fma16(magnitude, k_vec, epsilon), max_level);
+            inner_product = Fma16(Add16(ToFloat32x16(level), point_five), magnitude, inner_product);
+            StoreCodes16(codes + j, level, value, half);
+        }
+        return squared_norm / ReduceAdd16(inner_product);
+    }
+
+    static void PackRecord(
+        const uint8_t* PDX_RESTRICT levels,
+        uint32_t width,
+        uint8_t* PDX_RESTRICT record
+    ) {
+        static constexpr void (*PACK_RECORDS[SAQ_MAX_CODE_WIDTH + 1])(const uint8_t*, uint8_t*) =
+            {nullptr,
+             PackRecordOfWidth<1>,
+             PackRecordOfWidth<2>,
+             PackRecordOfWidth<3>,
+             PackRecordOfWidth<4>,
+             PackRecordOfWidth<5>,
+             PackRecordOfWidth<6>,
+             PackRecordOfWidth<7>,
+             PackRecordOfWidth<8>};
+        PACK_RECORDS[width](levels, record);
+    }
+
+    static void DecodeRecord(
+        const uint8_t* PDX_RESTRICT record,
+        uint32_t width,
+        float rescale,
+        float center,
+        const float* PDX_RESTRICT mean,
+        size_t num_values,
+        float* PDX_RESTRICT out
+    ) {
+        if (num_values != SAQ_CHUNK_SIZE) {
+            scalar_computer::DecodeRecord(record, width, rescale, center, mean, num_values, out);
+            return;
+        }
+        static constexpr void (*DECODE_RECORDS
+                                   [SAQ_MAX_CODE_WIDTH +
+                                    1])(const uint8_t*, float, float, const float*, float*) =
+            {nullptr,
+             DecodeRecordOfWidth<1>,
+             DecodeRecordOfWidth<2>,
+             DecodeRecordOfWidth<3>,
+             DecodeRecordOfWidth<4>,
+             DecodeRecordOfWidth<5>,
+             DecodeRecordOfWidth<6>,
+             DecodeRecordOfWidth<7>,
+             DecodeRecordOfWidth<8>};
+        DECODE_RECORDS[width](record, rescale, center, mean, out);
+    }
+
   private:
+    // 16 lanes in 4 registers, the codec's unit of work
+    struct Float32x16 {
+        float32x4_t v[4];
+    };
+    struct Int32x16 {
+        int32x4_t v[4];
+    };
+
+    static Float32x16 Zero16() { return Set16(0.0f); }
+
+    static Float32x16 Set16(float x) {
+        const float32x4_t v = vdupq_n_f32(x);
+        return {{v, v, v, v}};
+    }
+
+    static Float32x16 Load16(const float* PDX_RESTRICT p) {
+        return {{vld1q_f32(p), vld1q_f32(p + 4), vld1q_f32(p + 8), vld1q_f32(p + 12)}};
+    }
+
+    static void Store16(float* PDX_RESTRICT p, const Float32x16& a) {
+        for (size_t i = 0; i < 4; ++i) {
+            vst1q_f32(p + 4 * i, a.v[i]);
+        }
+    }
+
+    static Float32x16 Sub16(const Float32x16& a, const Float32x16& b) {
+        Float32x16 out;
+        for (size_t i = 0; i < 4; ++i) {
+            out.v[i] = vsubq_f32(a.v[i], b.v[i]);
+        }
+        return out;
+    }
+
+    static Float32x16 Add16(const Float32x16& a, const Float32x16& b) {
+        Float32x16 out;
+        for (size_t i = 0; i < 4; ++i) {
+            out.v[i] = vaddq_f32(a.v[i], b.v[i]);
+        }
+        return out;
+    }
+
+    // a * b + c
+    static Float32x16 Fma16(const Float32x16& a, const Float32x16& b, const Float32x16& c) {
+        Float32x16 out;
+        for (size_t i = 0; i < 4; ++i) {
+            out.v[i] = vfmaq_f32(c.v[i], a.v[i], b.v[i]);
+        }
+        return out;
+    }
+
+    static Float32x16 Abs16(const Float32x16& a) {
+        Float32x16 out;
+        for (size_t i = 0; i < 4; ++i) {
+            out.v[i] = vabsq_f32(a.v[i]);
+        }
+        return out;
+    }
+
+    static float ReduceAdd16(const Float32x16& a) {
+        return vaddvq_f32(vaddq_f32(vaddq_f32(a.v[0], a.v[1]), vaddq_f32(a.v[2], a.v[3])));
+    }
+
+    // min(trunc(x), max_level)
+    static Int32x16 Levels16(const Float32x16& x, int32_t max_level) {
+        const int32x4_t max_vec = vdupq_n_s32(max_level);
+        Int32x16 out;
+        for (size_t i = 0; i < 4; ++i) {
+            out.v[i] = vminq_s32(vcvtq_s32_f32(x.v[i]), max_vec);
+        }
+        return out;
+    }
+
+    static Float32x16 ToFloat32x16(const Int32x16& a) {
+        Float32x16 out;
+        for (size_t i = 0; i < 4; ++i) {
+            out.v[i] = vcvtq_f32_s32(a.v[i]);
+        }
+        return out;
+    }
+
+    // The bytes half + level where value >= 0, half - 1 - level (half + ~level) elsewhere
+    static void StoreCodes16(
+        uint8_t* PDX_RESTRICT codes,
+        const Int32x16& level,
+        const Float32x16& value,
+        int32_t half
+    ) {
+        const int32x4_t half_vec = vdupq_n_s32(half);
+        uint16x4_t words[4];
+        for (size_t i = 0; i < 4; ++i) {
+            const int32x4_t negative =
+                vreinterpretq_s32_u32(vcltq_f32(value.v[i], vdupq_n_f32(0.0f)));
+            words[i] = vqmovun_s32(vaddq_s32(half_vec, veorq_s32(level.v[i], negative)));
+        }
+        vst1q_u8(
+            codes,
+            vcombine_u8(
+                vqmovn_u16(vcombine_u16(words[0], words[1])),
+                vqmovn_u16(vcombine_u16(words[2], words[3]))
+            )
+        );
+    }
+
+    // ScalarComputer::PackRecord for one width
+    template <uint32_t WIDTH>
+    static void PackRecordOfWidth(
+        const uint8_t* PDX_RESTRICT levels,
+        uint8_t* PDX_RESTRICT record
+    ) {
+        const uint8x16_t parts_in[4] = {
+            vld1q_u8(levels), vld1q_u8(levels + 16), vld1q_u8(levels + 32), vld1q_u8(levels + 48)
+        };
+        if constexpr (WIDTH == 8) {
+            for (size_t i = 0; i < 4; ++i) {
+                vst1q_u8(record + 16 * i, parts_in[i]);
+            }
+            return;
+        }
+        if constexpr ((WIDTH & 4u) != 0) {
+            const uint8x16_t nibble_mask = vdupq_n_u8(0x0F);
+            vst1q_u8(
+                record, vorrq_u8(vandq_u8(parts_in[0], nibble_mask), vshlq_n_u8(parts_in[2], 4))
+            );
+            vst1q_u8(
+                record + 16,
+                vorrq_u8(vandq_u8(parts_in[1], nibble_mask), vshlq_n_u8(parts_in[3], 4))
+            );
+            record += 32;
+        }
+        if constexpr ((WIDTH & 2u) != 0) {
+            constexpr int SHIFT = (WIDTH & 4u) != 0 ? 4 : 0;
+            const uint8x16_t two_bit_mask = vdupq_n_u8(3);
+            uint8x16_t parts[4];
+            for (size_t i = 0; i < 4; ++i) {
+                if constexpr (SHIFT != 0) {
+                    parts[i] = vandq_u8(vshrq_n_u8(parts_in[i], SHIFT), two_bit_mask);
+                } else {
+                    parts[i] = vandq_u8(parts_in[i], two_bit_mask);
+                }
+            }
+            vst1q_u8(
+                record,
+                vorrq_u8(
+                    vorrq_u8(parts[0], vshlq_n_u8(parts[1], 2)),
+                    vorrq_u8(vshlq_n_u8(parts[2], 4), vshlq_n_u8(parts[3], 6))
+                )
+            );
+            record += 16;
+        }
+        if constexpr ((WIDTH & 1u) != 0) {
+            // The top bit of each level, weighted by its lane's bit and summed per 8 levels
+            const uint8x16_t top_bit = vdupq_n_u8(static_cast<uint8_t>(1u << (WIDTH - 1)));
+            const uint8x16_t lane_bits = vld1q_u8(SAQ_BIT_PART_LANE_BITS);
+            uint8_t mask_bytes[8];
+            for (size_t i = 0; i < 4; ++i) {
+                const uint64x2_t sums = vpaddlq_u32(
+                    vpaddlq_u16(vpaddlq_u8(vandq_u8(vtstq_u8(parts_in[i], top_bit), lane_bits)))
+                );
+                mask_bytes[2 * i] = static_cast<uint8_t>(vgetq_lane_u64(sums, 0));
+                mask_bytes[2 * i + 1] = static_cast<uint8_t>(vgetq_lane_u64(sums, 1));
+            }
+            std::memcpy(record, mask_bytes, sizeof(mask_bytes));
+        }
+    }
+
+    // ScalarComputer::DecodeRecord for one width and a whole chunk, levels widened in registers
+    template <uint32_t WIDTH>
+    static void DecodeRecordOfWidth(
+        const uint8_t* PDX_RESTRICT record,
+        float rescale,
+        float center,
+        const float* PDX_RESTRICT mean,
+        float* PDX_RESTRICT out
+    ) {
+        uint8x16_t levels[4];
+        UnpackLevels<WIDTH>(record, levels);
+        const float32x4_t rescale_vec = vdupq_n_f32(rescale);
+        const float32x4_t center_vec = vdupq_n_f32(center);
+        for (size_t i = 0; i < 4; ++i) {
+            const uint16x8_t words[2] = {
+                vmovl_u8(vget_low_u8(levels[i])), vmovl_high_u8(levels[i])
+            };
+            for (size_t k = 0; k < 2; ++k) {
+                const float32x4_t floats[2] = {
+                    vcvtq_f32_u32(vmovl_u16(vget_low_u16(words[k]))),
+                    vcvtq_f32_u32(vmovl_high_u16(words[k]))
+                };
+                for (size_t q = 0; q < 2; ++q) {
+                    const size_t offset = 16 * i + 8 * k + 4 * q;
+                    vst1q_f32(
+                        out + offset,
+                        vfmaq_f32(
+                            vld1q_f32(mean + offset), vsubq_f32(floats[q], center_vec), rescale_vec
+                        )
+                    );
+                }
+            }
+        }
+    }
+
     // Stores the lanes of keep's surviving vectors at the front of the outputs (all 4 lanes are
     // written), returns how many survived
     static size_t Compact4(

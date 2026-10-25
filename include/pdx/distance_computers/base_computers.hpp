@@ -90,8 +90,11 @@ class DistanceComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
 
     constexpr static auto ScanHead = computer::ScanHead;
     constexpr static auto ScanHeadPruning = computer::ScanHeadPruning;
-    constexpr static auto PackRecord = ScalarComputer<DistanceMetric::L2SQ, SAQ>::PackRecord;
+    constexpr static auto PackRecord = computer::PackRecord;
     constexpr static auto UnpackRecord = ScalarComputer<DistanceMetric::L2SQ, SAQ>::UnpackRecord;
+    constexpr static auto ComputeResidual = computer::ComputeResidual;
+    constexpr static auto EncodeSegment = computer::EncodeSegment;
+    constexpr static auto DecodeRecord = computer::DecodeRecord;
 
     static ScanTailFunction GetScanTail(uint32_t width) {
         static constexpr ScanTailFunction SCAN_TAILS[SAQ_MAX_CODE_WIDTH + 1] =

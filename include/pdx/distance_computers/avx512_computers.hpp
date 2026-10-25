@@ -693,7 +693,235 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         }
     }
 
+    using scalar_computer = ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ>;
+
+    static float ComputeResidual(
+        const float* PDX_RESTRICT embedding,
+        const float* PDX_RESTRICT mean,
+        size_t num_dimensions,
+        float* PDX_RESTRICT residual
+    ) {
+        __m512 accumulator = _mm512_setzero_ps();
+        size_t j = 0;
+        for (; j + 16 <= num_dimensions; j += 16) {
+            const __m512 value =
+                _mm512_sub_ps(_mm512_loadu_ps(embedding + j), _mm512_loadu_ps(mean + j));
+            _mm512_storeu_ps(residual + j, value);
+            accumulator = _mm512_fmadd_ps(value, value, accumulator);
+        }
+        float squared_norm = _mm512_reduce_add_ps(accumulator);
+        if (j < num_dimensions) {
+            squared_norm += scalar_computer::ComputeResidual(
+                embedding + j, mean + j, num_dimensions - j, residual + j
+            );
+        }
+        return squared_norm;
+    }
+
+    static float EncodeSegment(
+        const float* PDX_RESTRICT values,
+        size_t num_values,
+        uint32_t width,
+        float scale,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        if (num_values % 16 != 0) {
+            return scalar_computer::EncodeSegment(values, num_values, width, scale, codes);
+        }
+        const int32_t half = int32_t{1} << (width - 1);
+        const int32_t max_level = half - 1;
+        __m512 squares = _mm512_setzero_ps();
+        for (size_t j = 0; j < num_values; j += 16) {
+            const __m512 value = _mm512_loadu_ps(values + j);
+            squares = _mm512_fmadd_ps(value, value, squares);
+        }
+        const float squared_norm = _mm512_reduce_add_ps(squares);
+        if (squared_norm <= 0.0f) {
+            std::fill_n(codes, num_values, static_cast<uint8_t>(half));
+            return 0.0f;
+        }
+        const __m512 epsilon = _mm512_set1_ps(SAQ_LEVEL_ROUNDING_EPSILON);
+        const __m512 point_five = _mm512_set1_ps(0.5f);
+        const __m512i max_level_vec = _mm512_set1_epi32(max_level);
+        const auto levels_of = [&](__m512 magnitude, __m512 k_vec) {
+            return _mm512_min_epi32(
+                _mm512_cvttps_epi32(_mm512_fmadd_ps(magnitude, k_vec, epsilon)), max_level_vec
+            );
+        };
+        float k = scale / std::sqrt(squared_norm);
+        if (max_level > 0) {
+            float best_objective = -1.0f;
+            float best_k = k;
+            for (uint32_t point = 0; point < SAQ_SCALE_GRID_POINTS; ++point) {
+                const float candidate = k * scalar_computer::GridPointFactor(point);
+                const __m512 candidate_vec = _mm512_set1_ps(candidate);
+                __m512 numerator = _mm512_setzero_ps();
+                __m512 denominator = _mm512_setzero_ps();
+                for (size_t j = 0; j < num_values; j += 16) {
+                    const __m512 magnitude = _mm512_abs_ps(_mm512_loadu_ps(values + j));
+                    const __m512 value = _mm512_add_ps(
+                        _mm512_cvtepi32_ps(levels_of(magnitude, candidate_vec)), point_five
+                    );
+                    numerator = _mm512_fmadd_ps(value, magnitude, numerator);
+                    denominator = _mm512_fmadd_ps(value, value, denominator);
+                }
+                const float objective =
+                    _mm512_reduce_add_ps(numerator) / std::sqrt(_mm512_reduce_add_ps(denominator));
+                if (objective > best_objective) {
+                    best_objective = objective;
+                    best_k = candidate;
+                }
+            }
+            k = best_k;
+        }
+        const __m512 k_vec = _mm512_set1_ps(k);
+        const __m512i half_vec = _mm512_set1_epi32(half);
+        const __m512i below_half_vec = _mm512_set1_epi32(half - 1);
+        __m512 inner_product = _mm512_setzero_ps();
+        for (size_t j = 0; j < num_values; j += 16) {
+            const __m512 value = _mm512_loadu_ps(values + j);
+            const __m512 magnitude = _mm512_abs_ps(value);
+            const __m512i level = levels_of(magnitude, k_vec);
+            inner_product = _mm512_fmadd_ps(
+                _mm512_add_ps(_mm512_cvtepi32_ps(level), point_five), magnitude, inner_product
+            );
+            // half + level where value >= 0, half - 1 - level elsewhere
+            const __mmask16 negative = _mm512_cmp_ps_mask(value, _mm512_setzero_ps(), _CMP_LT_OQ);
+            const __m512i level_codes = _mm512_mask_sub_epi32(
+                _mm512_add_epi32(half_vec, level), negative, below_half_vec, level
+            );
+            _mm_storeu_si128(
+                reinterpret_cast<__m128i*>(codes + j), _mm512_cvtepi32_epi8(level_codes)
+            );
+        }
+        return squared_norm / _mm512_reduce_add_ps(inner_product);
+    }
+
+    static void PackRecord(
+        const uint8_t* PDX_RESTRICT levels,
+        uint32_t width,
+        uint8_t* PDX_RESTRICT record
+    ) {
+        static constexpr void (*PACK_RECORDS[SAQ_MAX_CODE_WIDTH + 1])(const uint8_t*, uint8_t*) =
+            {nullptr,
+             PackRecordOfWidth<1>,
+             PackRecordOfWidth<2>,
+             PackRecordOfWidth<3>,
+             PackRecordOfWidth<4>,
+             PackRecordOfWidth<5>,
+             PackRecordOfWidth<6>,
+             PackRecordOfWidth<7>,
+             PackRecordOfWidth<8>};
+        PACK_RECORDS[width](levels, record);
+    }
+
+    static void DecodeRecord(
+        const uint8_t* PDX_RESTRICT record,
+        uint32_t width,
+        float rescale,
+        float center,
+        const float* PDX_RESTRICT mean,
+        size_t num_values,
+        float* PDX_RESTRICT out
+    ) {
+        if (num_values != SAQ_CHUNK_SIZE) {
+            scalar_computer::DecodeRecord(record, width, rescale, center, mean, num_values, out);
+            return;
+        }
+        static constexpr void (*DECODE_RECORDS
+                                   [SAQ_MAX_CODE_WIDTH +
+                                    1])(const uint8_t*, float, float, const float*, float*) =
+            {nullptr,
+             DecodeRecordOfWidth<1>,
+             DecodeRecordOfWidth<2>,
+             DecodeRecordOfWidth<3>,
+             DecodeRecordOfWidth<4>,
+             DecodeRecordOfWidth<5>,
+             DecodeRecordOfWidth<6>,
+             DecodeRecordOfWidth<7>,
+             DecodeRecordOfWidth<8>};
+        DECODE_RECORDS[width](record, rescale, center, mean, out);
+    }
+
   private:
+    // ScalarComputer::PackRecord for one width
+    template <uint32_t WIDTH>
+    static void PackRecordOfWidth(
+        const uint8_t* PDX_RESTRICT levels,
+        uint8_t* PDX_RESTRICT record
+    ) {
+        const __m512i all_levels = _mm512_loadu_si512(levels);
+        if constexpr (WIDTH == 8) {
+            _mm512_storeu_si512(record, all_levels);
+            return;
+        }
+        if constexpr ((WIDTH & 4u) != 0) {
+            const __m256i bytes = _mm256_or_si256(
+                _mm256_and_si256(_mm512_castsi512_si256(all_levels), _mm256_set1_epi8(0x0F)),
+                _mm256_and_si256(
+                    _mm256_slli_epi16(_mm512_extracti64x4_epi64(all_levels, 1), 4),
+                    _mm256_set1_epi8(static_cast<char>(0xF0))
+                )
+            );
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(record), bytes);
+            record += 32;
+        }
+        if constexpr ((WIDTH & 2u) != 0) {
+            constexpr int SHIFT = (WIDTH & 4u) != 0 ? 4 : 0;
+            const __m512i parts =
+                _mm512_and_si512(_mm512_srli_epi16(all_levels, SHIFT), _mm512_set1_epi8(3));
+            const __m128i bytes = _mm_or_si128(
+                _mm_or_si128(
+                    _mm512_castsi512_si128(parts),
+                    _mm_slli_epi16(_mm512_extracti32x4_epi32(parts, 1), 2)
+                ),
+                _mm_or_si128(
+                    _mm_slli_epi16(_mm512_extracti32x4_epi32(parts, 2), 4),
+                    _mm_slli_epi16(_mm512_extracti32x4_epi32(parts, 3), 6)
+                )
+            );
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(record), bytes);
+            record += 16;
+        }
+        if constexpr ((WIDTH & 1u) != 0) {
+            const uint64_t bits = _mm512_test_epi8_mask(
+                all_levels, _mm512_set1_epi8(static_cast<char>(1u << (WIDTH - 1)))
+            );
+            std::memcpy(record, &bits, sizeof(bits));
+        }
+    }
+
+    // ScalarComputer::DecodeRecord for one width and a whole chunk, levels widened in registers
+    template <uint32_t WIDTH>
+    static void DecodeRecordOfWidth(
+        const uint8_t* PDX_RESTRICT record,
+        float rescale,
+        float center,
+        const float* PDX_RESTRICT mean,
+        float* PDX_RESTRICT out
+    ) {
+        const __m512i levels = LevelUnpacker<WIDTH>{}(record);
+        const __m512 rescale_vec = _mm512_set1_ps(rescale);
+        const __m512 center_vec = _mm512_set1_ps(center);
+        const __m128i quarters[4] = {
+            _mm512_castsi512_si128(levels),
+            _mm512_extracti32x4_epi32(levels, 1),
+            _mm512_extracti32x4_epi32(levels, 2),
+            _mm512_extracti32x4_epi32(levels, 3)
+        };
+        for (int quarter = 0; quarter < 4; ++quarter) {
+            const __m512 floats = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(quarters[quarter]));
+            _mm512_storeu_ps(
+                out + 16 * quarter,
+                _mm512_fmadd_ps(
+                    _mm512_sub_ps(floats, center_vec),
+                    rescale_vec,
+                    _mm512_loadu_ps(mean + 16 * quarter)
+                )
+            );
+        }
+    }
+
     // The 64 levels of a WIDTH-bit tail record (ScalarComputer::PackRecord's format), in order
     template <uint32_t WIDTH>
     class LevelUnpacker {

@@ -126,8 +126,16 @@ static constexpr size_t SAQ_CALIBRATION_NEIGHBORS = 20;
 // Filtered SAQ scans by the fraction of a cluster's rows that pass: below the first, the start runs
 // the pruning kernels (the rows that don't pass skip their tail chunks); below the second, the head
 // reads only the passing rows instead of scanning every row
+// Measured in AVX512, (Zen 5, Granite Rapids), AVX2, and ARM NEON (M4 Pro)
 static constexpr float SAQ_PRUNING_START_MAX_PASSING_FRACTION = 0.70f;
 static constexpr float SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION = 0.10f;
+// The SAQ encoder's scale per segment: the mean best scale of this many random Gaussian vectors of
+// the segment's length, computed at fit (RaBitQ-Library's get_const_scaling_factors); each row then
+// takes the best of SAQ_SCALE_GRID_POINTS scales spread over +-SAQ_SCALE_GRID_SPAN around it
+static constexpr size_t SAQ_CONSTANT_SCALE_VECTORS = 100;
+static constexpr uint32_t SAQ_SCALE_GRID_POINTS = 4;
+static constexpr float SAQ_SCALE_GRID_SPAN = 0.25f;
+static constexpr float SAQ_LEVEL_ROUNDING_EPSILON = 1e-5f;
 
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most

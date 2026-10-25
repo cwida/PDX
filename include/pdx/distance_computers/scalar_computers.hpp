@@ -577,6 +577,106 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             }
         }
     }
+
+    // residual = embedding - mean; returns its squared norm
+    static float ComputeResidual(
+        const float* PDX_RESTRICT embedding,
+        const float* PDX_RESTRICT mean,
+        size_t num_dimensions,
+        float* PDX_RESTRICT residual
+    ) {
+        float squared_norm = 0.0f;
+        for (size_t j = 0; j < num_dimensions; ++j) {
+            residual[j] = embedding[j] - mean[j];
+            squared_norm += residual[j] * residual[j];
+        }
+        return squared_norm;
+    }
+
+    // One segment's codes. A level is min(trunc(t * |value| / |values| + eps), 2^(width - 1) - 1)
+    // and its code 2^(width - 1) + level (value >= 0) or 2^(width - 1) - 1 - level; t is the best
+    // of SAQ_SCALE_GRID_POINTS scales over +-SAQ_SCALE_GRID_SPAN around scale (the highest cosine
+    // between the levels + 0.5 and |values|). Returns the rescale |values|^2 / <values, code -
+    // center>
+    static float EncodeSegment(
+        const float* PDX_RESTRICT values,
+        size_t num_values,
+        uint32_t width,
+        float scale,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        const int32_t half = int32_t{1} << (width - 1);
+        const int32_t max_level = half - 1;
+        float squared_norm = 0.0f;
+        for (size_t j = 0; j < num_values; ++j) {
+            squared_norm += values[j] * values[j];
+        }
+        if (squared_norm <= 0.0f) {
+            std::fill_n(codes, num_values, static_cast<uint8_t>(half));
+            return 0.0f;
+        }
+        const auto level_of = [max_level](float scaled) {
+            return std::min(static_cast<int32_t>(scaled + SAQ_LEVEL_ROUNDING_EPSILON), max_level);
+        };
+        float k = scale / std::sqrt(squared_norm);
+        if (max_level > 0) {
+            float best_objective = -1.0f;
+            float best_k = k;
+            for (uint32_t point = 0; point < SAQ_SCALE_GRID_POINTS; ++point) {
+                const float candidate = k * GridPointFactor(point);
+                float numerator = 0.0f;
+                float denominator = 0.0f;
+                for (size_t j = 0; j < num_values; ++j) {
+                    const float magnitude = std::abs(values[j]);
+                    const float value = static_cast<float>(level_of(candidate * magnitude)) + 0.5f;
+                    numerator += value * magnitude;
+                    denominator += value * value;
+                }
+                const float objective = numerator / std::sqrt(denominator);
+                if (objective > best_objective) {
+                    best_objective = objective;
+                    best_k = candidate;
+                }
+            }
+            k = best_k;
+        }
+        float inner_product = 0.0f;
+        for (size_t j = 0; j < num_values; ++j) {
+            const float magnitude = std::abs(values[j]);
+            const int32_t level = level_of(k * magnitude);
+            inner_product += (static_cast<float>(level) + 0.5f) * magnitude;
+            codes[j] = static_cast<uint8_t>(values[j] >= 0.0f ? half + level : half - 1 - level);
+        }
+        return squared_norm / inner_product;
+    }
+
+    // The scale grid's point as a factor of the segment's scale
+    static float GridPointFactor(uint32_t point) {
+        if constexpr (SAQ_SCALE_GRID_POINTS == 1) {
+            return 1.0f;
+        }
+        return 1.0f - SAQ_SCALE_GRID_SPAN +
+               2.0f * SAQ_SCALE_GRID_SPAN * static_cast<float>(point) /
+                   static_cast<float>(SAQ_SCALE_GRID_POINTS - 1);
+    }
+
+    // The first num_values (up to SAQ_CHUNK_SIZE) floats of a chunk from its record:
+    // mean + (level - center) * rescale
+    static void DecodeRecord(
+        const uint8_t* PDX_RESTRICT record,
+        uint32_t width,
+        float rescale,
+        float center,
+        const float* PDX_RESTRICT mean,
+        size_t num_values,
+        float* PDX_RESTRICT out
+    ) {
+        uint8_t levels[SAQ_CHUNK_SIZE];
+        UnpackRecord(record, width, levels);
+        for (size_t j = 0; j < num_values; ++j) {
+            out[j] = mean[j] + (static_cast<float>(levels[j]) - center) * rescale;
+        }
+    }
 };
 
 template <>

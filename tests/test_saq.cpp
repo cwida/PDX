@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <gtest/gtest.h>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <vector>
@@ -100,6 +102,80 @@ TEST_F(SAQQuantizerTest, MoreBitsDecodeCloser) {
     EXPECT_LT(squared_errors[1], squared_errors[0]);
 }
 
+// The encoder's codes come within 3% of the estimator error (1/cos^2 - 1) of the best scale a fine
+// scan finds (on this data, 1.5% for its 4-scale grid and 4% for the grid's center alone).
+TEST_F(SAQQuantizerTest, EncoderNearsTheBestScale) {
+    using computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
+    constexpr size_t NUM_ROWS = 200;
+    constexpr size_t NUM_SCANNED_SCALES = 400;
+    for (const uint32_t bits_per_dimension : {3u, 4u}) {
+        const PDX::SAQFit fit = Fit(bits_per_dimension);
+        const PDX::SAQModel& model = fit.model;
+        const std::vector<float> rotated = Rotate(fit, data.train.data(), NUM_ROWS);
+        const PDX::SAQQuantizer quantizer(D);
+        PDX::SAQEncodingScratch scratch(D);
+        std::vector<uint8_t> encoded(model.GetEncodedEmbeddingSize());
+        std::vector<uint8_t> levels(PDX::AlignValue<uint32_t, PDX::SAQ_CHUNK_SIZE>(D));
+        double encoder_error = 0.0;
+        double best_error = 0.0;
+        for (size_t row_idx = 0; row_idx < NUM_ROWS; ++row_idx) {
+            const float* row = rotated.data() + row_idx * D;
+            quantizer.EncodeEmbedding(row, model, encoded.data(), scratch);
+            for (uint32_t chunk_idx = 0; chunk_idx < model.num_chunks; ++chunk_idx) {
+                computer::UnpackRecord(
+                    encoded.data() + model.chunk_record_offsets[chunk_idx],
+                    model.chunk_widths[chunk_idx],
+                    levels.data() + static_cast<size_t>(chunk_idx) * PDX::SAQ_CHUNK_SIZE
+                );
+            }
+            for (uint32_t segment_idx = 0; segment_idx < model.num_segments; ++segment_idx) {
+                const PDX::SAQSegment& segment = model.segments[segment_idx];
+                if (segment.width == 1) {
+                    continue;
+                }
+                const double center = (static_cast<double>(1u << segment.width) - 1.0) / 2.0;
+                const int32_t max_level = (int32_t{1} << (segment.width - 1)) - 1;
+                std::vector<double> values;
+                double squared_norm = 0.0;
+                double inner_product = 0.0;
+                double code_squared_norm = 0.0;
+                for (uint32_t j = segment.start; j < segment.end; ++j) {
+                    values.push_back(static_cast<double>(row[j]) - model.rotated_mean[j]);
+                    const double code = static_cast<double>(levels[j]) - center;
+                    squared_norm += values.back() * values.back();
+                    inner_product += values.back() * code;
+                    code_squared_norm += code * code;
+                }
+                encoder_error +=
+                    squared_norm * code_squared_norm / (inner_product * inner_product) - 1.0;
+                const double norm = std::sqrt(squared_norm);
+                double best = std::numeric_limits<double>::infinity();
+                for (size_t scale_idx = 0; scale_idx < NUM_SCANNED_SCALES; ++scale_idx) {
+                    const double scale =
+                        segment.scale *
+                        std::pow(16.0, static_cast<double>(scale_idx) / NUM_SCANNED_SCALES - 0.5);
+                    double numerator = 0.0;
+                    double denominator = 0.0;
+                    for (const double value : values) {
+                        const double magnitude = std::abs(value) / norm;
+                        const double level =
+                            std::min(
+                                static_cast<double>(static_cast<int32_t>(scale * magnitude + 1e-5)),
+                                static_cast<double>(max_level)
+                            ) +
+                            0.5;
+                        numerator += level * magnitude;
+                        denominator += level * level;
+                    }
+                    best = std::min(best, denominator / (numerator * numerator) - 1.0);
+                }
+                best_error += best;
+            }
+        }
+        EXPECT_LT(encoder_error, best_error * 1.03) << bits_per_dimension << " bits";
+    }
+}
+
 void ExpectSameModel(const PDX::SAQModel& expected, const PDX::SAQModel& actual) {
     ASSERT_EQ(expected.num_dimensions, actual.num_dimensions);
     EXPECT_EQ(expected.bits_per_dimension, actual.bits_per_dimension);
@@ -112,6 +188,7 @@ void ExpectSameModel(const PDX::SAQModel& expected, const PDX::SAQModel& actual)
         EXPECT_EQ(expected.segments[segment_idx].start, actual.segments[segment_idx].start);
         EXPECT_EQ(expected.segments[segment_idx].end, actual.segments[segment_idx].end);
         EXPECT_EQ(expected.segments[segment_idx].width, actual.segments[segment_idx].width);
+        EXPECT_EQ(expected.segments[segment_idx].scale, actual.segments[segment_idx].scale);
     }
     for (uint32_t chunk_idx = 0; chunk_idx < expected.num_chunks; ++chunk_idx) {
         EXPECT_EQ(expected.chunk_widths[chunk_idx], actual.chunk_widths[chunk_idx]);

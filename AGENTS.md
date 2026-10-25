@@ -151,7 +151,13 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
 
 - **Fit**: `SAQQuantizer::Fit(rows, n, d, bits, seed, executor, allocator)` (on up to `SAQ_FIT_SAMPLE_SIZE` rows)
   returns the d×d rotation T (PCA, then a random rotation per segment) and the `SAQModel` (plan, rotated mean,
-  per-chunk widths, code centres, record offsets and remaining variances).
+  per-chunk widths, code centres, record offsets and remaining variances, and each segment's `scale`).
+- **Encoding**: `EncodeEmbedding` runs `ComputeResidual`, then `EncodeSegment` per segment: the levels of the best
+  of `SAQ_SCALE_GRID_POINTS` (4) scales over ±`SAQ_SCALE_GRID_SPAN` (25%) around the segment's `scale`, which the
+  fit sets to the mean best scale of `SAQ_CONSTANT_SCALE_VECTORS` (100) Gaussian vectors of the segment's length
+  (RaBitQ-Library's `get_const_scaling_factors`), then `PackRecord` per chunk. The exact extended-RaBitQ search
+  (`FindBestScale`, a heap over level steps) runs only in the fit, for the scales and the plan's per-width
+  distortion: per row it cost 44–799× U8. `DecodeEmbedding` runs `DecodeRecord` per chunk.
 - **Standalone build**: `BuildIndex` normalizes once, fits, makes the owned pruner from T (`ADSamplingPruner(d, T, d, …)`:
   dense, no random QR), rotates, runs k-means with `use_superkmeans_pruning = false` (SuperKMeans' bounds need a random
   rotation, T starts with a PCA; also through `SplitClustersAboveMaxClusterSize`), encodes and calibrates the bound.
@@ -239,7 +245,9 @@ can claim it on CPUs that lack it), else a widening `vmlal_s16`),
   remainders to `ScalarComputer` (`scalar_computer`). `DistanceComputer<L2SQ, SAQ>` holds SAQ's kernels on every backend:
   `ScanHead`, `ScanHeadPruning` (the head over given positions, gathered), `ScanTail<W>` (per-chunk table
   `GetScanTail(w)`), the no-pruning pair `ComputeHeadEstimates` /
-  `AccumulateTailEstimates<W>`, and the T2 `PackRecord`/`UnpackRecord` (scalar for now, TODO SIMD); the scans read and
+  `AccumulateTailEstimates<W>`, the T2 `PackRecord` (`UnpackRecord` stays scalar), and the codec's `ComputeResidual`,
+  `EncodeSegment` and `DecodeRecord` (float, 16 values per step; a segment whose length is not a multiple of 16 and a
+  partial last chunk take the scalar kernels); the scans read and
   write up to `SAQ_SCAN_PADDING` lanes past the last vector.
   **All** SIMD lives in `include/pdx/distance_computers/` (`neon_computers.hpp`, `avx2_computers.hpp`,
   `avx512_computers.hpp`, `scalar_computers.hpp`) — don't scatter it elsewhere; keep all backends in

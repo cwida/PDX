@@ -625,6 +625,120 @@ TEST_F(DistanceComputerTest, SAQ_PackRecord_RoundTrips) {
     }
 }
 
+// The backend's PackRecord writes the scalar one's bytes at every width.
+TEST_F(DistanceComputerTest, SAQ_PackRecord_SIMD_MatchesScalar) {
+    using scalar_computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
+    using computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
+    std::mt19937 rng(42);
+    for (uint32_t width = 1; width <= PDX::SAQ_MAX_CODE_WIDTH; ++width) {
+        SCOPED_TRACE("width=" + std::to_string(width));
+        for (int trial = 0; trial < 20; ++trial) {
+            std::vector<uint8_t> levels(PDX::SAQ_CHUNK_SIZE);
+            for (auto& level : levels) {
+                level = static_cast<uint8_t>(rng() % (1u << width));
+            }
+            std::vector<uint8_t> expected(8 * width);
+            std::vector<uint8_t> actual(8 * width);
+            scalar_computer::PackRecord(levels.data(), width, expected.data());
+            computer::PackRecord(levels.data(), width, actual.data());
+            EXPECT_EQ(expected, actual);
+        }
+    }
+}
+
+// The backend's DecodeRecord returns the scalar one's floats, for whole and partial chunks.
+TEST_F(DistanceComputerTest, SAQ_DecodeRecord_SIMD_MatchesScalar) {
+    using scalar_computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
+    using computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> uniform(-1.0f, 1.0f);
+    for (uint32_t width = 1; width <= PDX::SAQ_MAX_CODE_WIDTH; ++width) {
+        for (const size_t num_values : {size_t{PDX::SAQ_CHUNK_SIZE}, size_t{40}}) {
+            SCOPED_TRACE("width=" + std::to_string(width) + ", n=" + std::to_string(num_values));
+            std::vector<uint8_t> record(8 * width);
+            for (auto& byte : record) {
+                byte = static_cast<uint8_t>(rng() % 256);
+            }
+            std::vector<float> mean(PDX::SAQ_CHUNK_SIZE);
+            for (auto& value : mean) {
+                value = uniform(rng);
+            }
+            const float center = 0.5f * static_cast<float>((1u << width) - 1);
+            std::vector<float> expected(num_values);
+            std::vector<float> actual(num_values);
+            scalar_computer::DecodeRecord(
+                record.data(), width, 0.0123f, center, mean.data(), num_values, expected.data()
+            );
+            computer::DecodeRecord(
+                record.data(), width, 0.0123f, center, mean.data(), num_values, actual.data()
+            );
+            for (size_t j = 0; j < num_values; ++j) {
+                EXPECT_NEAR(expected[j], actual[j], 1e-6f * std::max(1.0f, std::abs(expected[j])))
+                    << "value " << j;
+            }
+        }
+    }
+}
+
+// The backend's EncodeSegment keeps its codes in range with the rescale of those codes, as close
+// to the values as the scalar one's, and mostly the same codes.
+TEST_F(DistanceComputerTest, SAQ_EncodeSegment_SIMD_MatchesScalar) {
+    using scalar_computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
+    using computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
+    std::mt19937 rng(42);
+    std::normal_distribution<float> gaussian(0.0f, 1.0f);
+    size_t num_identical = 0;
+    size_t num_segments = 0;
+    for (uint32_t width = 1; width <= PDX::SAQ_MAX_CODE_WIDTH; ++width) {
+        const float max_level = static_cast<float>((1u << (width - 1)) - 1);
+        const float center = 0.5f * static_cast<float>((1u << width) - 1);
+        for (const size_t num_values : {size_t{64}, size_t{128}, size_t{448}, size_t{40}}) {
+            SCOPED_TRACE("width=" + std::to_string(width) + ", n=" + std::to_string(num_values));
+            // A scale whose levels reach max_level near the largest normalized values
+            const float scale =
+                std::max(1.0f, max_level) * std::sqrt(static_cast<float>(num_values)) / 2.5f;
+            for (int trial = 0; trial < 10; ++trial) {
+                std::vector<float> values(num_values);
+                for (auto& value : values) {
+                    value = gaussian(rng);
+                }
+                std::vector<uint8_t> expected(num_values);
+                std::vector<uint8_t> actual(num_values);
+                scalar_computer::EncodeSegment(
+                    values.data(), num_values, width, scale, expected.data()
+                );
+                const float rescale =
+                    computer::EncodeSegment(values.data(), num_values, width, scale, actual.data());
+                const auto cosine_and_rescale = [&](const std::vector<uint8_t>& codes) {
+                    double inner_product = 0.0;
+                    double squared_norm = 0.0;
+                    double code_squared_norm = 0.0;
+                    for (size_t j = 0; j < num_values; ++j) {
+                        const double code = static_cast<double>(codes[j]) - center;
+                        inner_product += values[j] * code;
+                        squared_norm += static_cast<double>(values[j]) * values[j];
+                        code_squared_norm += code * code;
+                    }
+                    return std::make_pair(
+                        inner_product / std::sqrt(squared_norm * code_squared_norm),
+                        squared_norm / inner_product
+                    );
+                };
+                for (const uint8_t code : actual) {
+                    ASSERT_LT(code, 1u << width);
+                }
+                const auto [expected_cosine, expected_rescale] = cosine_and_rescale(expected);
+                const auto [actual_cosine, actual_rescale] = cosine_and_rescale(actual);
+                EXPECT_NEAR(rescale, actual_rescale, 1e-4 * actual_rescale);
+                EXPECT_GE(actual_cosine, expected_cosine - 1e-4);
+                num_identical += expected == actual;
+                ++num_segments;
+            }
+        }
+    }
+    EXPECT_GE(num_identical * 10, num_segments * 9);
+}
+
 TEST_F(DistanceComputerTest, SAQ_ScanTail_SIMD_MatchesScalar) {
     using scalar_computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
     using computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
