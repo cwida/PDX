@@ -715,9 +715,37 @@ class PDXearch {
         const float* dot_scales = saq_query.GetChunkDotScalesPtr();
         const float* dot_offsets = saq_query.GetChunkDotOffsetsPtr();
         size_t n_survivors = 0;
-        if (selection_vector != nullptr &&
-            static_cast<float>(passing_tuples) <
-                SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION * static_cast<float>(n_vectors)) {
+        if (!model.HasPDXU8Head()) {
+            if (selection_vector != nullptr) {
+                InitPositionsArrayFromSelectionVector(
+                    n_vectors, n_survivors, pruning_positions, selection_vector
+                );
+            } else {
+                std::iota(pruning_positions, pruning_positions + n_vectors, 0u);
+                n_survivors = n_vectors;
+            }
+            StartSAQEstimatesPruning(
+                rescales + model.num_segments * buffer_stride,
+                pruning_positions,
+                n_survivors,
+                saq_query.GetResidualSquaredNorm(),
+                pruning_distances
+            );
+            n_survivors = distance_computer_t::GetScanTail(model.chunk_widths[0])(
+                data,
+                query_codes,
+                dot_scales[0],
+                dot_offsets[0],
+                rescales,
+                chunk_threshold(0),
+                pruning_positions,
+                pruning_distances,
+                pruning_rescales,
+                n_survivors
+            );
+        } else if (selection_vector != nullptr &&
+                   static_cast<float>(passing_tuples) <
+                       SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION * static_cast<float>(n_vectors)) {
             InitPositionsArrayFromSelectionVector(
                 n_vectors, n_survivors, pruning_positions, selection_vector
             );

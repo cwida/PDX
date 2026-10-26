@@ -105,7 +105,10 @@ class IVF : public skmeans::AllocatorHolder {
     ClusterFormat<Q> GetClusterFormat() const {
         if constexpr (Q == Quantization::SAQ) {
             return {
-                saq_model.chunk_record_offsets.get(), saq_model.num_chunks, saq_model.num_segments
+                saq_model.chunk_record_offsets.get(),
+                saq_model.num_chunks,
+                saq_model.num_segments,
+                saq_model.HasPDXU8Head()
             };
         } else {
             return num_dimensions;

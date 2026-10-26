@@ -81,6 +81,10 @@ struct SAQModel {
         return chunk_record_offsets[num_chunks] + sizeof(uint16_t) * (num_segments + 1);
     }
 
+    // An 8-bit head chunk is kept in the PDX U8 layout for the head kernels; at any other width it
+    // is a record like the tail chunks
+    bool HasPDXU8Head() const { return chunk_widths[0] == SAQ_MAX_CODE_WIDTH; }
+
     size_t GetInMemorySizeInBytes() const {
         return sizeof(*this) + num_dimensions * sizeof(float) + num_segments * sizeof(SAQSegment) +
                num_chunks * (2 * sizeof(uint32_t) + 2 * sizeof(float)) +
@@ -618,62 +622,68 @@ class SAQQuantizer : public Quantizer {
         std::unique_ptr<int[]> previous_cut(new int[table_size]);
         std::unique_ptr<int[]> previous_width(new int[table_size]);
         std::unique_ptr<int[]> previous_units(new int[table_size]);
-        std::fill_n(best.get(), table_size, infinity);
-        std::fill_n(previous_cut.get(), table_size, -1);
-        std::fill_n(previous_width.get(), table_size, -1);
-        std::fill_n(previous_units.get(), table_size, -1);
         const auto at = [max_units](size_t cut_idx, int units) {
             return cut_idx * (max_units + 1) + units;
         };
-        best[at(0, 0)] = 0;
-        for (size_t j = 1; j < num_cuts; ++j) {
-            for (size_t i = 0; i < j; ++i) {
-                // The head chunk is its own 8-bit segment: every vector's scan reads it unpacked
-                if (i == 0 && j != 1) {
-                    continue;
-                }
-                const int min_width = i == 0 ? static_cast<int>(SAQ_MAX_CODE_WIDTH) : 1;
-                const double length = cuts[j] - cuts[i];
-                const double energy = cumulative_energy[cuts[j]] - cumulative_energy[cuts[i]];
-                for (int width = min_width; width <= static_cast<int>(SAQ_MAX_CODE_WIDTH);
-                     ++width) {
-                    // Distortion of the segment at this width, kappa * energy^2 / length; it costs
-                    // its codes plus a 16-bit rescale, in units of PLAN_BIT_UNIT bits
-                    const double cost = kappas[width] * energy * energy / length;
-                    const int units =
-                        static_cast<int>(std::ceil((length * width + FACTOR_BITS) / PLAN_BIT_UNIT));
-                    for (int u = 0; u + units <= max_units; ++u) {
-                        const double previous_cost = best[at(i, u)];
-                        if (previous_cost == infinity) {
-                            continue;
-                        }
-                        const double total_cost = previous_cost + cost;
-                        if (total_cost < best[at(j, u + units)]) {
-                            best[at(j, u + units)] = total_cost;
-                            previous_cut[at(j, u + units)] = static_cast<int>(i);
-                            previous_width[at(j, u + units)] = width;
-                            previous_units[at(j, u + units)] = u;
+        // Fills the table; returns the least distortion of a whole plan and its units. With
+        // use_pdx_u8_head, the head chunk is its own 8-bit segment in the PDX U8 layout, which
+        // every vector's scan reads unpacked
+        const auto find_plan = [&](bool use_pdx_u8_head) {
+            std::fill_n(best.get(), table_size, infinity);
+            std::fill_n(previous_cut.get(), table_size, -1);
+            std::fill_n(previous_width.get(), table_size, -1);
+            std::fill_n(previous_units.get(), table_size, -1);
+            best[at(0, 0)] = 0;
+            for (size_t j = 1; j < num_cuts; ++j) {
+                for (size_t i = 0; i < j; ++i) {
+                    if (use_pdx_u8_head && i == 0 && j != 1) {
+                        continue;
+                    }
+                    const int min_width =
+                        use_pdx_u8_head && i == 0 ? static_cast<int>(SAQ_MAX_CODE_WIDTH) : 1;
+                    const double length = cuts[j] - cuts[i];
+                    const double energy = cumulative_energy[cuts[j]] - cumulative_energy[cuts[i]];
+                    for (int width = min_width; width <= static_cast<int>(SAQ_MAX_CODE_WIDTH);
+                         ++width) {
+                        // Distortion of the segment at this width, kappa * energy^2 / length; it
+                        // costs its codes plus a 16-bit rescale, in units of PLAN_BIT_UNIT bits
+                        const double cost = kappas[width] * energy * energy / length;
+                        const int units = static_cast<int>(
+                            std::ceil((length * width + FACTOR_BITS) / PLAN_BIT_UNIT)
+                        );
+                        for (int u = 0; u + units <= max_units; ++u) {
+                            const double previous_cost = best[at(i, u)];
+                            if (previous_cost == infinity) {
+                                continue;
+                            }
+                            const double total_cost = previous_cost + cost;
+                            if (total_cost < best[at(j, u + units)]) {
+                                best[at(j, u + units)] = total_cost;
+                                previous_cut[at(j, u + units)] = static_cast<int>(i);
+                                previous_width[at(j, u + units)] = width;
+                                previous_units[at(j, u + units)] = u;
+                            }
                         }
                     }
                 }
             }
-        }
-        int best_units = 0;
-        double best_cost = infinity;
-        for (int u = 0; u <= max_units; ++u) {
-            if (best[at(num_cuts - 1, u)] < best_cost) {
-                best_cost = best[at(num_cuts - 1, u)];
-                best_units = u;
+            std::pair<double, int> best_plan{infinity, 0};
+            for (int u = 0; u <= max_units; ++u) {
+                if (best[at(num_cuts - 1, u)] < best_plan.first) {
+                    best_plan = {best[at(num_cuts - 1, u)], u};
+                }
             }
+            return best_plan;
+        };
+        auto plan = find_plan(/*use_pdx_u8_head=*/true);
+        if (plan.first == infinity) {
+            plan = find_plan(/*use_pdx_u8_head=*/false);
         }
-        // TODO(@lkuffo, high): Fall back to a plan over the budget instead of throwing (the
-        // smallest, or the head outside the budget), so SAQ works below 166 (4 bits) and 248 (3
-        // bits) dimensions
+        const auto [best_cost, best_units] = plan;
         if (best_cost == infinity) {
             throw std::invalid_argument(
                 "No SAQ plan of " + std::to_string(d) + " dimensions fits " +
-                std::to_string(bits_per_dimension) +
-                " bits per dimension next to its 8-bit head chunk: use more dimensions or bits"
+                std::to_string(bits_per_dimension) + " bits per dimension: use more bits"
             );
         }
         uint32_t num_segments = 0;
@@ -760,6 +770,35 @@ class SAQQuery {
     float residual_squared_norm = 0.0f;
 };
 
+// Every vector's estimate starts at |r|^2 + |q_c|^2, then each chunk adds its -2 <q_c, r> term
+inline void StartSAQEstimates(
+    const uint16_t* squared_norms,
+    size_t n_vectors,
+    float query_squared_norm,
+    float* estimates
+) {
+    for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
+        estimates[vector_idx] =
+            ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + vector_idx)) +
+            query_squared_norm;
+    }
+}
+
+// StartSAQEstimates for the vectors at positions
+inline void StartSAQEstimatesPruning(
+    const uint16_t* squared_norms,
+    const uint32_t* positions,
+    size_t n_positions,
+    float query_squared_norm,
+    float* estimates
+) {
+    for (size_t position_idx = 0; position_idx < n_positions; ++position_idx) {
+        estimates[position_idx] =
+            ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + positions[position_idx])) +
+            query_squared_norm;
+    }
+}
+
 // Every vector's estimate over all of its chunks, from a cluster's SAQ data whose sections hold
 // stride slots; estimates has room for n_vectors + SAQ_SCAN_PADDING values
 inline void ComputeSAQEstimates(
@@ -777,19 +816,25 @@ inline void ComputeSAQEstimates(
     const int8_t* query_codes = query.GetCodesPtr();
     const float* dot_scales = query.GetChunkDotScalesPtr();
     const float* dot_offsets = query.GetChunkDotOffsetsPtr();
-    computer::ComputeHeadEstimates(
-        data,
-        n_vectors,
-        stride,
-        query_codes,
-        dot_scales[0],
-        dot_offsets[0],
-        query.GetResidualSquaredNorm(),
-        rescales,
-        rescales + model.num_segments * stride,
-        estimates
-    );
-    for (uint32_t chunk_idx = 1; chunk_idx < model.num_chunks; ++chunk_idx) {
+    const uint16_t* squared_norms = rescales + model.num_segments * stride;
+    const uint32_t first_record_chunk = model.HasPDXU8Head() ? 1 : 0;
+    if (model.HasPDXU8Head()) {
+        computer::ComputeHeadEstimates(
+            data,
+            n_vectors,
+            stride,
+            query_codes,
+            dot_scales[0],
+            dot_offsets[0],
+            query.GetResidualSquaredNorm(),
+            rescales,
+            squared_norms,
+            estimates
+        );
+    } else {
+        StartSAQEstimates(squared_norms, n_vectors, query.GetResidualSquaredNorm(), estimates);
+    }
+    for (uint32_t chunk_idx = first_record_chunk; chunk_idx < model.num_chunks; ++chunk_idx) {
         computer::GetAccumulateTailEstimates(model.chunk_widths[chunk_idx])(
             data + stride * model.chunk_record_offsets[chunk_idx],
             n_vectors,

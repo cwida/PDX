@@ -27,8 +27,13 @@ struct ClusterFormat {
 
 template <>
 struct ClusterFormat<SAQ> {
-    ClusterFormat(const size_t* chunk_record_offsets, uint32_t num_chunks, uint32_t num_segments)
-        : num_chunks(num_chunks), num_segments(num_segments),
+    ClusterFormat(
+        const size_t* chunk_record_offsets,
+        uint32_t num_chunks,
+        uint32_t num_segments,
+        bool has_pdx_u8_head
+    )
+        : num_chunks(num_chunks), num_segments(num_segments), has_pdx_u8_head(has_pdx_u8_head),
           chunk_record_offsets(new size_t[num_chunks + 1]) {
         std::copy(
             chunk_record_offsets,
@@ -39,6 +44,7 @@ struct ClusterFormat<SAQ> {
 
     ClusterFormat(const ClusterFormat& other)
         : num_chunks(other.num_chunks), num_segments(other.num_segments),
+          has_pdx_u8_head(other.has_pdx_u8_head),
           chunk_record_offsets(CopyArray(other.chunk_record_offsets, other.num_chunks + 1)) {}
 
     ClusterFormat(ClusterFormat&&) = default;
@@ -49,8 +55,12 @@ struct ClusterFormat<SAQ> {
         );
     }
 
+    // The first chunk stored as records: the head chunk is one too unless in the PDX U8 layout
+    uint32_t GetFirstRecordChunk() const { return has_pdx_u8_head ? 1 : 0; }
+
     uint32_t num_chunks;
     uint32_t num_segments;
+    bool has_pdx_u8_head;
     // Where each chunk's record starts in an encoded embedding; the last entry is the records' size
     std::unique_ptr<size_t[]> chunk_record_offsets;
 };
@@ -249,14 +259,17 @@ struct Cluster : skmeans::AllocatorHolder {
                 );
             };
             // SAQ's data layout
-            // Head: U8 vertical layout
+            // Head: U8 vertical layout at 8 bits, else a record like the tail's
             // Tail: See quantizers/saq.hpp
             // Factors: See quantizers/saq.hpp
-            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
-                 ++group_idx) {
-                save_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            if (format.has_pdx_u8_head) {
+                for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                     ++group_idx) {
+                    save_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+                }
             }
-            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+            for (uint32_t chunk_idx = format.GetFirstRecordChunk(); chunk_idx < format.num_chunks;
+                 ++chunk_idx) {
                 save_section(
                     format.chunk_record_offsets[chunk_idx],
                     format.chunk_record_offsets[chunk_idx + 1] -
@@ -314,11 +327,14 @@ struct Cluster : skmeans::AllocatorHolder {
             const auto load_section = [&](size_t row_offset, size_t size) {
                 reader.Read(data.get() + max_capacity * row_offset, size * num_embeddings);
             };
-            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
-                 ++group_idx) {
-                load_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            if (format.has_pdx_u8_head) {
+                for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                     ++group_idx) {
+                    load_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+                }
             }
-            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+            for (uint32_t chunk_idx = format.GetFirstRecordChunk(); chunk_idx < format.num_chunks;
+                 ++chunk_idx) {
                 load_section(
                     format.chunk_record_offsets[chunk_idx],
                     format.chunk_record_offsets[chunk_idx + 1] -
@@ -378,11 +394,14 @@ struct Cluster : skmeans::AllocatorHolder {
                     );
                 }
             };
-            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
-                 ++group_idx) {
-                store_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            if (format.has_pdx_u8_head) {
+                for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                     ++group_idx) {
+                    store_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+                }
             }
-            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+            for (uint32_t chunk_idx = format.GetFirstRecordChunk(); chunk_idx < format.num_chunks;
+                 ++chunk_idx) {
                 store_section(
                     format.chunk_record_offsets[chunk_idx],
                     format.chunk_record_offsets[chunk_idx + 1] -
@@ -535,11 +554,14 @@ struct Cluster : skmeans::AllocatorHolder {
                     out + row_offset, data + stride * row_offset + idx_in_cluster * size, size
                 );
             };
-            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
-                 ++group_idx) {
-                read_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            if (format.has_pdx_u8_head) {
+                for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                     ++group_idx) {
+                    read_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+                }
             }
-            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+            for (uint32_t chunk_idx = format.GetFirstRecordChunk(); chunk_idx < format.num_chunks;
+                 ++chunk_idx) {
                 read_section(
                     format.chunk_record_offsets[chunk_idx],
                     format.chunk_record_offsets[chunk_idx + 1] -
@@ -632,11 +654,14 @@ struct Cluster : skmeans::AllocatorHolder {
             );
         };
         if constexpr (Q == Quantization::SAQ) {
-            for (uint32_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
-                 ++group_idx) {
-                restride_block(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            if (format.has_pdx_u8_head) {
+                for (uint32_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                     ++group_idx) {
+                    restride_block(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+                }
             }
-            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+            for (uint32_t chunk_idx = format.GetFirstRecordChunk(); chunk_idx < format.num_chunks;
+                 ++chunk_idx) {
                 restride_block(
                     static_cast<uint32_t>(format.chunk_record_offsets[chunk_idx]),
                     static_cast<uint32_t>(
@@ -693,11 +718,14 @@ struct Cluster : skmeans::AllocatorHolder {
                     size
                 );
             };
-            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
-                 ++group_idx) {
-                insert_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            if (format.has_pdx_u8_head) {
+                for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                     ++group_idx) {
+                    insert_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+                }
             }
-            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+            for (uint32_t chunk_idx = format.GetFirstRecordChunk(); chunk_idx < format.num_chunks;
+                 ++chunk_idx) {
                 insert_section(
                     format.chunk_record_offsets[chunk_idx],
                     format.chunk_record_offsets[chunk_idx + 1] -
@@ -764,11 +792,14 @@ struct Cluster : skmeans::AllocatorHolder {
                 uint8_t* section = data.get() + max_capacity * row_offset;
                 std::memcpy(section + dst_idx * size, section + src_idx * size, size);
             };
-            for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
-                 ++group_idx) {
-                copy_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+            if (format.has_pdx_u8_head) {
+                for (size_t group_idx = 0; group_idx < SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+                     ++group_idx) {
+                    copy_section(group_idx * U8_INTERLEAVE_SIZE, U8_INTERLEAVE_SIZE);
+                }
             }
-            for (uint32_t chunk_idx = 1; chunk_idx < format.num_chunks; ++chunk_idx) {
+            for (uint32_t chunk_idx = format.GetFirstRecordChunk(); chunk_idx < format.num_chunks;
+                 ++chunk_idx) {
                 copy_section(
                     format.chunk_record_offsets[chunk_idx],
                     format.chunk_record_offsets[chunk_idx + 1] -
