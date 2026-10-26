@@ -35,7 +35,8 @@ void RunWorkload(
     const float* data,
     const float* queries,
     const std::vector<size_t>& nprobes_to_use,
-    const std::vector<WorkloadStep>& workload
+    const std::vector<WorkloadStep>& workload,
+    const uint32_t saq_bits_per_dimension = PDX::PDXIndexConfig{}.saq_bits_per_dimension
 ) {
     const size_t d = info.num_dimensions;
     const size_t n = info.num_embeddings;
@@ -51,6 +52,7 @@ void RunWorkload(
         .normalize = true,
         .sampling_fraction = 1.0f
     };
+    index_config.saq_bits_per_dimension = saq_bits_per_dimension;
 
     IndexT pdx_index(index_config);
     TicToc clock;
@@ -232,7 +234,8 @@ int main(int argc, char* argv[]) {
 
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe]\n";
-        std::cerr << "Index types: pdx_f32, pdx_u8, pdx_tree_f32 (default), pdx_tree_u8\n";
+        std::cerr << "Index types: pdx_f32, pdx_u8, pdx_tree_f32 (default), pdx_tree_u8, pdx_saq3, "
+                     "pdx_saq4\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
@@ -245,9 +248,10 @@ int main(int argc, char* argv[]) {
     size_t arg_ivf_nprobe = (argc > 3) ? std::atoi(argv[3]) : 0;
 
     if (index_type != "pdx_f32" && index_type != "pdx_u8" && index_type != "pdx_tree_f32" &&
-        index_type != "pdx_tree_u8") {
+        index_type != "pdx_tree_u8" && index_type != "pdx_saq3" && index_type != "pdx_saq4") {
         std::cerr << "Unknown index type: " << index_type << "\n";
-        std::cerr << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr
+            << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4\n";
         return 1;
     }
 
@@ -333,6 +337,17 @@ int main(int argc, char* argv[]) {
     } else if (index_type == "pdx_tree_u8") {
         RunWorkload<PDX::PDXTreeIndexU8>(
             info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use, workload
+        );
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        RunWorkload<PDX::PDXIndexSAQ>(
+            info,
+            dataset,
+            algorithm,
+            data.data(),
+            queries.data(),
+            nprobes_to_use,
+            workload,
+            index_type == "pdx_saq3" ? 3 : 4
         );
     }
 

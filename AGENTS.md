@@ -208,7 +208,8 @@ Header-only, no submodules; consumers link the `PDX` INTERFACE target (alias `PD
 ```bash
 cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 # Index building + search (index_type defaults to pdx_f32; nprobe 0/omitted sweeps a preset list)
-# `index_type`: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4 (SAQ also in BenchmarkBulkAppend)
+# `index_type`: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4 (every benchmark that takes an index type;
+# BenchmarkPDXIVF and the filtered ones load what BenchmarkSerialization saved)
 ./benchmarks/BenchmarkEndToEnd <dataset_id> [index_type] [nprobe]
 # Appends: build on n - n_append rows, append the rest in batches (1 = Append per row, 0 = rebuild reference)
 ./benchmarks/BenchmarkBulkAppend <dataset_id> <index_type> <batch_size> [n_append] [n_threads]
