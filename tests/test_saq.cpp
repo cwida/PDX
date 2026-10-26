@@ -17,10 +17,11 @@ namespace {
 class SAQQuantizerTest : public ::testing::Test {
   protected:
     static constexpr uint32_t D = TestUtils::MAX_D;
-    // Below SAQ_DP_PLAN_MIN_DIMENSIONS: one segment, so the head chunk is a record; and a partial last
-    // chunk
+    // Below SAQ_DP_PLAN_MIN_DIMENSIONS: one segment, so the head chunk is a record; and a partial
+    // last chunk
     static constexpr uint32_t T2_HEAD_D = 100;
-    // The head chunk in the PDX U8 layout; the test data stops at MAX_D, so these rows are synthetic
+    // The head chunk in the PDX U8 layout; the test data stops at MAX_D, so these rows are
+    // synthetic
     static constexpr uint32_t U8_HEAD_D = PDX::SAQ_PDX_U8_HEAD_MIN_DIMENSIONS;
 
     void SetUp() override {
