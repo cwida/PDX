@@ -642,6 +642,9 @@ class SAQQuantizer : public Quantizer {
                     const int min_width =
                         use_pdx_u8_head && i == 0 ? static_cast<int>(SAQ_MAX_CODE_WIDTH) : 1;
                     const double length = cuts[j] - cuts[i];
+                    // A partial last chunk's record still stores all of its 64 dimensions
+                    const double stored_length =
+                        AlignValue<uint32_t, SAQ_CHUNK_SIZE>(cuts[j]) - cuts[i];
                     const double energy = cumulative_energy[cuts[j]] - cumulative_energy[cuts[i]];
                     for (int width = min_width; width <= static_cast<int>(SAQ_MAX_CODE_WIDTH);
                          ++width) {
@@ -649,7 +652,7 @@ class SAQQuantizer : public Quantizer {
                         // costs its codes plus a 16-bit rescale, in units of PLAN_BIT_UNIT bits
                         const double cost = kappas[width] * energy * energy / length;
                         const int units = static_cast<int>(
-                            std::ceil((length * width + FACTOR_BITS) / PLAN_BIT_UNIT)
+                            std::ceil((stored_length * width + FACTOR_BITS) / PLAN_BIT_UNIT)
                         );
                         for (int u = 0; u + units <= max_units; ++u) {
                             const double previous_cost = best[at(i, u)];
@@ -777,10 +780,10 @@ inline void StartSAQEstimates(
     float query_squared_norm,
     float* estimates
 ) {
+    nk_cast(squared_norms, nk_f16_k, n_vectors, estimates, nk_f32_k);
+    PDX_VECTORIZE_LOOP
     for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
-        estimates[vector_idx] =
-            ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + vector_idx)) +
-            query_squared_norm;
+        estimates[vector_idx] += query_squared_norm;
     }
 }
 

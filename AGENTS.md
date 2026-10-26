@@ -27,7 +27,7 @@ Smaller data types are not friendly to PDX, as we must accumulate distances on w
 #### SAQ
 SAQ (`Quantization::SAQ`, `quantizers/saq.hpp`; arXiv 2509.12086) codes the residual to one global mean in PCA space. A
 DP plan cuts the dimensions at 64-dim cuts into segments of widths 1–8, within a 3- or 4-bit budget that counts the fp16
-factors, and each segment gets its own random rotation: the segment is the unit of quantization, the 64-dim chunk the
+factors and a partial last chunk's full 64-dim record, and each segment gets its own random rotation: the segment is the unit of quantization, the 64-dim chunk the
 unit of scan. The first chunk (the head) is its own 8-bit segment in the PDX U8 layout when that fits the budget, from
 d = 166 (4 bits) or 248 (3 bits; 249–250 miss by a byte); below, the DP plans it like the others and it is stored and
 scanned as a record (`SAQModel::HasPDXU8Head`, `ClusterFormat<SAQ>::GetFirstRecordChunk`). Encoded row: each chunk as a

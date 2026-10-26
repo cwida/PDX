@@ -16,8 +16,9 @@ namespace {
 class SAQQuantizerTest : public ::testing::Test {
   protected:
     static constexpr uint32_t D = TestUtils::MAX_D;
-    // Too few dimensions for the PDX U8 head at 3 and 4 bits: the head chunk is a record
-    static constexpr uint32_t T2_HEAD_D = 128;
+    // Too few dimensions for the PDX U8 head at 3 and 4 bits (the head chunk is a record), and a
+    // partial last chunk
+    static constexpr uint32_t T2_HEAD_D = 100;
 
     void SetUp() override {
         data = TestUtils::LoadTestData();
@@ -53,8 +54,9 @@ class SAQQuantizerTest : public ::testing::Test {
     TestUtils::TestData t2_head_data;
 };
 
-// The segments tile the dimensions in 64-dimension cuts and codes plus fp16 factors fit the budget.
-// The head chunk is its own 8-bit segment in the PDX U8 layout where that fits, a record otherwise.
+// The segments tile the dimensions in 64-dimension cuts and the stored codes plus fp16 factors fit
+// the budget. The head chunk is its own 8-bit segment in the PDX U8 layout where that fits, a
+// record otherwise.
 TEST_F(SAQQuantizerTest, PlanFitsTheBudget) {
     for (const uint32_t d : {D, T2_HEAD_D}) {
         for (const uint32_t bits_per_dimension : {3u, 4u}) {
@@ -67,18 +69,16 @@ TEST_F(SAQQuantizerTest, PlanFitsTheBudget) {
                 EXPECT_EQ(model.segments[0].end, PDX::SAQ_CHUNK_SIZE);
             }
             uint32_t next_start = 0;
-            uint32_t total_bits = 16;
             for (uint32_t segment_idx = 0; segment_idx < model.num_segments; ++segment_idx) {
                 const PDX::SAQSegment& segment = model.segments[segment_idx];
                 EXPECT_EQ(segment.start, next_start);
                 EXPECT_EQ(segment.start % PDX::SAQ_CHUNK_SIZE, 0u);
                 EXPECT_GE(segment.width, 1u);
                 EXPECT_LE(segment.width, PDX::SAQ_MAX_CODE_WIDTH);
-                total_bits += (segment.end - segment.start) * segment.width + 16;
                 next_start = segment.end;
             }
             EXPECT_EQ(next_start, d);
-            EXPECT_LE(total_bits, bits_per_dimension * d);
+            EXPECT_LE(8 * model.GetEncodedEmbeddingSize(), bits_per_dimension * d);
         }
     }
 }
