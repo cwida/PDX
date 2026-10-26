@@ -417,6 +417,34 @@ TEST_F(SAQQuantizerTest, ClusterKeepsEncodedEmbeddings) {
     }
 }
 
+// With the PDX U8 head, a row's own match comes first, near distance 0, even when its cluster is
+// probed last, through the head's pruning kernel
+TEST_F(SAQQuantizerTest, U8HeadFindsEachRowWhenItsClusterIsProbedLast) {
+    constexpr size_t NUM_QUERY_ROWS = 50;
+    PDX::PDXIndexConfig config{
+        .num_dimensions = U8_HEAD_D,
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .sampling_fraction = 1.0f,
+    };
+    PDX::PDXIndexSAQ index(config);
+    index.BuildIndex(u8_head_data.train.data(), TestUtils::N_TRAIN);
+    for (size_t row_id = 0; row_id < NUM_QUERY_ROWS; ++row_id) {
+        const float* row = u8_head_data.train.data() + row_id * U8_HEAD_D;
+        std::vector<uint32_t> clusters_access_order = index.GetClustersAccessOrder(row);
+        std::reverse(clusters_access_order.begin(), clusters_access_order.end());
+        PDX::TopKHeap heap;
+        auto search = index.BeginIterativeSearch(
+            row, TestUtils::KNN, heap, nullptr, false, &clusters_access_order
+        );
+        search->Next(clusters_access_order.size());
+        const auto results = PDX::BuildResultSetFromHeap(TestUtils::KNN, heap.heap);
+        ASSERT_EQ(results.size(), TestUtils::KNN);
+        EXPECT_EQ(results[0].index, row_id);
+        EXPECT_LT(std::abs(results[0].distance), 0.5f * results[1].distance);
+    }
+}
+
 static constexpr uint32_t PRUNING_TEST_N_PROBE = 16;
 static constexpr float PRUNING_RECALL_TOLERANCE = 0.01f;
 
