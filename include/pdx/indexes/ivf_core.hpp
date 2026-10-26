@@ -197,17 +197,22 @@ class IVF : public skmeans::AllocatorHolder {
 
     // The first half of the stream format (SaveToStream): what a search keeps in memory, with the
     // offset of each cluster in the cluster data that follows (SaveClusterData).
-    void SaveResidentData(std::ostream& out) const {
+    void SaveResidentData(std::ostream& out, const uint32_t* storage_order) const {
         WriteValue(out, num_dimensions);
         WriteValue(out, num_vertical_dimensions);
         WriteValue(out, num_horizontal_dimensions);
         WriteValue(out, num_clusters);
+        std::unique_ptr<uint64_t[]> cluster_data_offsets_to_save(new uint64_t[num_clusters]);
         uint64_t cluster_data_offset = 0;
+        for (size_t position = 0; position < num_clusters; ++position) {
+            const uint32_t cluster_id = storage_order[position];
+            cluster_data_offsets_to_save[cluster_id] = cluster_data_offset;
+            cluster_data_offset += GetClusterDataSizeInBytes(clusters[cluster_id].num_embeddings);
+        }
         for (size_t i = 0; i < num_clusters; ++i) {
             WriteValue(out, clusters[i].num_embeddings);
             WriteValue(out, clusters[i].max_capacity);
-            WriteValue(out, cluster_data_offset);
-            cluster_data_offset += GetClusterDataSizeInBytes(clusters[i].num_embeddings);
+            WriteValue(out, cluster_data_offsets_to_save[i]);
         }
         WriteValue(out, static_cast<char>(is_normalized));
         centroids.Save(out);
@@ -217,14 +222,15 @@ class IVF : public skmeans::AllocatorHolder {
         }
     }
 
-    // Each cluster's row ids, then its compact PDX data, in cluster order.
-    void SaveClusterData(std::ostream& out) const {
-        for (size_t i = 0; i < num_clusters; ++i) {
+    // Each cluster's row ids, then its compact PDX data, in storage order.
+    void SaveClusterData(std::ostream& out, const uint32_t* storage_order) const {
+        for (size_t position = 0; position < num_clusters; ++position) {
+            const cluster_t& cluster = clusters[storage_order[position]];
             out.write(
-                reinterpret_cast<const char*>(clusters[i].indices.get()),
-                static_cast<std::streamsize>(sizeof(uint32_t) * clusters[i].num_embeddings)
+                reinterpret_cast<const char*>(cluster.indices.get()),
+                static_cast<std::streamsize>(sizeof(uint32_t) * cluster.num_embeddings)
             );
-            clusters[i].SavePDXData(out);
+            cluster.SavePDXData(out);
         }
     }
 

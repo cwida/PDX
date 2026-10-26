@@ -256,9 +256,13 @@ class PDXIndex : public IPDXIndex {
     void SaveToStream(std::ostream& out) override {
         CompactClusters();
         WriteStreamHeader(out, GetIndexType(), config.centroid_quantization, config);
-        index.SaveResidentData(out);
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        const std::unique_ptr<uint32_t[]> storage_order =
+            IVFUtils(GetExecutor(), &GetAllocator())
+                .ComputeClusterStorageOrder(index, config.cluster_storage_order, config.seed);
+        index.SaveResidentData(out, storage_order.get());
         row_id_cluster_mapping.Save(out);
-        index.SaveClusterData(out);
+        index.SaveClusterData(out, storage_order.get());
     }
 
     void LoadFromStream(std::istream& in) override {

@@ -81,6 +81,14 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
   then the row-id mapping (`RowIdClusterMapping::Save`), then `IVF::SaveClusterData` (per cluster: row ids, then
   compact PDX data). `LoadClusterData` reads by offset and skips gaps and empty clusters (which hold no bytes and share the next cluster's offset), so the writer may reorder or pad clusters.
   `IVFTree` and `FlatIndex` stream the file format's payload.
+- Cluster storage order: `SaveResidentData`/`SaveClusterData` lay the clusters out in the order
+  `IVFUtils::ComputeClusterStorageOrder` gives for `PDXIndexConfig::cluster_storage_order` (write-time, not
+  serialized): `ID`, or `NEAREST_CENTROID_CHAIN` (default), so that the clusters a query probes together share the
+  storage blocks a pager reads (DuckIR: 256 KiB). Empty clusters go first, then a greedy nearest-neighbour path over
+  the decoded centroids from the first one (serial, k²/2 distances). Above `CLUSTER_STORAGE_ORDER_MAX_CHAIN_CLUSTERS`
+  (4096) non-empty clusters: `ComputeKMeans` of the centroids into round(√k) groups, the groups along a path over
+  their centroids, and a path inside each group (one `ParallelFor` over the groups) from its member nearest the
+  previous group's centroid. The reader needs no order: offsets are stored.
 - Paging: `LoadPDXIndexFromStream(in, pruner, &cluster_source)` (`LoadResidentDataFromStream`) loads a `PDXIndex`
   without its clusters' arrays (`data`/`indices` null; Flat and the tree load everything). `ProbeCluster` then gets
   a cluster's bytes from the caller's `IClusterSource` (`Acquire`/`Release`, concurrent; row ids, then PDX data with
