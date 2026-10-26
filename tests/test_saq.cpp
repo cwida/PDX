@@ -420,8 +420,8 @@ TEST_F(SAQQuantizerTest, ClusterKeepsEncodedEmbeddings) {
 static constexpr uint32_t PRUNING_TEST_N_PROBE = 16;
 static constexpr float PRUNING_RECALL_TOLERANCE = 0.01f;
 
-// The bound calibrated at P_s 0.01 keeps the recall of one that barely prunes (P_s 1e-6), and a
-// loose one (P_s 0.5) prunes true neighbours
+// The bound calibrated at the default P_s 0.1 keeps the recall of one that barely prunes
+// (P_s 1e-6), and a loose one (P_s 0.5) prunes true neighbours
 TEST(SAQPruningBoundTest, CalibratedBoundKeepsRecallAndPrunes) {
     constexpr size_t d = TestUtils::MAX_D;
     const auto data = TestUtils::LoadTestData(d);
@@ -452,7 +452,7 @@ TEST(SAQPruningBoundTest, CalibratedBoundKeepsRecallAndPrunes) {
         );
     };
     const float barely_pruned_recall = recall_at(1e-6f);
-    EXPECT_GE(recall_at(0.01f), barely_pruned_recall - PRUNING_RECALL_TOLERANCE);
+    EXPECT_GE(recall_at(0.1f), barely_pruned_recall - PRUNING_RECALL_TOLERANCE);
     EXPECT_LT(recall_at(0.5f), barely_pruned_recall);
 }
 

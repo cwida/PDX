@@ -177,10 +177,12 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
   PDX U8 head, `StartSAQEstimates`/`StartSAQEstimatesPruning` start the estimates at |r|² + |q_c|² (the head kernels do
   it themselves) and chunk 0 goes through `AccumulateTailEstimates`/`ScanTail` over every (or every passing) vector.
 - **Pruning bound**: margin_k = ε_k·√(|q_c unseen|²·remaining variance). `IVFUtils::CalibrateSAQPruningBound` estimates
-  ε at `saq_pruning_significance` (0.01), DADE-style (arXiv 2411.17229): the (1 − P_s) quantile of the unseen term's
+  ε at `saq_pruning_significance` (0.1), DADE-style (arXiv 2411.17229): the (1 − P_s) quantile of the unseen term's
   ratio over `SAQ_CALIBRATION_QUERIES` sampled rows, each against its `SAQ_CALIBRATION_NEIGHBORS` nearest neighbours by
   estimate in its `SAQ_CALIBRATION_CLUSTERS` nearest clusters. SAQ's own Chebyshev bound (§4.3) is not used: near
-  neighbours' unseen term isn't centred at zero. `CalibratePruningBound(row_ids, embeddings, n)` recalibrates on the
+  neighbours' unseen term isn't centred at zero. P_s 0.1 against 0.01 costs 0.003–0.008 recall@10 at n_probe 128 on
+  clip/jina/mxbai/openai and makes them 1.1–1.5× faster; it costs more where the head holds little of the variance
+  (the near-isotropic test data: up to 0.035 probing every cluster). `CalibratePruningBound(row_ids, embeddings, n)` recalibrates on the
   caller's rows; `CalibratePruningBound()` on up to `SAQ_CALIBRATION_QUERIES` live rows sampled from the index
   (`SampleLiveRowIds`) and decoded, which calibrates as well as the original rows. The bound goes stale when appended
   rows differ from the ones it was calibrated on (rows stored in order); when to recalibrate is the caller's call.

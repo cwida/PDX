@@ -42,7 +42,7 @@ struct PDXIndexConfig {
     CentroidQuantization centroid_quantization = CentroidQuantization::F32;
     ClusterStorageOrder cluster_storage_order = ClusterStorageOrder::NEAREST_CENTROID_CHAIN;
     uint32_t saq_bits_per_dimension = 3;
-    float saq_pruning_significance = 0.01f;
+    float saq_pruning_significance = 0.1f;
     // Runs the parallel loops (not owned, not serialized). nullptr: the index creates a default
     // one.
     ParallelExecutor* executor = nullptr;
