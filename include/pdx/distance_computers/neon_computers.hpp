@@ -1293,7 +1293,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         vst1q_f32(
             rescales, vreinterpretq_f32_u8(vqtbl1q_u8(vreinterpretq_u8_f32(rescales_in), shuffle))
         );
-        return static_cast<size_t>(__builtin_popcount(mask));
+        return static_cast<size_t>(PDX_POPCOUNT(mask));
     }
 
     static int32x4_t WideningLaneDots(int32x4_t acc, uint8x16_t levels, int8x16_t query) {

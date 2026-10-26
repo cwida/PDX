@@ -270,7 +270,8 @@ can claim it on CPUs that lack it), else a widening `vmlal_s16`),
   `tests/test_distance_computers.cpp`.
 - **`PDX_VECTORIZE_LOOP`** (`common.hpp`) forces loop autovectorization (esp. FP reductions) — put it
   on its own line right above the `for`, never a raw `#pragma clang loop`. Other macros there: `PDX_RESTRICT`, `PDX_ALWAYS_INLINE`, `PDX_NO_INLINE`,
-  `PDX_LIKELY`/`PDX_UNLIKELY`, `PDX_PREFETCH`, `PDX_ENSURE_POSITIVE`.
+  `PDX_LIKELY`/`PDX_UNLIKELY`, `PDX_PREFETCH`, `PDX_POPCOUNT` (never a raw `__builtin_popcount`: MSVC
+  lacks it), `PDX_ENSURE_POSITIVE`.
 - **Parallelism: no OpenMP.** Every parallel loop runs on SuperKMeans' `ParallelExecutor` (aliased in
   `common.hpp`). `IPDXIndex` is a `skmeans::ExecutorHolder`: it binds `PDXIndexConfig::executor` or owns a
   default sized by `n_threads`, and `BuildIndex`/`Append`/`Delete` open a `skmeans::ParallelSection`. It

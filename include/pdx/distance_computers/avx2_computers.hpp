@@ -1409,7 +1409,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         );
         _mm256_storeu_ps(estimates, _mm256_permutevar8x32_ps(estimates_in, lanes));
         _mm256_storeu_ps(rescales, _mm256_permutevar8x32_ps(rescales_in, lanes));
-        return static_cast<size_t>(__builtin_popcount(keep_mask));
+        return static_cast<size_t>(PDX_POPCOUNT(keep_mask));
     }
 };
 

@@ -75,6 +75,16 @@
 #define PDX_PREFETCH(addr, rw, locality) ((void) 0)
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+#define PDX_POPCOUNT(x) __builtin_popcount(x)
+#elif defined(_MSC_VER) && defined(_M_ARM64)
+#include <intrin.h>
+#define PDX_POPCOUNT(x) _CountOneBits(static_cast<unsigned long>(x))
+#elif defined(_MSC_VER)
+#include <intrin.h>
+#define PDX_POPCOUNT(x) __popcnt(static_cast<unsigned int>(x))
+#endif
+
 #if defined(__clang__)
 #define PDX_VECTORIZE_LOOP _Pragma("clang loop vectorize(enable)")
 #elif defined(__GNUC__)
