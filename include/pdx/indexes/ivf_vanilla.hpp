@@ -499,6 +499,7 @@ class PDXIndex : public IPDXIndex {
         const float* const embeddings,
         const size_t num_embeddings
     ) {
+        PDX_PROFILE_SCOPE("BuildIndex");
         config.ValidateNumEmbeddings(num_embeddings);
         skmeans::ParallelSection parallel_section(GetExecutor());
         const IVFUtils ivf_utils(GetExecutor(), &GetAllocator());
@@ -771,6 +772,36 @@ class PDXIndex : public IPDXIndex {
         );
     }
 
+    // Recalibrates the SAQ pruning bound on up to SAQ_CALIBRATION_QUERIES live rows sampled from
+    // this index and decoded from their codes, for a caller that does not hold the rows
+    void CalibratePruningBound() {
+        static_assert(Q == SAQ, "Only SAQ indexes calibrate a pruning bound");
+        if (index.num_clusters == 0) {
+            throw std::logic_error("CalibratePruningBound: the index is not built");
+        }
+        if (searcher->cluster_source) {
+            throw std::logic_error(
+                "CalibratePruningBound: the index was loaded without its clusters' data"
+            );
+        }
+        const std::vector<size_t> sampled_row_ids = SampleLiveRowIds(SAQ_CALIBRATION_QUERIES);
+        if (sampled_row_ids.empty()) {
+            throw std::logic_error("CalibratePruningBound: the index holds no rows");
+        }
+        auto decoded_embeddings = skmeans::AllocateBuffer<float>(
+            GetAllocator(), sampled_row_ids.size() * index.num_dimensions
+        );
+        GetEmbeddingsFromIndexByRowIds(sampled_row_ids, decoded_embeddings.get());
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        CalibrateSAQPruningBoundOnSample(
+            IVFUtils(GetExecutor(), &GetAllocator()),
+            sampled_row_ids.data(),
+            decoded_embeddings.get(),
+            sampled_row_ids.size(),
+            /*is_data_transformed=*/true
+        );
+    }
+
   private:
     static constexpr PDXIndexType GetIndexType() {
         if constexpr (Q == F32)
@@ -789,6 +820,7 @@ class PDXIndex : public IPDXIndex {
         size_t num_embeddings,
         bool normalize
     ) {
+        PDX_PROFILE_SCOPE("BuildIndex/FitSAQAndRotate");
         const uint32_t num_dimensions = config.num_dimensions;
         if (pruner && !owned_pruner) {
             return ivf_utils.NormalizeAndRotate(
@@ -817,6 +849,38 @@ class PDXIndex : public IPDXIndex {
         return ivf_utils.NormalizeAndRotate(
             fit_input, num_embeddings, num_dimensions, /*normalize=*/false, *pruner
         );
+    }
+
+    // The row ids of up to max_rows live rows, a uniform sample drawn with the config's seed in one
+    // pass over the clusters: each live row is picked with probability rows still to pick / live
+    // rows left
+    std::vector<size_t> SampleLiveRowIds(const size_t max_rows) const {
+        size_t live_rows_left = 0;
+        for (uint32_t cluster_id = 0; cluster_id < index.num_clusters; ++cluster_id) {
+            const auto& cluster = index.clusters[cluster_id];
+            live_rows_left += cluster.used_capacity - cluster.tombstones.size();
+        }
+        size_t rows_to_pick = std::min(max_rows, live_rows_left);
+        std::vector<size_t> sampled_row_ids;
+        sampled_row_ids.reserve(rows_to_pick);
+        std::mt19937 generator(config.seed);
+        for (uint32_t cluster_id = 0; cluster_id < index.num_clusters && rows_to_pick > 0;
+             ++cluster_id) {
+            const auto& cluster = index.clusters[cluster_id];
+            for (uint32_t position = 0; position < cluster.used_capacity && rows_to_pick > 0;
+                 ++position) {
+                if (cluster.HasTombstone(position)) {
+                    continue;
+                }
+                std::uniform_int_distribution<size_t> pick(0, live_rows_left - 1);
+                if (pick(generator) < rows_to_pick) {
+                    sampled_row_ids.push_back(cluster.indices[position]);
+                    --rows_to_pick;
+                }
+                --live_rows_left;
+            }
+        }
+        return sampled_row_ids;
     }
 
     // Calibrates the SAQ pruning bound on up to SAQ_CALIBRATION_QUERIES of these rows of the index,

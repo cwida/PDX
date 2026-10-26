@@ -492,6 +492,37 @@ TEST(SAQPruningBoundTest, RecalibrationOnTheIndexRowsKeepsRecall) {
         built_recall,
         PRUNING_RECALL_TOLERANCE
     );
+
+    index.CalibratePruningBound();
+    EXPECT_NEAR(
+        TestUtils::ComputeAverageRecall(
+            index, data.queries.data(), TestUtils::N_QUERIES, d, TestUtils::KNN, gt
+        ),
+        built_recall,
+        PRUNING_RECALL_TOLERANCE
+    );
+}
+
+// Recalibrating on rows decoded from the index samples only the rows it still holds
+TEST(SAQPruningBoundTest, RecalibrationOnDecodedRowsSkipsDeletedRows) {
+    constexpr size_t d = TestUtils::MAX_D;
+    const auto data = TestUtils::LoadTestData(d);
+    PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+    };
+    PDX::PDXIndexSAQ index(config);
+    index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; ++row_id) {
+        if (row_id % 10 != 0) {
+            index.Delete(row_id);
+        }
+    }
+    EXPECT_NO_THROW(index.CalibratePruningBound());
 }
 
 } // namespace

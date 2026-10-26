@@ -312,6 +312,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
         const bool hierarchical_indexing = true,
         const bool use_superkmeans_pruning = true
     ) const {
+        PDX_PROFILE_SCOPE("ComputeKMeans");
         assert(num_embeddings >= 1);
         assert(num_dimensions >= 1);
         assert(num_clusters >= 1);
@@ -566,6 +567,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
         uint32_t max_cluster_size = 0,
         bool expect_appends = true
     ) const {
+        PDX_PROFILE_SCOPE("PopulateIVFClusters");
         using storage_t = pdx_data_t<Q>;
 
         size_t largest_cluster_size = 0;

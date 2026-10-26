@@ -178,7 +178,10 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
   ε at `saq_pruning_significance` (0.01), DADE-style (arXiv 2411.17229): the (1 − P_s) quantile of the unseen term's
   ratio over `SAQ_CALIBRATION_QUERIES` sampled rows, each against its `SAQ_CALIBRATION_NEIGHBORS` nearest neighbours by
   estimate in its `SAQ_CALIBRATION_CLUSTERS` nearest clusters. SAQ's own Chebyshev bound (§4.3) is not used: near
-  neighbours' unseen term isn't centred at zero. `CalibratePruningBound(row_ids, embeddings, n)` recalibrates.
+  neighbours' unseen term isn't centred at zero. `CalibratePruningBound(row_ids, embeddings, n)` recalibrates on the
+  caller's rows; `CalibratePruningBound()` on up to `SAQ_CALIBRATION_QUERIES` live rows sampled from the index
+  (`SampleLiveRowIds`) and decoded, which calibrates as well as the original rows. The bound goes stale when appended
+  rows differ from the ones it was calibrated on (rows stored in order); when to recalibrate is the caller's call.
 - **Maintenance**: codes don't depend on the cluster (global mean, frozen model), so splits, steals, merges and
   `ReassignEmbeddings` move encoded rows as they are; decoded floats only drive the 2-means and the assignments.
   `GetEmbeddingsFromIndexByRowIds` returns decoded rows in T-space.
