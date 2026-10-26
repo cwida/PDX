@@ -28,9 +28,11 @@ Smaller data types are not friendly to PDX, as we must accumulate distances on w
 SAQ (`Quantization::SAQ`, `quantizers/saq.hpp`; arXiv 2509.12086) codes the residual to one global mean in PCA space. A
 DP plan cuts the dimensions at 64-dim cuts into segments of widths 1–8, within a 3- or 4-bit budget that counts the fp16
 factors and a partial last chunk's full 64-dim record, and each segment gets its own random rotation: the segment is the unit of quantization, the 64-dim chunk the
-unit of scan. The first chunk (the head) is its own 8-bit segment in the PDX U8 layout when that fits the budget, from
-d = 166 (4 bits) or 248 (3 bits; 249–250 miss by a byte); below, the DP plans it like the others and it is stored and
-scanned as a record (`SAQModel::HasPDXU8Head`, `ClusterFormat<SAQ>::GetFirstRecordChunk`). Encoded row: each chunk as a
+unit of scan. The plan depends on d: below `SAQ_DP_PLAN_MIN_DIMENSIONS` (256) one segment at the declared bits, its
+factors on top of the budget (vanilla RaBitQ; the DP's segments lost 0.11–0.37 recall to it there); from 256 the DP;
+from `SAQ_PDX_U8_HEAD_MIN_DIMENSIONS` (640) the first chunk (the head) is forced to its own 8-bit segment in the PDX U8
+layout, which costs no recall from 640 on but 0.03 at 384 and 0.25 at 200 (4 bits). A head chunk at any other width is
+stored and scanned as a record (`SAQModel::HasPDXU8Head`, `ClusterFormat<SAQ>::GetFirstRecordChunk`). Encoded row: each chunk as a
 T2 record (`PackRecord`/`UnpackRecord`: at 8 bits the levels as they are, else the width split into 4-, 2- and 1-bit
 parts, each interleaved across byte lanes, 8·w bytes); one fp16 rescale per segment; fp16 |r|². In a cluster every part
 is transposed at the cluster's stride: the head in the U8 vertical layout if 8-bit, then each chunk's records, then the
@@ -180,9 +182,9 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
 - **Maintenance**: codes don't depend on the cluster (global mean, frozen model), so splits, steals, merges and
   `ReassignEmbeddings` move encoded rows as they are; decoded floats only drive the 2-means and the assignments.
   `GetEmbeddingsFromIndexByRowIds` returns decoded rows in T-space.
-- **Tests** run SAQ at each suite's dimensions (mostly 128, a T2 head); the PDX U8 head is covered at 384
-  (`test_search`, `test_saq`, `test_maintenance`'s `D`). `test_saq` checks the plan and the cluster layout for both
-  heads.
+- **Tests** run SAQ at each suite's dimensions: mostly 128 (one segment) and 384 (the DP, free head). The PDX U8 head
+  needs 640 dimensions, past the test data, so `test_saq` covers it on synthetic rows: it checks the plan in all three
+  regimes and the cluster layout for both heads.
 
 ## Verification gate (definition of done)
 

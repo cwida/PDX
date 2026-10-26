@@ -602,6 +602,12 @@ class SAQQuantizer : public Quantizer {
         SAQModel& model
     ) {
         const uint32_t d = model.num_dimensions;
+        if (d < SAQ_DP_PLAN_MIN_DIMENSIONS) {
+            model.num_segments = 1;
+            model.segments.reset(new SAQSegment[1]);
+            model.segments[0] = {0, d, bits_per_dimension, 0.0f};
+            return;
+        }
         const size_t num_cuts = (d + SAQ_CHUNK_SIZE - 1) / SAQ_CHUNK_SIZE + 1;
         std::unique_ptr<uint32_t[]> cuts(new uint32_t[num_cuts]);
         for (size_t cut_idx = 0; cut_idx + 1 < num_cuts; ++cut_idx) {
@@ -678,7 +684,7 @@ class SAQQuantizer : public Quantizer {
             }
             return best_plan;
         };
-        auto plan = find_plan(/*use_pdx_u8_head=*/true);
+        auto plan = find_plan(/*use_pdx_u8_head=*/d >= SAQ_PDX_U8_HEAD_MIN_DIMENSIONS);
         if (plan.first == infinity) {
             plan = find_plan(/*use_pdx_u8_head=*/false);
         }

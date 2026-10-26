@@ -114,6 +114,11 @@ static constexpr uint32_t SAQ_MIN_BITS_PER_DIMENSION = 3;
 static constexpr uint32_t SAQ_MAX_BITS_PER_DIMENSION = 4;
 static constexpr uint32_t SAQ_CHUNK_SIZE = H_DIM_SIZE;
 static constexpr uint32_t SAQ_MIN_DIMENSIONS = SAQ_CHUNK_SIZE;
+// Below SAQ_DP_PLAN_MIN_DIMENSIONS the plan is one segment at the declared bits, its fp16 factors on
+// top of the budget (the DP's segments lose recall there). From SAQ_PDX_U8_HEAD_MIN_DIMENSIONS the
+// head chunk is its own 8-bit segment in the PDX U8 layout (recall-neutral only from there)
+static constexpr uint32_t SAQ_DP_PLAN_MIN_DIMENSIONS = 256;
+static constexpr uint32_t SAQ_PDX_U8_HEAD_MIN_DIMENSIONS = 640;
 static constexpr uint32_t SAQ_MAX_CODE_WIDTH = 8;
 static constexpr size_t SAQ_FIT_SAMPLE_SIZE = 122880;
 // The SAQ scans read and write up to one batch (16 lanes) past the last vector

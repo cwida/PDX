@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <limits>
 #include <numeric>
+#include <random>
 #include <sstream>
 #include <vector>
 
@@ -16,16 +17,30 @@ namespace {
 class SAQQuantizerTest : public ::testing::Test {
   protected:
     static constexpr uint32_t D = TestUtils::MAX_D;
-    // Too few dimensions for the PDX U8 head at 3 and 4 bits (the head chunk is a record), and a
-    // partial last chunk
+    // Below SAQ_DP_PLAN_MIN_DIMENSIONS: one segment, so the head chunk is a record; and a partial last
+    // chunk
     static constexpr uint32_t T2_HEAD_D = 100;
+    // The head chunk in the PDX U8 layout; the test data stops at MAX_D, so these rows are synthetic
+    static constexpr uint32_t U8_HEAD_D = PDX::SAQ_PDX_U8_HEAD_MIN_DIMENSIONS;
 
     void SetUp() override {
         data = TestUtils::LoadTestData();
         t2_head_data = TestUtils::LoadTestData(T2_HEAD_D);
+        std::mt19937 generator(TestUtils::SEED);
+        std::normal_distribution<float> normal(0.0f, 1.0f);
+        u8_head_data.train.resize(TestUtils::N_TRAIN * U8_HEAD_D);
+        for (size_t i = 0; i < u8_head_data.train.size(); ++i) {
+            u8_head_data.train[i] =
+                normal(generator) * std::pow(0.995f, static_cast<float>(i % U8_HEAD_D));
+        }
     }
 
-    const TestUtils::TestData& DataAt(uint32_t d) const { return d == D ? data : t2_head_data; }
+    const TestUtils::TestData& DataAt(uint32_t d) const {
+        if (d == D) {
+            return data;
+        }
+        return d == T2_HEAD_D ? t2_head_data : u8_head_data;
+    }
 
     PDX::SAQFit Fit(uint32_t bits_per_dimension, uint32_t d = D) {
         return PDX::SAQQuantizer::Fit(
@@ -52,20 +67,27 @@ class SAQQuantizerTest : public ::testing::Test {
     skmeans::VanillaAllocator allocator;
     TestUtils::TestData data;
     TestUtils::TestData t2_head_data;
+    TestUtils::TestData u8_head_data;
 };
 
-// The segments tile the dimensions in 64-dimension cuts and the stored codes plus fp16 factors fit
-// the budget. The head chunk is its own 8-bit segment in the PDX U8 layout where that fits, a
-// record otherwise.
+// Below SAQ_DP_PLAN_MIN_DIMENSIONS the plan is one segment at the declared bits. From there the
+// segments tile the dimensions in 64-dimension cuts, the stored codes plus fp16 factors fit the
+// budget, and from SAQ_PDX_U8_HEAD_MIN_DIMENSIONS the head chunk is its own 8-bit segment.
 TEST_F(SAQQuantizerTest, PlanFitsTheBudget) {
-    for (const uint32_t d : {D, T2_HEAD_D}) {
+    for (const uint32_t d : {T2_HEAD_D, D, U8_HEAD_D}) {
         for (const uint32_t bits_per_dimension : {3u, 4u}) {
             SCOPED_TRACE(std::to_string(d) + " dimensions, " + std::to_string(bits_per_dimension));
             const PDX::SAQFit fit = Fit(bits_per_dimension, d);
             const PDX::SAQModel& model = fit.model;
             ASSERT_GT(model.num_segments, 0u);
-            EXPECT_EQ(model.HasPDXU8Head(), d == D);
-            if (model.HasPDXU8Head()) {
+            if (d < PDX::SAQ_DP_PLAN_MIN_DIMENSIONS) {
+                ASSERT_EQ(model.num_segments, 1u);
+                EXPECT_EQ(model.segments[0].end, d);
+                EXPECT_EQ(model.segments[0].width, bits_per_dimension);
+                continue;
+            }
+            if (d >= PDX::SAQ_PDX_U8_HEAD_MIN_DIMENSIONS) {
+                EXPECT_TRUE(model.HasPDXU8Head());
                 EXPECT_EQ(model.segments[0].end, PDX::SAQ_CHUNK_SIZE);
             }
             uint32_t next_start = 0;
@@ -283,7 +305,7 @@ TEST_F(SAQQuantizerTest, QueryDotsMatchDecodedInnerProducts) {
 // PDX U8 layout or as a record, and gives the embeddings back after appends, a compaction, a
 // growth and a save and load.
 TEST_F(SAQQuantizerTest, ClusterKeepsEncodedEmbeddings) {
-    for (const uint32_t d : {D, T2_HEAD_D}) {
+    for (const uint32_t d : {T2_HEAD_D, D, U8_HEAD_D}) {
         SCOPED_TRACE(std::to_string(d) + " dimensions");
         const PDX::SAQFit fit = Fit(3, d);
         const PDX::SAQModel& model = fit.model;
