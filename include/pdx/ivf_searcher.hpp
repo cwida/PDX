@@ -948,6 +948,7 @@ class PDXearch {
                     FILTERED && static_cast<float>(passing_tuples) <
                                     SAQ_PRUNING_START_MAX_PASSING_FRACTION *
                                         static_cast<float>(cluster.used_capacity);
+                // NOLINTNEXTLINE(bugprone-branch-clone)
                 if (top_k_heap->kth_distance.load(std::memory_order_relaxed) ==
                         TopKHeap::NOT_FULL_KTH_DISTANCE &&
                     !start_with_pruning_kernels) {

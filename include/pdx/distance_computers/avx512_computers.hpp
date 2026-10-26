@@ -909,7 +909,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             _mm512_extracti32x4_epi32(levels, 2),
             _mm512_extracti32x4_epi32(levels, 3)
         };
-        for (int quarter = 0; quarter < 4; ++quarter) {
+        for (size_t quarter = 0; quarter < 4; ++quarter) {
             const __m512 floats = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(quarters[quarter]));
             _mm512_storeu_ps(
                 out + 16 * quarter,
@@ -975,13 +975,13 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
     static __m512i Reduce16(const __m512i* dots) {
         __m512i pairs[8];
         __m512i quads[4];
-        for (int i = 0; i < 8; ++i) {
+        for (size_t i = 0; i < 8; ++i) {
             pairs[i] = _mm512_add_epi32(
                 _mm512_unpacklo_epi32(dots[2 * i], dots[2 * i + 1]),
                 _mm512_unpackhi_epi32(dots[2 * i], dots[2 * i + 1])
             );
         }
-        for (int i = 0; i < 4; ++i) {
+        for (size_t i = 0; i < 4; ++i) {
             quads[i] = _mm512_add_epi32(
                 _mm512_unpacklo_epi64(pairs[2 * i], pairs[2 * i + 1]),
                 _mm512_unpackhi_epi64(pairs[2 * i], pairs[2 * i + 1])

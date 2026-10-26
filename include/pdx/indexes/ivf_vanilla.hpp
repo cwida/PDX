@@ -525,6 +525,7 @@ class PDXIndex : public IPDXIndex {
         }
         skmeans::AllocatedBuffer<float> transformed;
         if (!config.is_data_transformed) {
+            // NOLINTNEXTLINE(bugprone-branch-clone)
             if constexpr (Q == PDX::SAQ) {
                 transformed = FitSAQAndRotate(ivf_utils, embeddings, num_embeddings, normalize);
             } else {

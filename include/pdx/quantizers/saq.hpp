@@ -727,14 +727,13 @@ class SAQQuery {
 
     // transformed_query: normalized if the index needs it, then rotated
     SAQQuery(const float* PDX_RESTRICT transformed_query, const SAQModel& model)
-        : num_chunks(model.num_chunks),
-          codes(new int8_t[static_cast<size_t>(model.num_chunks) * SAQ_CHUNK_SIZE]()),
+        : codes(new int8_t[static_cast<size_t>(model.num_chunks) * SAQ_CHUNK_SIZE]()),
           chunk_dot_scales(new float[model.num_chunks]),
           chunk_dot_offsets(new float[model.num_chunks]),
           chunk_squared_norms(new float[model.num_chunks]) {
         using computer = DistanceComputer<DistanceMetric::L2SQ, F32>;
         float residual[SAQ_CHUNK_SIZE];
-        for (uint32_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
+        for (uint32_t chunk_idx = 0; chunk_idx < model.num_chunks; ++chunk_idx) {
             const uint32_t first_dimension = chunk_idx * SAQ_CHUNK_SIZE;
             const uint32_t chunk_dimensions =
                 std::min(SAQ_CHUNK_SIZE, model.num_dimensions - first_dimension);
@@ -772,7 +771,6 @@ class SAQQuery {
     float GetResidualSquaredNorm() const { return residual_squared_norm; }
 
   private:
-    uint32_t num_chunks;
     std::unique_ptr<int8_t[]> codes;
     std::unique_ptr<float[]> chunk_dot_scales;
     std::unique_ptr<float[]> chunk_dot_offsets;
