@@ -116,6 +116,7 @@ static constexpr uint32_t SPLIT_KMEANS_ITERS = 4;
 static constexpr float TWO_MEANS_TOL = 1e-4f;
 static constexpr uint32_t SPLIT_CASCADE_MAX_DEPTH = 32;
 static constexpr uint32_t MAX_CLUSTER_SIZE_LOWER_BOUND = 32;
+static constexpr size_t CLUSTER_STORAGE_ORDER_MAX_CHAIN_CLUSTERS = 4096;
 static constexpr uint32_t DELETED_MARKER = std::numeric_limits<uint32_t>::max();
 
 static constexpr bool AllFetchingSizesMultipleOfU8InterleaveSize() {
@@ -152,6 +153,8 @@ enum class PDXIndexType : uint8_t {
 };
 
 enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1, LVQ4 = 2 };
+
+enum class ClusterStorageOrder : uint8_t { ID = 0, NEAREST_CENTROID_CHAIN = 1 };
 
 // A saved index's type byte: its PDXIndexType in the low nibble, its CentroidQuantization in the
 // high

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -39,6 +40,7 @@ struct PDXIndexConfig {
     uint32_t max_cluster_size = 0; // Clusters split at this size (0 = at 1.3x their initial size)
     bool expect_appends = true;    // false: built clusters get one free slot (not serialized)
     CentroidQuantization centroid_quantization = CentroidQuantization::F32;
+    ClusterStorageOrder cluster_storage_order = ClusterStorageOrder::NEAREST_CENTROID_CHAIN;
     // Runs the parallel loops (not owned, not serialized). nullptr: the index creates a default
     // one.
     ParallelExecutor* executor = nullptr;
@@ -410,6 +412,111 @@ class IVFUtils : public skmeans::AllocatorHolder {
     }
 
     template <Quantization Q>
+    std::unique_ptr<uint32_t[]> ComputeClusterStorageOrder(
+        const IVF<Q>& ivf,
+        const ClusterStorageOrder order,
+        const uint32_t seed
+    ) const {
+        PDX_PROFILE_SCOPE("ComputeClusterStorageOrder");
+        const uint32_t num_clusters = ivf.num_clusters;
+        const uint32_t num_dimensions = ivf.num_dimensions;
+        std::unique_ptr<uint32_t[]> storage_order(new uint32_t[num_clusters]);
+        if (order == ClusterStorageOrder::ID) {
+            for (uint32_t cluster_id = 0; cluster_id < num_clusters; ++cluster_id) {
+                storage_order[cluster_id] = cluster_id;
+            }
+            return storage_order;
+        }
+        // Empty clusters first: they hold no bytes, so they share the first cluster's offset
+        size_t num_empty_clusters = 0;
+        size_t last_unplaced_position = num_clusters;
+        for (uint32_t cluster_id = 0; cluster_id < num_clusters; ++cluster_id) {
+            if (ivf.clusters[cluster_id].num_embeddings == 0) {
+                storage_order[num_empty_clusters++] = cluster_id;
+            } else {
+                storage_order[--last_unplaced_position] = cluster_id;
+            }
+        }
+        uint32_t* live_cluster_ids = storage_order.get() + num_empty_clusters;
+        const size_t num_live_clusters = num_clusters - num_empty_clusters;
+        if (num_live_clusters == 0) {
+            return storage_order;
+        }
+        skmeans::AllocatedBuffer<float> decoded_centroids;
+        const float* centroids = ivf.centroids.GetF32CentroidsPtr(decoded_centroids);
+        if (num_live_clusters <= CLUSTER_STORAGE_ORDER_MAX_CHAIN_CLUSTERS) {
+            ChainNearestCentroids(live_cluster_ids, num_live_clusters, centroids, num_dimensions);
+            return storage_order;
+        }
+        // The path costs k^2 / 2 distances: above, one path per k-means group of the centroids,
+        // the groups along a path over their own centroids
+        auto live_centroids =
+            skmeans::AllocateBuffer<float>(GetAllocator(), num_live_clusters * num_dimensions);
+        std::unique_ptr<uint32_t[]> unordered_live_cluster_ids(new uint32_t[num_live_clusters]);
+        for (size_t i = 0; i < num_live_clusters; ++i) {
+            unordered_live_cluster_ids[i] = live_cluster_ids[i];
+            std::memcpy(
+                live_centroids.get() + i * num_dimensions,
+                centroids + static_cast<size_t>(live_cluster_ids[i]) * num_dimensions,
+                num_dimensions * sizeof(float)
+            );
+        }
+        const auto num_groups =
+            static_cast<uint32_t>(std::lround(std::sqrt(static_cast<double>(num_live_clusters))));
+        const KMeansResult groups = ComputeKMeans(
+            live_centroids.get(),
+            num_live_clusters,
+            num_dimensions,
+            num_groups,
+            DistanceMetric::L2SQ,
+            seed
+        );
+        std::unique_ptr<uint32_t[]> group_order(new uint32_t[num_groups]);
+        for (uint32_t group_id = 0; group_id < num_groups; ++group_id) {
+            group_order[group_id] = group_id;
+        }
+        ChainNearestCentroids(
+            group_order.get(), num_groups, groups.centroids.data(), num_dimensions
+        );
+        std::unique_ptr<size_t[]> group_offsets(new size_t[num_groups]);
+        size_t group_offset = 0;
+        for (uint32_t position = 0; position < num_groups; ++position) {
+            group_offsets[position] = group_offset;
+            group_offset += groups.assignments[group_order[position]].size();
+        }
+        executor.ParallelFor(num_groups, [&](size_t begin, size_t end, size_t) {
+            for (size_t position = begin; position < end; ++position) {
+                const auto& group_members = groups.assignments[group_order[position]];
+                if (group_members.empty()) {
+                    continue;
+                }
+                uint32_t* group_cluster_ids = live_cluster_ids + group_offsets[position];
+                for (size_t i = 0; i < group_members.size(); ++i) {
+                    group_cluster_ids[i] = unordered_live_cluster_ids[group_members[i]];
+                }
+                if (position > 0) {
+                    const float* previous_group_centroid =
+                        groups.centroids.data() +
+                        static_cast<size_t>(group_order[position - 1]) * num_dimensions;
+                    const size_t start = FindPositionOfNearestCentroidToCentroid(
+                        group_cluster_ids,
+                        0,
+                        group_members.size(),
+                        centroids,
+                        num_dimensions,
+                        previous_group_centroid
+                    );
+                    std::swap(group_cluster_ids[0], group_cluster_ids[start]);
+                }
+                ChainNearestCentroids(
+                    group_cluster_ids, group_members.size(), centroids, num_dimensions
+                );
+            }
+        });
+        return storage_order;
+    }
+
+    template <Quantization Q>
     void PopulateIVFClusters(
         IVF<Q>& ivf,
         const KMeansResult& kmeans_result,
@@ -645,6 +752,48 @@ class IVFUtils : public skmeans::AllocatorHolder {
     }
 
   private:
+    // Reorders cluster_ids into a greedy nearest-neighbour path over their centroids, from the
+    // first one
+    static void ChainNearestCentroids(
+        uint32_t* cluster_ids,
+        const size_t num_cluster_ids,
+        const float* centroids,
+        const uint32_t num_dimensions
+    ) {
+        for (size_t position = 1; position < num_cluster_ids; ++position) {
+            const float* previous_centroid =
+                centroids + static_cast<size_t>(cluster_ids[position - 1]) * num_dimensions;
+            const size_t nearest_position = FindPositionOfNearestCentroidToCentroid(
+                cluster_ids, position, num_cluster_ids, centroids, num_dimensions, previous_centroid
+            );
+            std::swap(cluster_ids[position], cluster_ids[nearest_position]);
+        }
+    }
+
+    static size_t FindPositionOfNearestCentroidToCentroid(
+        const uint32_t* cluster_ids,
+        const size_t begin,
+        const size_t end,
+        const float* centroids,
+        const uint32_t num_dimensions,
+        const float* centroid
+    ) {
+        size_t nearest_position = begin;
+        float nearest_distance = std::numeric_limits<float>::max();
+        for (size_t position = begin; position < end; ++position) {
+            const float distance = DistanceComputer<DistanceMetric::L2SQ, F32>::Horizontal(
+                centroid,
+                centroids + static_cast<size_t>(cluster_ids[position]) * num_dimensions,
+                num_dimensions
+            );
+            if (distance < nearest_distance) {
+                nearest_distance = distance;
+                nearest_position = position;
+            }
+        }
+        return nearest_position;
+    }
+
     // Splits one cluster of kmeans_result by k-means on its embeddings into non-empty splits of
     // about target_size. False if k-means leaves it whole.
     bool TrySplitClusterWithKMeans(
