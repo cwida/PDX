@@ -38,8 +38,8 @@ struct SAQSegment {
 //            \________________________ records ______________________/ \__ fp16 factors _/
 //
 // chunk_record_offsets = {0, 64, 88, 112, 120, 128, 136}. The factors are each segment's rescale,
-// then the residual's norm: not its square, which fp16 holds only up to |r| = 256. A chunk's record
-// holds its 64 levels in 8 * width bytes
+// then the residual's norm: not its square, which fp16 holds only up to |r| = 256. |r| itself must
+// stay below 65,504. A chunk's record holds its 64 levels in 8 * width bytes
 // (ScalarComputer<L2SQ, SAQ>::PackRecord): as they are at 8 bits, else split into parts of 4, 2 and
 // 1 bits, low bits first. For example, width 3 = 2 + 1:
 //
