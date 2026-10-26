@@ -307,7 +307,7 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         const uint8_t* PDX_RESTRICT selection,
         float threshold,
         uint32_t* PDX_RESTRICT positions,
@@ -330,10 +330,10 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             }
             const float rescale =
                 ReadHalf(reinterpret_cast<const uint8_t*>(head_rescales + vector_idx));
-            const float squared_norm =
-                ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + vector_idx));
+            const float residual_norm =
+                ReadHalf(reinterpret_cast<const uint8_t*>(residual_norms + vector_idx));
             const float estimate = rescale * (static_cast<float>(dot) * dot_scale - dot_offset) +
-                                   (squared_norm + query_squared_norm);
+                                   (residual_norm * residual_norm + query_squared_norm);
             if (estimate < threshold) {
                 positions[num_kept] = static_cast<uint32_t>(vector_idx);
                 estimates[num_kept] = estimate;
@@ -354,7 +354,7 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         float threshold,
         uint32_t* PDX_RESTRICT positions,
         float* PDX_RESTRICT estimates,
@@ -375,10 +375,10 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             }
             const float rescale =
                 ReadHalf(reinterpret_cast<const uint8_t*>(head_rescales + position));
-            const float squared_norm =
-                ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + position));
+            const float residual_norm =
+                ReadHalf(reinterpret_cast<const uint8_t*>(residual_norms + position));
             const float estimate = rescale * (static_cast<float>(dot) * dot_scale - dot_offset) +
-                                   (squared_norm + query_squared_norm);
+                                   (residual_norm * residual_norm + query_squared_norm);
             if (estimate < threshold) {
                 positions[num_kept] = position;
                 estimates[num_kept] = estimate;
@@ -441,7 +441,7 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         float* PDX_RESTRICT estimates
     ) {
         for (size_t vector_idx = 0; vector_idx < num_vectors; ++vector_idx) {
@@ -456,10 +456,10 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             }
             const float rescale =
                 ReadHalf(reinterpret_cast<const uint8_t*>(head_rescales + vector_idx));
-            const float squared_norm =
-                ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + vector_idx));
+            const float residual_norm =
+                ReadHalf(reinterpret_cast<const uint8_t*>(residual_norms + vector_idx));
             estimates[vector_idx] = rescale * (static_cast<float>(dot) * dot_scale - dot_offset) +
-                                    (squared_norm + query_squared_norm);
+                                    (residual_norm * residual_norm + query_squared_norm);
         }
     }
 

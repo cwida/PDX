@@ -34,7 +34,8 @@ from `SAQ_PDX_U8_HEAD_MIN_DIMENSIONS` (640) the first chunk (the head) is forced
 layout, which costs no recall from 640 on but 0.03 at 384 and 0.25 at 200 (4 bits). A head chunk at any other width is
 stored and scanned as a record (`SAQModel::HasPDXU8Head`, `ClusterFormat<SAQ>::GetFirstRecordChunk`). Encoded row: each chunk as a
 T2 record (`PackRecord`/`UnpackRecord`: at 8 bits the levels as they are, else the width split into 4-, 2- and 1-bit
-parts, each interleaved across byte lanes, 8·w bytes); one fp16 rescale per segment; fp16 |r|². In a cluster every part
+parts, each interleaved across byte lanes, 8·w bytes); one fp16 rescale per segment; fp16 |r| (not |r|², which fp16
+holds only up to |r| = 256; readers square it). In a cluster every part
 is transposed at the cluster's stride: the head in the U8 vertical layout if 8-bit, then each chunk's records, then the
 factors (illustration above `SAQModel`).
 

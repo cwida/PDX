@@ -424,7 +424,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         const uint8_t* PDX_RESTRICT selection,
         float threshold,
         uint32_t* PDX_RESTRICT positions,
@@ -451,12 +451,12 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             );
             const __m512 rescale =
                 _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, head_rescales + vector_idx));
-            const __m512 squared_norm =
-                _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, squared_norms + vector_idx));
+            const __m512 residual_norm =
+                _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, residual_norms + vector_idx));
             const __m512 estimate = _mm512_fmadd_ps(
                 rescale,
                 _mm512_fmsub_ps(_mm512_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
-                _mm512_add_ps(squared_norm, query_squared_norm_vec)
+                _mm512_fmadd_ps(residual_norm, residual_norm, query_squared_norm_vec)
             );
             __mmask16 keep = valid;
             if (selection != nullptr) {
@@ -487,7 +487,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         float threshold,
         uint32_t* PDX_RESTRICT positions,
         float* PDX_RESTRICT estimates,
@@ -535,14 +535,14 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 _mm512_cvtph_ps(_mm512_cvtepi32_epi16(_mm512_mask_i32gather_epi32(
                     _mm512_setzero_si512(), valid, half_offsets, head_rescales, 1
                 )));
-            const __m512 squared_norm =
+            const __m512 residual_norm =
                 _mm512_cvtph_ps(_mm512_cvtepi32_epi16(_mm512_mask_i32gather_epi32(
-                    _mm512_setzero_si512(), valid, half_offsets, squared_norms, 1
+                    _mm512_setzero_si512(), valid, half_offsets, residual_norms, 1
                 )));
             const __m512 estimate = _mm512_fmadd_ps(
                 rescale,
                 _mm512_fmsub_ps(_mm512_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
-                _mm512_add_ps(squared_norm, query_squared_norm_vec)
+                _mm512_fmadd_ps(residual_norm, residual_norm, query_squared_norm_vec)
             );
             num_kept += Compact16(
                 _mm512_mask_cmp_ps_mask(valid, estimate, threshold_vec, _CMP_LT_OQ),
@@ -624,7 +624,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         float* PDX_RESTRICT estimates
     ) {
         __m512i query_groups[NUM_HEAD_GROUPS];
@@ -643,15 +643,15 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             );
             const __m512 rescale =
                 _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, head_rescales + vector_idx));
-            const __m512 squared_norm =
-                _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, squared_norms + vector_idx));
+            const __m512 residual_norm =
+                _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, residual_norms + vector_idx));
             _mm512_mask_storeu_ps(
                 estimates + vector_idx,
                 valid,
                 _mm512_fmadd_ps(
                     rescale,
                     _mm512_fmsub_ps(_mm512_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
-                    _mm512_add_ps(squared_norm, query_squared_norm_vec)
+                    _mm512_fmadd_ps(residual_norm, residual_norm, query_squared_norm_vec)
                 )
             );
         }

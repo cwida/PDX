@@ -518,7 +518,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         const uint8_t* PDX_RESTRICT selection,
         float threshold,
         uint32_t* PDX_RESTRICT positions,
@@ -538,12 +538,11 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             const __m256i dot =
                 HeadDots8(head + vector_idx * U8_INTERLEAVE_SIZE, stride, num_valid, group_codes);
             const __m256 rescale = LoadHalves8(head_rescales + vector_idx, num_valid);
+            const __m256 residual_norm = LoadHalves8(residual_norms + vector_idx, num_valid);
             const __m256 estimate = _mm256_fmadd_ps(
                 rescale,
                 _mm256_fmsub_ps(_mm256_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
-                _mm256_add_ps(
-                    LoadHalves8(squared_norms + vector_idx, num_valid), query_squared_norm_vec
-                )
+                _mm256_fmadd_ps(residual_norm, residual_norm, query_squared_norm_vec)
             );
             auto keep_mask =
                 static_cast<uint32_t>(
@@ -583,7 +582,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         float threshold,
         uint32_t* PDX_RESTRICT positions,
         float* PDX_RESTRICT estimates,
@@ -623,16 +622,17 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 _mm256_add_epi32(dots[0], dots[1]), _mm256_add_epi32(dots[2], dots[3])
             ));
             uint16_t lane_rescales[8] = {};
-            uint16_t lane_squared_norms[8] = {};
+            uint16_t lane_residual_norms[8] = {};
             for (size_t lane = 0; lane < num_valid; ++lane) {
                 lane_rescales[lane] = head_rescales[positions[position_idx + lane]];
-                lane_squared_norms[lane] = squared_norms[positions[position_idx + lane]];
+                lane_residual_norms[lane] = residual_norms[positions[position_idx + lane]];
             }
             const __m256 rescale = LoadHalves8(lane_rescales);
+            const __m256 residual_norm = LoadHalves8(lane_residual_norms);
             const __m256 estimate = _mm256_fmadd_ps(
                 rescale,
                 _mm256_fmsub_ps(_mm256_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
-                _mm256_add_ps(LoadHalves8(lane_squared_norms), query_squared_norm_vec)
+                _mm256_fmadd_ps(residual_norm, residual_norm, query_squared_norm_vec)
             );
             num_kept += Compact8(
                 static_cast<uint32_t>(
@@ -719,7 +719,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         float* PDX_RESTRICT estimates
     ) {
         int32_t group_codes[NUM_HEAD_GROUPS];
@@ -731,12 +731,11 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
             const size_t num_valid = std::min<size_t>(8, num_vectors - vector_idx);
             const __m256i dot =
                 HeadDots8(head + vector_idx * U8_INTERLEAVE_SIZE, stride, num_valid, group_codes);
+            const __m256 residual_norm = LoadHalves8(residual_norms + vector_idx, num_valid);
             const __m256 estimate = _mm256_fmadd_ps(
                 LoadHalves8(head_rescales + vector_idx, num_valid),
                 _mm256_fmsub_ps(_mm256_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
-                _mm256_add_ps(
-                    LoadHalves8(squared_norms + vector_idx, num_valid), query_squared_norm_vec
-                )
+                _mm256_fmadd_ps(residual_norm, residual_norm, query_squared_norm_vec)
             );
             if (num_valid == 8) {
                 _mm256_storeu_ps(estimates + vector_idx, estimate);

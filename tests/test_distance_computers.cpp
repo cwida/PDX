@@ -459,7 +459,7 @@ TEST_F(DistanceComputerTest, SAQ_ScanHead_SIMD_MatchesScalar) {
             }
             const auto query_codes = RandomQueryCodes(rng);
             const auto head_rescales = RandomHalves(num_vectors, 0.001f, 0.01f, rng);
-            const auto squared_norms = RandomHalves(num_vectors, 0.5f, 2.0f, rng);
+            const auto residual_norms = RandomHalves(num_vectors, 0.5f, 2.0f, rng);
             std::vector<uint8_t> selection(num_vectors);
             for (auto& selected : selection) {
                 selected = static_cast<uint8_t>(rng() % 2);
@@ -475,7 +475,7 @@ TEST_F(DistanceComputerTest, SAQ_ScanHead_SIMD_MatchesScalar) {
                     1.5f,
                     0.7f,
                     head_rescales.data(),
-                    squared_norms.data(),
+                    residual_norms.data(),
                     selection_ptr,
                     threshold,
                     survivors.positions.data(),
@@ -523,7 +523,7 @@ TEST_F(DistanceComputerTest, SAQ_ScanHeadPruning_MatchesScanHead) {
             }
             const auto query_codes = RandomQueryCodes(rng);
             const auto head_rescales = RandomHalves(num_vectors, 0.001f, 0.01f, rng);
-            const auto squared_norms = RandomHalves(num_vectors, 0.5f, 2.0f, rng);
+            const auto residual_norms = RandomHalves(num_vectors, 0.5f, 2.0f, rng);
             std::vector<uint8_t> selection(num_vectors);
             std::vector<uint32_t> passing;
             for (size_t vector_idx = 0; vector_idx < num_vectors; ++vector_idx) {
@@ -542,7 +542,7 @@ TEST_F(DistanceComputerTest, SAQ_ScanHeadPruning_MatchesScanHead) {
                     1.5f,
                     0.7f,
                     head_rescales.data(),
-                    squared_norms.data(),
+                    residual_norms.data(),
                     selection.data(),
                     threshold,
                     survivors.positions.data(),
@@ -561,7 +561,7 @@ TEST_F(DistanceComputerTest, SAQ_ScanHeadPruning_MatchesScanHead) {
                         1.5f,
                         0.7f,
                         head_rescales.data(),
-                        squared_norms.data(),
+                        residual_norms.data(),
                         threshold,
                         survivors.positions.data(),
                         survivors.estimates.data(),
@@ -862,7 +862,7 @@ TEST_F(DistanceComputerTest, SAQ_NoPruningScan_SIMD_MatchesScalar) {
         }
         const auto head_codes = RandomQueryCodes(rng);
         const auto head_rescales = RandomHalves(num_vectors, 0.001f, 0.01f, rng);
-        const auto squared_norms = RandomHalves(num_vectors, 0.5f, 2.0f, rng);
+        const auto residual_norms = RandomHalves(num_vectors, 0.5f, 2.0f, rng);
         const auto head_estimates = [&](auto compute_head_estimates) {
             std::vector<float> estimates(num_vectors);
             compute_head_estimates(
@@ -874,7 +874,7 @@ TEST_F(DistanceComputerTest, SAQ_NoPruningScan_SIMD_MatchesScalar) {
                 1.5f,
                 0.7f,
                 head_rescales.data(),
-                squared_norms.data(),
+                residual_norms.data(),
                 estimates.data()
             );
             return estimates;
@@ -894,7 +894,7 @@ TEST_F(DistanceComputerTest, SAQ_NoPruningScan_SIMD_MatchesScalar) {
                 1.5f,
                 0.7f,
                 head_rescales.data(),
-                squared_norms.data(),
+                residual_norms.data(),
                 nullptr,
                 std::numeric_limits<float>::infinity(),
                 all.positions.data(),

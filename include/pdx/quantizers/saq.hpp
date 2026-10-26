@@ -33,12 +33,13 @@ struct SAQSegment {
 //
 //   chunk     0 (head)   1          2          3        4        5
 //   width     8          3          3          1        1        1
-//            [ 64 B     ][ 24 B    ][ 24 B    ][ 8 B   ][ 8 B   ][ 8 B   ][ r0 r1 r2 |r|^2 ]
-//   offset    0          64         88         112      120      128      136              144
-//            \________________________ records ______________________/ \___ fp16 factors __/
+//            [ 64 B     ][ 24 B    ][ 24 B    ][ 8 B   ][ 8 B   ][ 8 B   ][ r0 r1 r2 |r| ]
+//   offset    0          64         88         112      120      128      136            144
+//            \________________________ records ______________________/ \__ fp16 factors _/
 //
 // chunk_record_offsets = {0, 64, 88, 112, 120, 128, 136}. The factors are each segment's rescale,
-// then the residual's squared norm. A chunk's record holds its 64 levels in 8 * width bytes
+// then the residual's norm: not its square, which fp16 holds only up to |r| = 256. A chunk's record
+// holds its 64 levels in 8 * width bytes
 // (ScalarComputer<L2SQ, SAQ>::PackRecord): as they are at 8 bits, else split into parts of 4, 2 and
 // 1 bits, low bits first. For example, width 3 = 2 + 1:
 //
@@ -76,7 +77,7 @@ struct SAQModel {
 
     SAQModel& operator=(const SAQModel& other) { return *this = SAQModel(other); }
 
-    // The chunks' records, then the segments' rescales and the residual's squared norm in fp16
+    // The chunks' records, then the segments' rescales and the residual's norm in fp16
     size_t GetEncodedEmbeddingSize() const {
         return chunk_record_offsets[num_chunks] + sizeof(uint16_t) * (num_segments + 1);
     }
@@ -294,7 +295,7 @@ class SAQQuantizer : public Quantizer {
             );
             WriteHalf(rescale, factors + segment_idx * sizeof(uint16_t));
         }
-        WriteHalf(squared_norm, factors + model.num_segments * sizeof(uint16_t));
+        WriteHalf(std::sqrt(squared_norm), factors + model.num_segments * sizeof(uint16_t));
         for (uint32_t chunk_idx = 0; chunk_idx < model.num_chunks; ++chunk_idx) {
             computer::PackRecord(
                 levels + static_cast<size_t>(chunk_idx) * SAQ_CHUNK_SIZE,
@@ -781,30 +782,30 @@ class SAQQuery {
 
 // Every vector's estimate starts at |r|^2 + |q_c|^2, then each chunk adds its -2 <q_c, r> term
 inline void StartSAQEstimates(
-    const uint16_t* squared_norms,
+    const uint16_t* residual_norms,
     size_t n_vectors,
     float query_squared_norm,
     float* estimates
 ) {
-    nk_cast(squared_norms, nk_f16_k, n_vectors, estimates, nk_f32_k);
+    nk_cast(residual_norms, nk_f16_k, n_vectors, estimates, nk_f32_k);
     PDX_VECTORIZE_LOOP
     for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
-        estimates[vector_idx] += query_squared_norm;
+        estimates[vector_idx] = estimates[vector_idx] * estimates[vector_idx] + query_squared_norm;
     }
 }
 
 // StartSAQEstimates for the vectors at positions
 inline void StartSAQEstimatesPruning(
-    const uint16_t* squared_norms,
+    const uint16_t* residual_norms,
     const uint32_t* positions,
     size_t n_positions,
     float query_squared_norm,
     float* estimates
 ) {
     for (size_t position_idx = 0; position_idx < n_positions; ++position_idx) {
-        estimates[position_idx] =
-            ReadHalf(reinterpret_cast<const uint8_t*>(squared_norms + positions[position_idx])) +
-            query_squared_norm;
+        const float residual_norm =
+            ReadHalf(reinterpret_cast<const uint8_t*>(residual_norms + positions[position_idx]));
+        estimates[position_idx] = residual_norm * residual_norm + query_squared_norm;
     }
 }
 
@@ -825,7 +826,7 @@ inline void ComputeSAQEstimates(
     const int8_t* query_codes = query.GetCodesPtr();
     const float* dot_scales = query.GetChunkDotScalesPtr();
     const float* dot_offsets = query.GetChunkDotOffsetsPtr();
-    const uint16_t* squared_norms = rescales + model.num_segments * stride;
+    const uint16_t* residual_norms = rescales + model.num_segments * stride;
     const uint32_t first_record_chunk = model.HasPDXU8Head() ? 1 : 0;
     if (model.HasPDXU8Head()) {
         computer::ComputeHeadEstimates(
@@ -837,11 +838,11 @@ inline void ComputeSAQEstimates(
             dot_offsets[0],
             query.GetResidualSquaredNorm(),
             rescales,
-            squared_norms,
+            residual_norms,
             estimates
         );
     } else {
-        StartSAQEstimates(squared_norms, n_vectors, query.GetResidualSquaredNorm(), estimates);
+        StartSAQEstimates(residual_norms, n_vectors, query.GetResidualSquaredNorm(), estimates);
     }
     for (uint32_t chunk_idx = first_record_chunk; chunk_idx < model.num_chunks; ++chunk_idx) {
         computer::GetAccumulateTailEstimates(model.chunk_widths[chunk_idx])(

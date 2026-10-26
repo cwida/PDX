@@ -716,13 +716,13 @@ class PDXearch {
         const float* dot_offsets = saq_query.GetChunkDotOffsetsPtr();
         size_t n_survivors = 0;
         if (!model.HasPDXU8Head()) {
-            const uint16_t* squared_norms = rescales + model.num_segments * buffer_stride;
+            const uint16_t* residual_norms = rescales + model.num_segments * buffer_stride;
             if (selection_vector != nullptr) {
                 InitPositionsArrayFromSelectionVector(
                     n_vectors, n_survivors, pruning_positions, selection_vector
                 );
                 StartSAQEstimatesPruning(
-                    squared_norms,
+                    residual_norms,
                     pruning_positions,
                     n_survivors,
                     saq_query.GetResidualSquaredNorm(),
@@ -732,7 +732,7 @@ class PDXearch {
                 std::iota(pruning_positions, pruning_positions + n_vectors, 0u);
                 n_survivors = n_vectors;
                 StartSAQEstimates(
-                    squared_norms, n_vectors, saq_query.GetResidualSquaredNorm(), pruning_distances
+                    residual_norms, n_vectors, saq_query.GetResidualSquaredNorm(), pruning_distances
                 );
             }
             n_survivors = distance_computer_t::GetScanTail(model.chunk_widths[0])(

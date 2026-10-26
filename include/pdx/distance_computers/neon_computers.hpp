@@ -571,7 +571,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         const uint8_t* PDX_RESTRICT selection,
         float threshold,
         uint32_t* PDX_RESTRICT positions,
@@ -593,10 +593,10 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 HeadDots4(head + vector_idx * U8_INTERLEAVE_SIZE, stride, query_groups, dot_bias);
             const float32x4_t rescale =
                 vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(head_rescales + vector_idx)));
-            const float32x4_t squared_norm =
-                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(squared_norms + vector_idx)));
+            const float32x4_t residual_norm =
+                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(residual_norms + vector_idx)));
             const float32x4_t estimate = vfmaq_f32(
-                vaddq_f32(squared_norm, query_squared_norm_vec),
+                vfmaq_f32(query_squared_norm_vec, residual_norm, residual_norm),
                 rescale,
                 vsubq_f32(vmulq_f32(vcvtq_f32_s32(dot), dot_scale_vec), dot_offset_vec)
             );
@@ -628,7 +628,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 dot_offset,
                 query_squared_norm,
                 head_rescales + vector_idx,
-                squared_norms + vector_idx,
+                residual_norms + vector_idx,
                 selection != nullptr ? selection + vector_idx : nullptr,
                 threshold,
                 positions + num_kept,
@@ -653,7 +653,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         float threshold,
         uint32_t* PDX_RESTRICT positions,
         float* PDX_RESTRICT estimates,
@@ -705,17 +705,17 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 head_rescales[positions[position_idx + 2]],
                 head_rescales[positions[position_idx + 3]]
             };
-            const uint16_t lane_squared_norms[4] = {
-                squared_norms[positions[position_idx]],
-                squared_norms[positions[position_idx + 1]],
-                squared_norms[positions[position_idx + 2]],
-                squared_norms[positions[position_idx + 3]]
+            const uint16_t lane_residual_norms[4] = {
+                residual_norms[positions[position_idx]],
+                residual_norms[positions[position_idx + 1]],
+                residual_norms[positions[position_idx + 2]],
+                residual_norms[positions[position_idx + 3]]
             };
             const float32x4_t rescale = vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(lane_rescales)));
-            const float32x4_t squared_norm =
-                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(lane_squared_norms)));
+            const float32x4_t residual_norm =
+                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(lane_residual_norms)));
             const float32x4_t estimate = vfmaq_f32(
-                vaddq_f32(squared_norm, query_squared_norm_vec),
+                vfmaq_f32(query_squared_norm_vec, residual_norm, residual_norm),
                 rescale,
                 vsubq_f32(vmulq_f32(vcvtq_f32_s32(dot), dot_scale_vec), dot_offset_vec)
             );
@@ -743,7 +743,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 dot_offset,
                 query_squared_norm,
                 head_rescales,
-                squared_norms,
+                residual_norms,
                 threshold,
                 positions + num_kept,
                 estimates + num_kept,
@@ -846,7 +846,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
         float dot_offset,
         float query_squared_norm,
         const uint16_t* PDX_RESTRICT head_rescales,
-        const uint16_t* PDX_RESTRICT squared_norms,
+        const uint16_t* PDX_RESTRICT residual_norms,
         float* PDX_RESTRICT estimates
     ) {
         int8x16_t query_groups[NUM_HEAD_GROUPS];
@@ -861,12 +861,12 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 HeadDots4(head + vector_idx * U8_INTERLEAVE_SIZE, stride, query_groups, dot_bias);
             const float32x4_t rescale =
                 vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(head_rescales + vector_idx)));
-            const float32x4_t squared_norm =
-                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(squared_norms + vector_idx)));
+            const float32x4_t residual_norm =
+                vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(residual_norms + vector_idx)));
             vst1q_f32(
                 estimates + vector_idx,
                 vfmaq_f32(
-                    vaddq_f32(squared_norm, query_squared_norm_vec),
+                    vfmaq_f32(query_squared_norm_vec, residual_norm, residual_norm),
                     rescale,
                     vsubq_f32(vmulq_f32(vcvtq_f32_s32(dot), dot_scale_vec), dot_offset_vec)
                 )
@@ -882,7 +882,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
                 dot_offset,
                 query_squared_norm,
                 head_rescales + vector_idx,
-                squared_norms + vector_idx,
+                residual_norms + vector_idx,
                 estimates + vector_idx
             );
         }
