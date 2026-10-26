@@ -87,9 +87,6 @@ const std::map<std::string, float> COSINE_EXHAUSTIVE_MIN_RECALL = {
 static constexpr size_t D = 384;
 static constexpr float RECALL_TOLERANCE = 0.02f;
 static constexpr float QUANTIZATION_RECALL_TOLERANCE = 0.05f;
-// The fewest dimensions whose SAQ plan fits its budget next to the 8-bit head chunk
-static constexpr size_t SAQ3_MIN_PLAN_DIMENSIONS = 248;
-static constexpr size_t SAQ4_MIN_PLAN_DIMENSIONS = 166;
 
 class SearchTest : public ::testing::TestWithParam<std::string> {
   protected:
@@ -281,10 +278,8 @@ TEST_P(UncommonDimTest, RecallMonotonicAndExhaustiveNearPerfect) {
     if (d >= 10) {
         types.push_back("pdx_u8");
     }
-    if (d >= SAQ3_MIN_PLAN_DIMENSIONS) {
+    if (d >= PDX::SAQ_MIN_DIMENSIONS) {
         types.push_back("pdx_saq3");
-    }
-    if (d >= SAQ4_MIN_PLAN_DIMENSIONS) {
         types.push_back("pdx_saq4");
     }
     for (const auto& index_type : types) {

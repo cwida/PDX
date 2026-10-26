@@ -16,14 +16,21 @@ namespace {
 class SAQQuantizerTest : public ::testing::Test {
   protected:
     static constexpr uint32_t D = TestUtils::MAX_D;
+    // Too few dimensions for the PDX U8 head at 3 and 4 bits: the head chunk is a record
+    static constexpr uint32_t T2_HEAD_D = 128;
 
-    void SetUp() override { data = TestUtils::LoadTestData(); }
+    void SetUp() override {
+        data = TestUtils::LoadTestData();
+        t2_head_data = TestUtils::LoadTestData(T2_HEAD_D);
+    }
 
-    PDX::SAQFit Fit(uint32_t bits_per_dimension) {
+    const TestUtils::TestData& DataAt(uint32_t d) const { return d == D ? data : t2_head_data; }
+
+    PDX::SAQFit Fit(uint32_t bits_per_dimension, uint32_t d = D) {
         return PDX::SAQQuantizer::Fit(
-            data.train.data(),
+            DataAt(d).train.data(),
             TestUtils::N_TRAIN,
-            D,
+            d,
             bits_per_dimension,
             TestUtils::SEED,
             *executor,
@@ -32,40 +39,47 @@ class SAQQuantizerTest : public ::testing::Test {
     }
 
     static std::vector<float> Rotate(const PDX::SAQFit& fit, const float* rows, size_t num_rows) {
-        std::vector<float> rotated(num_rows * D);
-        Eigen::Map<PDX::eigen_matrix_t>(rotated.data(), num_rows, D).noalias() =
-            Eigen::Map<const PDX::eigen_matrix_t>(rows, num_rows, D) *
-            Eigen::Map<const PDX::eigen_matrix_t>(fit.rotation.get(), D, D);
+        const uint32_t d = fit.model.num_dimensions;
+        std::vector<float> rotated(num_rows * d);
+        Eigen::Map<PDX::eigen_matrix_t>(rotated.data(), num_rows, d).noalias() =
+            Eigen::Map<const PDX::eigen_matrix_t>(rows, num_rows, d) *
+            Eigen::Map<const PDX::eigen_matrix_t>(fit.rotation.get(), d, d);
         return rotated;
     }
 
     std::unique_ptr<skmeans::ParallelExecutor> executor = skmeans::MakeDefaultExecutor(0);
     skmeans::VanillaAllocator allocator;
     TestUtils::TestData data;
+    TestUtils::TestData t2_head_data;
 };
 
-// The segments tile the dimensions in 64-dimension cuts, the first is the 8-bit head chunk, and
-// codes plus fp16 factors fit the budget.
+// The segments tile the dimensions in 64-dimension cuts and codes plus fp16 factors fit the budget.
+// The head chunk is its own 8-bit segment in the PDX U8 layout where that fits, a record otherwise.
 TEST_F(SAQQuantizerTest, PlanFitsTheBudget) {
-    for (const uint32_t bits_per_dimension : {3u, 4u}) {
-        const PDX::SAQFit fit = Fit(bits_per_dimension);
-        const PDX::SAQModel& model = fit.model;
-        ASSERT_GT(model.num_segments, 0u);
-        EXPECT_EQ(model.segments[0].end, PDX::SAQ_CHUNK_SIZE);
-        EXPECT_EQ(model.segments[0].width, PDX::SAQ_MAX_CODE_WIDTH);
-        uint32_t next_start = 0;
-        uint32_t total_bits = 16;
-        for (uint32_t segment_idx = 0; segment_idx < model.num_segments; ++segment_idx) {
-            const PDX::SAQSegment& segment = model.segments[segment_idx];
-            EXPECT_EQ(segment.start, next_start);
-            EXPECT_EQ(segment.start % PDX::SAQ_CHUNK_SIZE, 0u);
-            EXPECT_GE(segment.width, 1u);
-            EXPECT_LE(segment.width, PDX::SAQ_MAX_CODE_WIDTH);
-            total_bits += (segment.end - segment.start) * segment.width + 16;
-            next_start = segment.end;
+    for (const uint32_t d : {D, T2_HEAD_D}) {
+        for (const uint32_t bits_per_dimension : {3u, 4u}) {
+            SCOPED_TRACE(std::to_string(d) + " dimensions, " + std::to_string(bits_per_dimension));
+            const PDX::SAQFit fit = Fit(bits_per_dimension, d);
+            const PDX::SAQModel& model = fit.model;
+            ASSERT_GT(model.num_segments, 0u);
+            EXPECT_EQ(model.HasPDXU8Head(), d == D);
+            if (model.HasPDXU8Head()) {
+                EXPECT_EQ(model.segments[0].end, PDX::SAQ_CHUNK_SIZE);
+            }
+            uint32_t next_start = 0;
+            uint32_t total_bits = 16;
+            for (uint32_t segment_idx = 0; segment_idx < model.num_segments; ++segment_idx) {
+                const PDX::SAQSegment& segment = model.segments[segment_idx];
+                EXPECT_EQ(segment.start, next_start);
+                EXPECT_EQ(segment.start % PDX::SAQ_CHUNK_SIZE, 0u);
+                EXPECT_GE(segment.width, 1u);
+                EXPECT_LE(segment.width, PDX::SAQ_MAX_CODE_WIDTH);
+                total_bits += (segment.end - segment.start) * segment.width + 16;
+                next_start = segment.end;
+            }
+            EXPECT_EQ(next_start, d);
+            EXPECT_LE(total_bits, bits_per_dimension * d);
         }
-        EXPECT_EQ(next_start, D);
-        EXPECT_LE(total_bits, bits_per_dimension * D) << bits_per_dimension << " bits";
     }
 }
 
@@ -265,105 +279,119 @@ TEST_F(SAQQuantizerTest, QueryDotsMatchDecodedInnerProducts) {
     }
 }
 
-// A SAQ cluster keeps each part of an encoded embedding in its own section, and gives the
-// embeddings back after appends, a compaction, a growth and a save and load.
+// A SAQ cluster keeps each part of an encoded embedding in its own section, the head chunk in the
+// PDX U8 layout or as a record, and gives the embeddings back after appends, a compaction, a
+// growth and a save and load.
 TEST_F(SAQQuantizerTest, ClusterKeepsEncodedEmbeddings) {
-    const PDX::SAQFit fit = Fit(3);
-    const PDX::SAQModel& model = fit.model;
-    const uint32_t num_rows = 80;
-    const std::vector<float> rows = Rotate(fit, data.train.data(), num_rows);
-    const PDX::SAQQuantizer quantizer(D);
-    PDX::SAQEncodingScratch scratch(D);
-    const size_t row_size = model.GetEncodedEmbeddingSize();
-    std::vector<uint8_t> encoded(num_rows * row_size);
-    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-        quantizer.EncodeEmbedding(
-            rows.data() + row_idx * D, model, encoded.data() + row_idx * row_size, scratch
+    for (const uint32_t d : {D, T2_HEAD_D}) {
+        SCOPED_TRACE(std::to_string(d) + " dimensions");
+        const PDX::SAQFit fit = Fit(3, d);
+        const PDX::SAQModel& model = fit.model;
+        const uint32_t num_rows = 80;
+        const std::vector<float> rows = Rotate(fit, DataAt(d).train.data(), num_rows);
+        const PDX::SAQQuantizer quantizer(d);
+        PDX::SAQEncodingScratch scratch(d);
+        const size_t row_size = model.GetEncodedEmbeddingSize();
+        std::vector<uint8_t> encoded(num_rows * row_size);
+        for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+            quantizer.EncodeEmbedding(
+                rows.data() + row_idx * d, model, encoded.data() + row_idx * row_size, scratch
+            );
+        }
+        const PDX::ClusterFormat<PDX::SAQ> format(
+            model.chunk_record_offsets.get(),
+            model.num_chunks,
+            model.num_segments,
+            model.HasPDXU8Head()
         );
-    }
-    const PDX::ClusterFormat<PDX::SAQ> format(
-        model.chunk_record_offsets.get(), model.num_chunks, model.num_segments
-    );
-    ASSERT_EQ(format.GetValuesPerEmbedding(), row_size);
+        ASSERT_EQ(format.GetValuesPerEmbedding(), row_size);
 
-    const uint32_t num_stored = 50;
-    PDX::Cluster<PDX::SAQ> cluster(num_stored, 128, format);
-    cluster.StoreEmbeddings(encoded.data(), num_stored);
-    for (uint32_t position = 0; position < num_stored; ++position) {
-        cluster.indices[position] = position;
-    }
-    for (uint32_t row_id = num_stored; row_id < num_rows; ++row_id) {
-        ASSERT_EQ(cluster.AppendEmbedding(row_id, encoded.data() + row_id * row_size), row_id);
-    }
+        const uint32_t num_stored = 50;
+        PDX::Cluster<PDX::SAQ> cluster(num_stored, 128, format);
+        cluster.StoreEmbeddings(encoded.data(), num_stored);
+        for (uint32_t position = 0; position < num_stored; ++position) {
+            cluster.indices[position] = position;
+        }
+        for (uint32_t row_id = num_stored; row_id < num_rows; ++row_id) {
+            ASSERT_EQ(cluster.AppendEmbedding(row_id, encoded.data() + row_id * row_size), row_id);
+        }
 
-    const size_t stride = cluster.max_capacity;
-    for (const uint32_t position : {7u, 63u}) {
-        const uint8_t* row = encoded.data() + position * row_size;
-        for (size_t group_idx = 0; group_idx < PDX::SAQ_CHUNK_SIZE / PDX::U8_INTERLEAVE_SIZE;
-             ++group_idx) {
-            const size_t offset = group_idx * PDX::U8_INTERLEAVE_SIZE;
-            EXPECT_EQ(
-                0,
-                std::memcmp(
-                    cluster.data.get() + stride * offset + position * PDX::U8_INTERLEAVE_SIZE,
-                    row + offset,
-                    PDX::U8_INTERLEAVE_SIZE
-                )
-            );
+        const size_t stride = cluster.max_capacity;
+        for (const uint32_t position : {7u, 63u}) {
+            const uint8_t* row = encoded.data() + position * row_size;
+            if (format.has_pdx_u8_head) {
+                for (size_t group_idx = 0;
+                     group_idx < PDX::SAQ_CHUNK_SIZE / PDX::U8_INTERLEAVE_SIZE;
+                     ++group_idx) {
+                    const size_t offset = group_idx * PDX::U8_INTERLEAVE_SIZE;
+                    EXPECT_EQ(
+                        0,
+                        std::memcmp(
+                            cluster.data.get() + stride * offset +
+                                position * PDX::U8_INTERLEAVE_SIZE,
+                            row + offset,
+                            PDX::U8_INTERLEAVE_SIZE
+                        )
+                    );
+                }
+            }
+            for (uint32_t chunk_idx = format.GetFirstRecordChunk(); chunk_idx < model.num_chunks;
+                 ++chunk_idx) {
+                const size_t offset = model.chunk_record_offsets[chunk_idx];
+                const size_t size = model.chunk_record_offsets[chunk_idx + 1] - offset;
+                EXPECT_EQ(
+                    0,
+                    std::memcmp(
+                        cluster.data.get() + stride * offset + position * size, row + offset, size
+                    )
+                );
+            }
+            for (uint32_t factor_idx = 0; factor_idx <= model.num_segments; ++factor_idx) {
+                const size_t offset =
+                    model.chunk_record_offsets[model.num_chunks] + factor_idx * sizeof(uint16_t);
+                EXPECT_EQ(
+                    0,
+                    std::memcmp(
+                        cluster.data.get() + stride * offset + position * sizeof(uint16_t),
+                        row + offset,
+                        sizeof(uint16_t)
+                    )
+                );
+            }
         }
-        for (uint32_t chunk_idx = 1; chunk_idx < model.num_chunks; ++chunk_idx) {
-            const size_t offset = model.chunk_record_offsets[chunk_idx];
-            const size_t size = model.chunk_record_offsets[chunk_idx + 1] - offset;
-            EXPECT_EQ(
-                0,
-                std::memcmp(
-                    cluster.data.get() + stride * offset + position * size, row + offset, size
-                )
-            );
-        }
-        for (uint32_t factor_idx = 0; factor_idx <= model.num_segments; ++factor_idx) {
-            const size_t offset =
-                model.chunk_record_offsets[model.num_chunks] + factor_idx * sizeof(uint16_t);
-            EXPECT_EQ(
-                0,
-                std::memcmp(
-                    cluster.data.get() + stride * offset + position * sizeof(uint16_t),
-                    row + offset,
-                    sizeof(uint16_t)
-                )
-            );
-        }
+
+        const auto expect_embeddings = [&](const PDX::Cluster<PDX::SAQ>& checked) {
+            for (uint32_t position = 0; position < checked.num_embeddings; ++position) {
+                const auto embedding = checked.GetHorizontalEmbeddingFromPDXBuffer(position);
+                EXPECT_EQ(
+                    0,
+                    std::memcmp(
+                        embedding.get(),
+                        encoded.data() + checked.indices[position] * row_size,
+                        row_size
+                    )
+                ) << "position "
+                  << position;
+            }
+        };
+        expect_embeddings(cluster);
+        cluster.DeleteEmbedding(5);
+        cluster.CompactCluster();
+        ASSERT_EQ(cluster.num_embeddings, num_rows - 1);
+        expect_embeddings(cluster);
+        cluster.GrowTo(200);
+        expect_embeddings(cluster);
+
+        std::stringstream stream;
+        cluster.SavePDXData(stream);
+        PDX::Cluster<PDX::SAQ> loaded(cluster.num_embeddings, cluster.num_embeddings + 1, format);
+        PDX::StreamReader reader{stream};
+        loaded.LoadPDXData(reader);
+        std::memcpy(
+            loaded.indices.get(), cluster.indices.get(), cluster.num_embeddings * sizeof(uint32_t)
+        );
+        expect_embeddings(loaded);
     }
-
-    const auto expect_embeddings = [&](const PDX::Cluster<PDX::SAQ>& checked) {
-        for (uint32_t position = 0; position < checked.num_embeddings; ++position) {
-            const auto embedding = checked.GetHorizontalEmbeddingFromPDXBuffer(position);
-            EXPECT_EQ(
-                0,
-                std::memcmp(
-                    embedding.get(), encoded.data() + checked.indices[position] * row_size, row_size
-                )
-            ) << "position "
-              << position;
-        }
-    };
-    expect_embeddings(cluster);
-    cluster.DeleteEmbedding(5);
-    cluster.CompactCluster();
-    ASSERT_EQ(cluster.num_embeddings, num_rows - 1);
-    expect_embeddings(cluster);
-    cluster.GrowTo(200);
-    expect_embeddings(cluster);
-
-    std::stringstream stream;
-    cluster.SavePDXData(stream);
-    PDX::Cluster<PDX::SAQ> loaded(cluster.num_embeddings, cluster.num_embeddings + 1, format);
-    PDX::StreamReader reader{stream};
-    loaded.LoadPDXData(reader);
-    std::memcpy(
-        loaded.indices.get(), cluster.indices.get(), cluster.num_embeddings * sizeof(uint32_t)
-    );
-    expect_embeddings(loaded);
 }
 
 static constexpr uint32_t PRUNING_TEST_N_PROBE = 16;

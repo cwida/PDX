@@ -28,11 +28,12 @@ Smaller data types are not friendly to PDX, as we must accumulate distances on w
 SAQ (`Quantization::SAQ`, `quantizers/saq.hpp`; arXiv 2509.12086) codes the residual to one global mean in PCA space. A
 DP plan cuts the dimensions at 64-dim cuts into segments of widths 1–8, within a 3- or 4-bit budget that counts the fp16
 factors, and each segment gets its own random rotation: the segment is the unit of quantization, the 64-dim chunk the
-unit of scan. The first chunk is its own 8-bit segment (the head), so a plan fits only from d = 166 (4 bits) or 248
-(3 bits; 249–250 miss by a byte), and the fit throws below that (TODO high: a fallback plan over the budget). Encoded
-row: the head's 64 levels; each tail chunk as a T2 record (`PackRecord`/`UnpackRecord`: the width split into 4-, 2- and
-1-bit parts, each interleaved across byte lanes, 8·w bytes); one fp16 rescale per segment; fp16 |r|². In a cluster every
-part is transposed at the cluster's stride: the head in the U8 vertical layout, then each chunk's records, then the
+unit of scan. The first chunk (the head) is its own 8-bit segment in the PDX U8 layout when that fits the budget, from
+d = 166 (4 bits) or 248 (3 bits; 249–250 miss by a byte); below, the DP plans it like the others and it is stored and
+scanned as a record (`SAQModel::HasPDXU8Head`, `ClusterFormat<SAQ>::GetFirstRecordChunk`). Encoded row: each chunk as a
+T2 record (`PackRecord`/`UnpackRecord`: at 8 bits the levels as they are, else the width split into 4-, 2- and 1-bit
+parts, each interleaved across byte lanes, 8·w bytes); one fp16 rescale per segment; fp16 |r|². In a cluster every part
+is transposed at the cluster's stride: the head in the U8 vertical layout if 8-bit, then each chunk's records, then the
 factors (illustration above `SAQModel`).
 
 
@@ -168,7 +169,9 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
   over the survivors against τ + margin_k (the last chunk at τ); tombstones drop at the merge. The query is int8 per
   chunk (`SAQQuery`). Filtered, by the cluster's passing fraction: below `SAQ_PRUNING_START_MAX_PASSING_FRACTION`
   (70%) the first clusters take `SAQPrune` too (τ = +∞ until the heap holds k), and below
-  `SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION` (10%) its head is `ScanHeadPruning` over the passing positions.
+  `SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION` (10%) its head is `ScanHeadPruning` over the passing positions. Without a
+  PDX U8 head, `StartSAQEstimates`/`StartSAQEstimatesPruning` start the estimates at |r|² + |q_c|² (the head kernels do
+  it themselves) and chunk 0 goes through `AccumulateTailEstimates`/`ScanTail` over every (or every passing) vector.
 - **Pruning bound**: margin_k = ε_k·√(|q_c unseen|²·remaining variance). `IVFUtils::CalibrateSAQPruningBound` estimates
   ε at `saq_pruning_significance` (0.01), DADE-style (arXiv 2411.17229): the (1 − P_s) quantile of the unseen term's
   ratio over `SAQ_CALIBRATION_QUERIES` sampled rows, each against its `SAQ_CALIBRATION_NEIGHBORS` nearest neighbours by
@@ -177,7 +180,9 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
 - **Maintenance**: codes don't depend on the cluster (global mean, frozen model), so splits, steals, merges and
   `ReassignEmbeddings` move encoded rows as they are; decoded floats only drive the 2-means and the assignments.
   `GetEmbeddingsFromIndexByRowIds` returns decoded rows in T-space.
-- **Tests** run SAQ at `TestUtils::SAQ_TEST_DIMENSIONS` (256) through `GetTestDimensions` where a suite uses fewer.
+- **Tests** run SAQ at each suite's dimensions (mostly 128, a T2 head); the PDX U8 head is covered at 384
+  (`test_search`, `test_saq`, `test_maintenance`'s `D`). `test_saq` checks the plan and the cluster layout for both
+  heads.
 
 ## Verification gate (definition of done)
 

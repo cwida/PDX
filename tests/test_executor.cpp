@@ -30,9 +30,9 @@ class CountingExecutor final : public skmeans::ParallelExecutor {
     std::unique_ptr<skmeans::ParallelExecutor> inner = skmeans::MakeDefaultExecutor(2);
 };
 
-PDX::PDXIndexConfig MakeConfig(size_t d, PDX::ParallelExecutor* executor, uint32_t n_threads) {
+PDX::PDXIndexConfig MakeConfig(PDX::ParallelExecutor* executor, uint32_t n_threads) {
     return PDX::PDXIndexConfig{
-        .num_dimensions = static_cast<uint32_t>(d),
+        .num_dimensions = static_cast<uint32_t>(D),
         .distance_metric = PDX::DistanceMetric::L2SQ,
         .seed = TestUtils::SEED,
         .normalize = true,
@@ -47,11 +47,10 @@ class ExecutorTest : public ::testing::TestWithParam<std::string> {};
 
 // BuildIndex runs on the injected executor and releases its threads.
 TEST_P(ExecutorTest, BuildRunsOnInjectedExecutor) {
-    const size_t d = TestUtils::GetTestDimensions(GetParam(), D);
-    auto data = TestUtils::LoadTestData(d);
+    auto data = TestUtils::LoadTestData(D);
     CountingExecutor executor;
     auto index = TestUtils::BuildIndexWithConfig(
-        GetParam(), MakeConfig(d, &executor, 0), data.train.data(), TestUtils::N_TRAIN
+        GetParam(), MakeConfig(&executor, 0), data.train.data(), TestUtils::N_TRAIN
     );
     EXPECT_GT(executor.parallel_for_calls, 0u);
     EXPECT_GT(executor.release_threads_calls, 0u);
@@ -59,14 +58,13 @@ TEST_P(ExecutorTest, BuildRunsOnInjectedExecutor) {
 
 // A serial and a threaded default executor build the same clusters.
 TEST_P(ExecutorTest, SerialAndThreadedBuildsMatch) {
-    const size_t d = TestUtils::GetTestDimensions(GetParam(), D);
-    auto data = TestUtils::LoadTestData(d);
+    auto data = TestUtils::LoadTestData(D);
     skmeans::SerialExecutor serial;
     auto serial_index = TestUtils::BuildIndexWithConfig(
-        GetParam(), MakeConfig(d, &serial, 0), data.train.data(), TestUtils::N_TRAIN
+        GetParam(), MakeConfig(&serial, 0), data.train.data(), TestUtils::N_TRAIN
     );
     auto threaded_index = TestUtils::BuildIndexWithConfig(
-        GetParam(), MakeConfig(d, nullptr, 4), data.train.data(), TestUtils::N_TRAIN
+        GetParam(), MakeConfig(nullptr, 4), data.train.data(), TestUtils::N_TRAIN
     );
     ASSERT_EQ(serial_index->GetNumClusters(), threaded_index->GetNumClusters());
     for (uint32_t c = 0; c < serial_index->GetNumClusters(); ++c) {

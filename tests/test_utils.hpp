@@ -26,20 +26,10 @@ static constexpr size_t N_TOTAL = N_TRAIN + N_QUERIES;
 static constexpr unsigned int SEED = 42;
 static constexpr size_t KNN = 10;
 
-// SAQ plans fit next to their 8-bit head chunk only from about 166 (4 bits) and 248 (3 bits)
-// dimensions
-static constexpr size_t SAQ_TEST_DIMENSIONS = 256;
-
 struct TestData {
     std::vector<float> train;
     std::vector<float> queries;
 };
-
-// The dimensions an index type is tested at, for a suite at d
-inline size_t GetTestDimensions(const std::string& index_type, size_t d) {
-    const bool is_saq = index_type == "pdx_saq3" || index_type == "pdx_saq4";
-    return is_saq ? std::max(d, SAQ_TEST_DIMENSIONS) : d;
-}
 
 // The bits per dimension of an SAQ index type
 inline uint32_t GetSAQBitsPerDimension(const std::string& index_type) {

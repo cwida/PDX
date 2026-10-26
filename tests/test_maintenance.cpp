@@ -361,7 +361,7 @@ TEST_P(MaintenanceTest, MaintenanceAfterRestore) {
 // rows are deleted; the index must stay consistent and exact-searchable throughout
 template <typename IndexT>
 void RunAppendCascadeThenDeleteHalf() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_build = 2048;
     constexpr size_t n_total = 60000;
     constexpr size_t n_queries = 100;
@@ -424,7 +424,7 @@ void RunAppendCascadeThenDeleteHalf() {
 // once); the survivors must still be exact-searchable
 template <typename IndexT>
 void RunBuildThenDeleteHalf() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_total = 50000;
     constexpr size_t n_queries = 100;
     std::mt19937 gen(TestUtils::SEED);
@@ -475,7 +475,7 @@ void RunBuildThenDeleteHalf() {
 // so tombstoned slots must be skipped rather than masked
 template <typename IndexT>
 void RunSearchWithKAboveLiveCount() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_total = 20000;
     constexpr size_t keep_every = 20;
     constexpr size_t n_live = n_total / keep_every;
@@ -512,7 +512,7 @@ void RunSearchWithKAboveLiveCount() {
 // clusters
 template <typename IndexT>
 void RunAppendDuplicatesCreatesNoEmptyCluster() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_build = 2048;
     constexpr size_t n_copies = 3000;
     std::mt19937 gen(TestUtils::SEED);
@@ -544,7 +544,7 @@ uint32_t LargestClusterSize(const PDX::IPDXIndex& index) {
 // Test 13: With max_cluster_size, appends split every cluster that reaches it
 template <typename IndexT>
 void RunAppendsSplitAtMaxClusterSize() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_build = 2048;
     constexpr size_t n_total = 10000;
     constexpr uint32_t max_cluster_size = 64;
@@ -576,7 +576,7 @@ void RunAppendsSplitAtMaxClusterSize() {
 // group of identical rows, which stays whole
 template <typename IndexT>
 void RunBuildSplitsClustersAboveMaxClusterSize() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_uniform = 4000;
     constexpr size_t n_copies = 500;
     constexpr size_t n_total = n_uniform + n_copies;
@@ -683,7 +683,7 @@ TEST_P(MaintenanceTest, BulkAppendMatchesAppendWithoutSplits) {
 // every row stays stored once and exact-searchable
 template <typename IndexT>
 void RunBulkAppendCascade() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_build = 2048;
     constexpr size_t n_total = 60000;
     constexpr size_t n_queries = 100;
@@ -733,7 +733,7 @@ TEST_P(MaintenanceTest, BulkAppendCascade) {
 // Test 17: One bulk batch respects max_cluster_size as row-by-row appends do
 template <typename IndexT>
 void RunBulkAppendSplitsAtMaxClusterSize() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_build = 2048;
     constexpr size_t n_total = 10000;
     constexpr uint32_t max_cluster_size = 64;
@@ -767,7 +767,7 @@ TEST_P(MaintenanceTest, BulkAppendSplitsAtMaxClusterSize) {
 // appended
 template <typename IndexT>
 void RunBulkAppendRejectsInvalidIds() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_build = 2048;
     std::mt19937 gen(TestUtils::SEED);
     std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
@@ -800,7 +800,7 @@ TEST_P(MaintenanceTest, BulkAppendRejectsInvalidIds) {
 // Test 19: Deleting the only row of a cluster empties it, and its merge has no row to reassign
 template <typename IndexT>
 void RunDeleteOnlyRowOfCluster() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_build = 256;
     std::mt19937 gen(TestUtils::SEED);
     std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
@@ -849,9 +849,7 @@ std::vector<float> UniformEmbeddings(size_t n, size_t d) {
 }
 
 // 202 dimensions lay out u8 groups of 4, a u8 remainder and horizontal blocks
-size_t RestrideDimensions() {
-    return TestUtils::GetTestDimensions(IndexType(), 202);
-}
+constexpr size_t RESTRIDE_D = 202;
 
 // Test 20: A build that expects no appends gives each cluster one free slot, and appends grow its
 // clusters up to max_cluster_size
@@ -861,8 +859,8 @@ void RunBuildWithoutAppendHeadroom() {
     constexpr size_t n_total = 6000;
     constexpr size_t n_appended_one_by_one = 2000;
     constexpr uint32_t max_cluster_size = 64;
-    const auto data = UniformEmbeddings(n_total, RestrideDimensions());
-    auto config = MakeConfig(RestrideDimensions());
+    const auto data = UniformEmbeddings(n_total, RESTRIDE_D);
+    auto config = MakeConfig(RESTRIDE_D);
     config.max_cluster_size = max_cluster_size;
     config.expect_appends = false;
     IndexT index(config);
@@ -873,14 +871,14 @@ void RunBuildWithoutAppendHeadroom() {
 
     size_t row_id = n_build;
     for (; row_id < n_build + n_appended_one_by_one; row_id++) {
-        index.Append(row_id, data.data() + row_id * RestrideDimensions());
+        index.Append(row_id, data.data() + row_id * RESTRIDE_D);
     }
     std::vector<size_t> row_ids;
     for (; row_id < n_total; row_id++) {
         row_ids.push_back(row_id);
     }
     index.BulkAppend(
-        row_ids.data(), data.data() + row_ids[0] * RestrideDimensions(), row_ids.size()
+        row_ids.data(), data.data() + row_ids[0] * RESTRIDE_D, row_ids.size()
     );
     ExpectIndexHoldsExactly(index, n_total);
     EXPECT_LE(LargestClusterSize(index), max_cluster_size);
@@ -895,7 +893,7 @@ TEST_P(MaintenanceTest, BuildWithoutAppendHeadroom) {
 // Test 21: With max_cluster_size, a built cluster gets 1.3 times its rows in slots, not the limit
 template <typename IndexT>
 void RunBuildCapsHeadroomAtMaxClusterSize() {
-    const size_t d = TestUtils::GetTestDimensions(IndexType(), 8);
+    constexpr size_t d = 128;
     constexpr size_t n_build = 2048;
     const auto data = UniformEmbeddings(n_build, d);
     auto config = MakeConfig(d);
@@ -923,21 +921,21 @@ void RunShrinkToFit() {
     constexpr size_t n_build = 2048;
     constexpr size_t n_filled = 6000;
     constexpr size_t n_total = 6100;
-    const auto data = UniformEmbeddings(n_total, RestrideDimensions());
+    const auto data = UniformEmbeddings(n_total, RESTRIDE_D);
     std::vector<size_t> row_ids;
     for (size_t row_id = n_build; row_id < n_filled; row_id++) {
         row_ids.push_back(row_id);
     }
-    IndexT reference(MakeConfig(RestrideDimensions()));
+    IndexT reference(MakeConfig(RESTRIDE_D));
     reference.BuildIndex(data.data(), n_build);
     reference.BulkAppend(
-        row_ids.data(), data.data() + n_build * RestrideDimensions(), row_ids.size()
+        row_ids.data(), data.data() + n_build * RESTRIDE_D, row_ids.size()
     );
-    auto config = MakeConfig(RestrideDimensions());
+    auto config = MakeConfig(RESTRIDE_D);
     config.max_cluster_size = 64;
     IndexT index(config);
     index.BuildIndex(data.data(), n_build);
-    index.BulkAppend(row_ids.data(), data.data() + n_build * RestrideDimensions(), row_ids.size());
+    index.BulkAppend(row_ids.data(), data.data() + n_build * RESTRIDE_D, row_ids.size());
     std::vector<size_t> live_row_ids;
     for (size_t row_id = 0; row_id < n_filled; row_id++) {
         if (row_id % 7 == 0) {
@@ -952,13 +950,13 @@ void RunShrinkToFit() {
     for (const auto& cluster : index.GetSearcher().pdx_data.clusters) {
         EXPECT_EQ(cluster.max_capacity, cluster.used_capacity + 1);
     }
-    std::vector<float> embeddings(live_row_ids.size() * RestrideDimensions());
-    std::vector<float> reference_embeddings(live_row_ids.size() * RestrideDimensions());
+    std::vector<float> embeddings(live_row_ids.size() * RESTRIDE_D);
+    std::vector<float> reference_embeddings(live_row_ids.size() * RESTRIDE_D);
     index.GetEmbeddingsFromIndexByRowIds(live_row_ids, embeddings.data());
     reference.GetEmbeddingsFromIndexByRowIds(live_row_ids, reference_embeddings.data());
     EXPECT_EQ(embeddings, reference_embeddings);
     for (size_t row_id = n_filled; row_id < n_total; row_id++) {
-        index.Append(row_id, data.data() + row_id * RestrideDimensions());
+        index.Append(row_id, data.data() + row_id * RESTRIDE_D);
     }
     ExpectIndexHoldsExactly(index, live_row_ids.size() + n_total - n_filled);
 }

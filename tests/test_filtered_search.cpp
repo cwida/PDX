@@ -21,7 +21,7 @@ class FilteredSearchTest : public ::testing::TestWithParam<std::string> {
 
 TEST_P(FilteredSearchTest, FilteredResultsAreSubsetOfPassingIds) {
     std::string index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
     index->SetNProbe(16);
@@ -51,7 +51,7 @@ TEST_P(FilteredSearchTest, FilteredSearchMatchesUnfilteredWhenAllPass) {
     if (index_type.find("tree") != std::string::npos) {
         GTEST_SKIP() << "tree Search ranks clusters through L0, FilteredSearch ranks them flat";
     }
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
     index->SetNProbe(16);
@@ -74,7 +74,7 @@ TEST_P(FilteredSearchTest, FilteredSearchMatchesUnfilteredWhenAllPass) {
 
 TEST_P(FilteredSearchTest, EmptyFilterReturnsEmpty) {
     std::string index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
     index->SetNProbe(16);
@@ -86,7 +86,7 @@ TEST_P(FilteredSearchTest, EmptyFilterReturnsEmpty) {
 
 TEST_P(FilteredSearchTest, FilteredRecallMonotonicallyIncreasesWithNProbe) {
     std::string index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     // 50% random filter
@@ -151,7 +151,7 @@ TEST_P(FilteredSearchTest, FilteredRecallMonotonicallyIncreasesWithNProbe) {
 
 TEST_P(FilteredSearchTest, SingleIdFilterReturnsTheId) {
     std::string index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
     index->SetNProbe(0);
@@ -170,7 +170,7 @@ TEST_P(FilteredSearchTest, SingleIdFilterReturnsTheId) {
 
 TEST_P(FilteredSearchTest, TinyFilterExhaustiveReturnsAllPassingIds) {
     std::string index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
     index->SetNProbe(0);

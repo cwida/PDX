@@ -22,7 +22,7 @@ class SerializationTest : public ::testing::TestWithParam<std::string> {
 
 TEST_P(SerializationTest, SaveLoadProducesSameSearchResults) {
     std::string index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
@@ -66,7 +66,7 @@ TEST_P(SerializationTest, SaveLoadProducesSameSearchResults) {
 // tree
 TEST_P(SerializationTest, SaveLoadProducesSameFilteredSearchResults) {
     std::string index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
@@ -106,7 +106,7 @@ TEST_P(SerializationTest, SaveLoadProducesSameFilteredSearchResults) {
 
 TEST_P(SerializationTest, LoadedIndexProperties) {
     std::string index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
@@ -131,7 +131,7 @@ TEST_P(SerializationTest, LoadedIndexProperties) {
 
 TEST_P(SerializationTest, LoadAutoDetectsType) {
     std::string index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
@@ -249,7 +249,7 @@ class StreamSerializationTest : public ::testing::TestWithParam<std::string> {};
 
 TEST_P(StreamSerializationTest, LoadsTheSameIndexOnTheSamePruner) {
     const std::string& index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     const PDX::PDXIndexConfig config{
         .num_dimensions = static_cast<uint32_t>(d),
@@ -327,7 +327,7 @@ class SavedStreamClusterSource : public PDX::IClusterSource {
 // deletes
 TEST_P(StreamSerializationTest, ResidentDataLoadSearchesThroughTheClusterSource) {
     const std::string& index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     const PDX::PDXIndexConfig config{
         .num_dimensions = static_cast<uint32_t>(d),
@@ -387,7 +387,7 @@ TEST_P(StreamSerializationTest, LoadsAnIndexWithEmptyClusters) {
         index_type != "pdx_saq4") {
         GTEST_SKIP() << "Only PDXIndex streams place clusters by offset";
     }
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     const size_t n_distinct = 120;
     auto data = TestUtils::LoadTestData(d);
     std::vector<float> rows(TestUtils::N_TRAIN * d);
@@ -432,7 +432,7 @@ TEST_P(StreamSerializationTest, KeepsMaxClusterSize) {
     if (index_type == "flat") {
         GTEST_SKIP() << "Flat has no clusters to split";
     }
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     const size_t n_build = TestUtils::N_TRAIN / 2;
     auto data = TestUtils::LoadTestData(d);
     const PDX::PDXIndexConfig config{
@@ -469,7 +469,7 @@ TEST_P(StreamSerializationTest, KeepsMaxClusterSize) {
 // centroids, so its type byte stays as before.
 TEST_P(StreamSerializationTest, KeepsCentroidQuantization) {
     const std::string& index_type = GetParam();
-    const size_t d = TestUtils::GetTestDimensions(index_type, 128);
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     std::vector<size_t> passing_ids;
     for (size_t i = 0; i < TestUtils::N_TRAIN; i += 3) {

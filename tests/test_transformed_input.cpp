@@ -84,7 +84,7 @@ TEST(TransformedInput, PDXTreeIndexF32) {
 
 // An SAQ index fit on its rows, and one on a shared fit of the same rows, are the same index
 TEST(TransformedInput, PDXIndexSAQ) {
-    const size_t d = TestUtils::SAQ_TEST_DIMENSIONS;
+    const size_t d = D;
     auto data = TestUtils::LoadTestData(d);
     const size_t n_build = TestUtils::N_TRAIN - 1;
     const size_t last = TestUtils::N_TRAIN - 1;
@@ -180,7 +180,7 @@ TEST(EmbeddingsFromIndexByRowIds, FlatIndex) {
 
 // SAQ gives back the transformed embeddings as its model decodes their codes
 TEST(EmbeddingsFromIndexByRowIds, PDXIndexSAQ) {
-    const size_t d = TestUtils::SAQ_TEST_DIMENSIONS;
+    const size_t d = D;
     auto data = TestUtils::LoadTestData(d);
     skmeans::SerialExecutor executor;
     skmeans::VanillaAllocator allocator;

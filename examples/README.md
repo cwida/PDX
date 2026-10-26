@@ -27,7 +27,7 @@ Our examples look for `.hdf5` files in `/benchmarks/datasets/downloaded`. These 
 
 - **`pdx_tree_sq8.py`**: Two-level hierarchical IVF index with 8-bit scalar quantization (`IndexPDXIVFTreeSQ8`). The two-level structure allows pruning to happen when finding the most promising clusters. Recall is controlled with `nprobe`.
 
-- **`pdx_saq.py`**: Single-level IVF index over SAQ codes (`IndexPDXIVFSAQ`): PCA-segmented quantization at 3 (or 4) bits per dimension, fp16 factors included, about 2.4x smaller than 8-bit scalar quantization. Its pruning bound is calibrated at build. SAQ needs at least 248 dimensions at 3 bits and 166 at 4 (its first 64 dimensions keep 8 bits).
+- **`pdx_saq.py`**: Single-level IVF index over SAQ codes (`IndexPDXIVFSAQ`): PCA-segmented quantization at 3 (or 4) bits per dimension, fp16 factors included, about 2.4x smaller than 8-bit scalar quantization. Its pruning bound is calibrated at build.
 
 - **`pdx_filtered.py`**: Filtered (predicated) search using `IndexPDXIVFTreeSQ8`. Demonstrates how to pass a set of allowed row IDs to `filtered_search()`, restricting results to only those vectors. Includes a correctness check verifying that returned IDs are a subset of the allowed set.
 
