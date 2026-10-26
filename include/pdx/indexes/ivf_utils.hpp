@@ -1420,6 +1420,32 @@ inline std::pair<size_t, size_t> CountRowsToSteal(const NeighborRowsToSteal& row
     return {num_rows_to_a, num_rows - num_rows_to_a};
 }
 
+// Keeps only the rows to steal that fit A and B under max_cluster_size (0: no limit); the rest
+// stay in their own clusters
+inline void CapRowsToSteal(
+    NeighborRowsToSteal& rows_to_steal,
+    uint32_t max_cluster_size,
+    size_t size_a,
+    size_t size_b
+) {
+    if (max_cluster_size == 0) {
+        return;
+    }
+    size_t room_a = max_cluster_size > size_a ? max_cluster_size - size_a : 0;
+    size_t room_b = max_cluster_size > size_b ? max_cluster_size - size_b : 0;
+    for (auto& neighbor_rows : rows_to_steal) {
+        size_t num_kept = 0;
+        for (const auto& row : neighbor_rows) {
+            size_t& room = row.second ? room_a : room_b;
+            if (room > 0) {
+                --room;
+                neighbor_rows[num_kept++] = row;
+            }
+        }
+        neighbor_rows.resize(num_kept);
+    }
+}
+
 // For each neighboring cluster: the slots of its live rows whose own centroid is not strictly
 // closer than both A and B, and whether each goes to A. One GEMM per neighbor, of its gathered
 // (dequantized) rows against [own, A, B], in parallel over the neighbors.

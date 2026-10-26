@@ -1069,13 +1069,16 @@ class PDXTreeIndex : public IPDXIndex {
         }
 
         // Neighbors' rows closer to A or B than to their own centroid, stolen below
-        const auto rows_to_steal = FindNeighborRowsToSteal<Q>(
+        auto rows_to_steal = FindNeighborRowsToSteal<Q>(
             index,
             neighboring_clusters_ids,
             centroid_a.get(),
             centroid_b.get(),
             GetExecutor(),
             GetAllocator()
+        );
+        CapRowsToSteal(
+            rows_to_steal, config.max_cluster_size, group_a_idx.size(), group_b_idx.size()
         );
         const auto [num_stolen_a, num_stolen_b] = CountRowsToSteal(rows_to_steal);
         const size_t count_a = group_a_idx.size() + num_stolen_a;
