@@ -89,12 +89,15 @@ TEST(TransformedInput, PDXIndexSAQ) {
     const size_t n_build = TestUtils::N_TRAIN - 1;
     const size_t last = TestUtils::N_TRAIN - 1;
 
+    // One executor for both builds and the fit: a GEMM split over another number of workers can
+    // round differently, and the fitted rotation amplifies it (seen on the macOS runner)
+    skmeans::SerialExecutor executor;
+    skmeans::VanillaAllocator allocator;
     auto config = MakeConfig(d);
+    config.executor = &executor;
     PDX::PDXIndexSAQ raw_index(config);
     raw_index.BuildIndex(data.train.data(), n_build);
 
-    skmeans::SerialExecutor executor;
-    skmeans::VanillaAllocator allocator;
     const PDX::IVFUtils ivf_utils(executor);
     auto normalized = ivf_utils.Normalize(data.train.data(), n_build, d);
     PDX::SAQFit fit = PDX::SAQQuantizer::Fit(

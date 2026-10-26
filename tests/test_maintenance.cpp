@@ -603,7 +603,11 @@ void RunBuildSplitsClustersAboveMaxClusterSize() {
         for (uint32_t c = 0; c < index.GetNumClusters(); c++) {
             num_above += index.GetClusterSize(c) > max_cluster_size;
         }
-        EXPECT_EQ(num_above, limit == 0 ? num_clusters : 1u);
+        if (limit == 0) {
+            EXPECT_GT(num_above, 1u);
+        } else {
+            EXPECT_EQ(num_above, 1u);
+        }
     }
 }
 

@@ -88,6 +88,18 @@ static constexpr size_t D = 384;
 static constexpr float RECALL_TOLERANCE = 0.02f;
 static constexpr float QUANTIZATION_RECALL_TOLERANCE = 0.05f;
 
+// SAQ's fitted rotation, clusters and calibrated pruning bound follow each platform's rounding, so
+// its recall moves more across compilers
+const std::map<std::string, float> RECALL_TOLERANCE_BY_TYPE = {
+    {"pdx_saq3", 0.04f},
+    {"pdx_saq4", 0.04f},
+};
+
+float RecallTolerance(const std::string& index_type) {
+    const auto it = RECALL_TOLERANCE_BY_TYPE.find(index_type);
+    return it != RECALL_TOLERANCE_BY_TYPE.end() ? it->second : RECALL_TOLERANCE;
+}
+
 class SearchTest : public ::testing::TestWithParam<std::string> {
   protected:
     void SetUp() override {}
@@ -118,7 +130,7 @@ TEST_P(SearchTest, RecallMatchesGroundTruth) {
     auto it = RECALL_GROUND_TRUTH.find(key);
     if (it != RECALL_GROUND_TRUTH.end()) {
         float expected = it->second;
-        EXPECT_NEAR(recall, expected, RECALL_TOLERANCE)
+        EXPECT_NEAR(recall, expected, RecallTolerance(index_type))
             << "Recall regression: got " << recall << ", expected ~" << expected;
     }
 }
@@ -220,7 +232,7 @@ TEST_P(SearchTest, ExhaustiveSearchMatchesGroundTruth) {
     auto key = std::make_tuple(index_type, d, static_cast<size_t>(num_clusters));
     auto it = RECALL_GROUND_TRUTH.find(key);
     if (it != RECALL_GROUND_TRUTH.end()) {
-        EXPECT_NEAR(recall, it->second, RECALL_TOLERANCE)
+        EXPECT_NEAR(recall, it->second, RecallTolerance(index_type))
             << "Exhaustive recall regression: got " << recall << ", expected ~" << it->second;
     }
 }
