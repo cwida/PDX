@@ -367,9 +367,7 @@ void RunSharedHeapAcrossPartitions() {
         std::vector<size_t> row_ids(part_size);
         std::iota(row_ids.begin(), row_ids.end(), p * part_size);
         parts.push_back(std::make_unique<IndexT>(config));
-        parts.back()->BuildIndex(
-            row_ids.data(), data.train.data() + p * part_size * D, part_size
-        );
+        parts.back()->BuildIndex(row_ids.data(), data.train.data() + p * part_size * D, part_size);
     }
 
     // The indexes normalize, so the brute-force ground truth must too

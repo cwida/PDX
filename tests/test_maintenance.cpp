@@ -877,9 +877,7 @@ void RunBuildWithoutAppendHeadroom() {
     for (; row_id < n_total; row_id++) {
         row_ids.push_back(row_id);
     }
-    index.BulkAppend(
-        row_ids.data(), data.data() + row_ids[0] * RESTRIDE_D, row_ids.size()
-    );
+    index.BulkAppend(row_ids.data(), data.data() + row_ids[0] * RESTRIDE_D, row_ids.size());
     ExpectIndexHoldsExactly(index, n_total);
     EXPECT_LE(LargestClusterSize(index), max_cluster_size);
 }
@@ -928,9 +926,7 @@ void RunShrinkToFit() {
     }
     IndexT reference(MakeConfig(RESTRIDE_D));
     reference.BuildIndex(data.data(), n_build);
-    reference.BulkAppend(
-        row_ids.data(), data.data() + n_build * RESTRIDE_D, row_ids.size()
-    );
+    reference.BulkAppend(row_ids.data(), data.data() + n_build * RESTRIDE_D, row_ids.size());
     auto config = MakeConfig(RESTRIDE_D);
     config.max_cluster_size = 64;
     IndexT index(config);
