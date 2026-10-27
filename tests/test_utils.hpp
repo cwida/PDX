@@ -31,6 +31,11 @@ struct TestData {
     std::vector<float> queries;
 };
 
+// The bits per dimension of an SAQ index type
+inline uint32_t GetSAQBitsPerDimension(const std::string& index_type) {
+    return index_type == "pdx_saq3" ? 3 : 4;
+}
+
 inline std::string TempPath(const std::string& name) {
     return (std::filesystem::temp_directory_path() / name).string();
 }
@@ -216,6 +221,11 @@ inline std::unique_ptr<PDX::IPDXIndex> BuildIndex(
         auto p = std::make_unique<PDX::PDXTreeIndexU8>(config);
         p->BuildIndex(data, n);
         index = std::move(p);
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        config.saq_bits_per_dimension = GetSAQBitsPerDimension(index_type);
+        auto p = std::make_unique<PDX::PDXIndexSAQ>(config);
+        p->BuildIndex(data, n);
+        index = std::move(p);
     }
     return index;
 }
@@ -241,6 +251,12 @@ inline std::unique_ptr<PDX::IPDXIndex> BuildIndexWithConfig(
         index = std::move(p);
     } else if (index_type == "pdx_tree_u8") {
         auto p = std::make_unique<PDX::PDXTreeIndexU8>(config);
+        p->BuildIndex(data, n);
+        index = std::move(p);
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        PDX::PDXIndexConfig saq_config = config;
+        saq_config.saq_bits_per_dimension = GetSAQBitsPerDimension(index_type);
+        auto p = std::make_unique<PDX::PDXIndexSAQ>(saq_config);
         p->BuildIndex(data, n);
         index = std::move(p);
     }

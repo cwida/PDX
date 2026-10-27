@@ -413,6 +413,672 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
 };
 
 template <>
+class SIMDComputer<DistanceMetric::L2SQ, Quantization::SAQ> {
+  public:
+    static size_t ScanHead(
+        const uint8_t* PDX_RESTRICT head,
+        size_t num_vectors,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT residual_norms,
+        const uint8_t* PDX_RESTRICT selection,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales
+    ) {
+        __m512i query_groups[NUM_HEAD_GROUPS];
+        LoadHeadQuery(query_codes, query_groups);
+        const __m512 dot_scale_vec = _mm512_set1_ps(dot_scale);
+        const __m512 dot_offset_vec = _mm512_set1_ps(dot_offset);
+        const __m512 query_squared_norm_vec = _mm512_set1_ps(query_squared_norm);
+        const __m512 threshold_vec = _mm512_set1_ps(threshold);
+        const __m512i lane_offsets =
+            _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+        size_t num_kept = 0;
+        for (size_t vector_idx = 0; vector_idx < num_vectors; vector_idx += 16) {
+            const size_t remaining = num_vectors - vector_idx;
+            const __mmask16 valid = remaining >= 16 ? static_cast<__mmask16>(0xFFFF)
+                                                    : static_cast<__mmask16>((1u << remaining) - 1);
+            const __mmask64 valid_levels =
+                remaining >= 16 ? ~__mmask64{0} : (__mmask64{1} << (4 * remaining)) - 1;
+            const __m512i dot = HeadDots16(
+                head + vector_idx * U8_INTERLEAVE_SIZE, stride, valid_levels, query_groups
+            );
+            const __m512 rescale =
+                _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, head_rescales + vector_idx));
+            const __m512 residual_norm =
+                _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, residual_norms + vector_idx));
+            const __m512 estimate = _mm512_fmadd_ps(
+                rescale,
+                _mm512_fmsub_ps(_mm512_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
+                _mm512_fmadd_ps(residual_norm, residual_norm, query_squared_norm_vec)
+            );
+            __mmask16 keep = valid;
+            if (selection != nullptr) {
+                const __m128i selected = _mm_maskz_loadu_epi8(valid, selection + vector_idx);
+                keep = _mm_test_epi8_mask(selected, selected);
+            }
+            keep = _mm512_mask_cmp_ps_mask(keep, estimate, threshold_vec, _CMP_LT_OQ);
+            num_kept += Compact16(
+                keep,
+                _mm512_add_epi32(_mm512_set1_epi32(static_cast<int>(vector_idx)), lane_offsets),
+                estimate,
+                rescale,
+                positions + num_kept,
+                estimates + num_kept,
+                rescales + num_kept
+            );
+        }
+        return num_kept;
+    }
+
+    // ScanHead over the vectors at positions only, 16 positions per batch with one gather per
+    // group; keeps those below threshold, compacted in place
+    static size_t ScanHeadPruning(
+        const uint8_t* PDX_RESTRICT head,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT residual_norms,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales,
+        size_t num_positions
+    ) {
+        __m512i query_groups[NUM_HEAD_GROUPS];
+        LoadHeadQuery(query_codes, query_groups);
+        const __m512 dot_scale_vec = _mm512_set1_ps(dot_scale);
+        const __m512 dot_offset_vec = _mm512_set1_ps(dot_offset);
+        const __m512 query_squared_norm_vec = _mm512_set1_ps(query_squared_norm);
+        const __m512 threshold_vec = _mm512_set1_ps(threshold);
+        size_t num_kept = 0;
+        for (size_t position_idx = 0; position_idx < num_positions; position_idx += 16) {
+            const size_t remaining = num_positions - position_idx;
+            const __mmask16 valid = remaining >= 16 ? static_cast<__mmask16>(0xFFFF)
+                                                    : static_cast<__mmask16>((1u << remaining) - 1);
+            const __m512i position_vec = _mm512_maskz_loadu_epi32(valid, positions + position_idx);
+            const __m512i level_offsets = _mm512_slli_epi32(position_vec, 2);
+            __m512i dots[4] = {
+                _mm512_setzero_si512(),
+                _mm512_setzero_si512(),
+                _mm512_setzero_si512(),
+                _mm512_setzero_si512()
+            };
+            for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
+                dots[group_idx % 4] = _mm512_dpbusd_epi32(
+                    dots[group_idx % 4],
+                    _mm512_mask_i32gather_epi32(
+                        _mm512_setzero_si512(),
+                        valid,
+                        level_offsets,
+                        head + group_idx * U8_INTERLEAVE_SIZE * stride,
+                        1
+                    ),
+                    query_groups[group_idx]
+                );
+            }
+            const __m512i dot = _mm512_add_epi32(
+                _mm512_add_epi32(dots[0], dots[1]), _mm512_add_epi32(dots[2], dots[3])
+            );
+            // Each gather reads 4 bytes from a half; the low 2 are the position's
+            const __m512i half_offsets = _mm512_slli_epi32(position_vec, 1);
+            const __m512 rescale =
+                _mm512_cvtph_ps(_mm512_cvtepi32_epi16(_mm512_mask_i32gather_epi32(
+                    _mm512_setzero_si512(), valid, half_offsets, head_rescales, 1
+                )));
+            const __m512 residual_norm =
+                _mm512_cvtph_ps(_mm512_cvtepi32_epi16(_mm512_mask_i32gather_epi32(
+                    _mm512_setzero_si512(), valid, half_offsets, residual_norms, 1
+                )));
+            const __m512 estimate = _mm512_fmadd_ps(
+                rescale,
+                _mm512_fmsub_ps(_mm512_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
+                _mm512_fmadd_ps(residual_norm, residual_norm, query_squared_norm_vec)
+            );
+            num_kept += Compact16(
+                _mm512_mask_cmp_ps_mask(valid, estimate, threshold_vec, _CMP_LT_OQ),
+                position_vec,
+                estimate,
+                rescale,
+                positions + num_kept,
+                estimates + num_kept,
+                rescales + num_kept
+            );
+        }
+        return num_kept;
+    }
+
+    template <uint32_t WIDTH>
+    static size_t ScanTail(
+        const uint8_t* PDX_RESTRICT records,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        const uint16_t* PDX_RESTRICT segment_rescales,
+        float threshold,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales,
+        size_t num_survivors
+    ) {
+        const LevelUnpacker<WIDTH> unpack;
+        const __m512i query = _mm512_loadu_si512(query_codes);
+        const __m512 dot_scale_vec = _mm512_set1_ps(dot_scale);
+        const __m512 dot_offset_vec = _mm512_set1_ps(dot_offset);
+        const __m512 threshold_vec = _mm512_set1_ps(threshold);
+        size_t num_kept = 0;
+        for (size_t first_survivor = 0; first_survivor < num_survivors; first_survivor += 16) {
+            const size_t batch_size = std::min<size_t>(16, num_survivors - first_survivor);
+            const __mmask16 valid = batch_size == 16
+                                        ? static_cast<__mmask16>(0xFFFF)
+                                        : static_cast<__mmask16>((1u << batch_size) - 1);
+            const __m512i batch_positions =
+                _mm512_maskz_loadu_epi32(valid, positions + first_survivor);
+            const __m512i dot = TailDots16(unpack, query, [&](size_t lane) {
+                const uint32_t position =
+                    positions[first_survivor + (lane < batch_size ? lane : 0)];
+                return records + static_cast<size_t>(position) * 8 * WIDTH;
+            });
+            __m512 rescale;
+            if (segment_rescales != nullptr) {
+                const __m512i gathered = _mm512_mask_i32gather_epi32(
+                    _mm512_setzero_si512(), valid, batch_positions, segment_rescales, 2
+                );
+                rescale = _mm512_cvtph_ps(_mm512_cvtepi32_epi16(gathered));
+            } else {
+                rescale = _mm512_maskz_loadu_ps(valid, rescales + first_survivor);
+            }
+            const __m512 estimate = _mm512_fmadd_ps(
+                rescale,
+                _mm512_fmsub_ps(_mm512_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
+                _mm512_maskz_loadu_ps(valid, estimates + first_survivor)
+            );
+            num_kept += Compact16(
+                _mm512_mask_cmp_ps_mask(valid, estimate, threshold_vec, _CMP_LT_OQ),
+                batch_positions,
+                estimate,
+                rescale,
+                positions + num_kept,
+                estimates + num_kept,
+                rescales + num_kept
+            );
+        }
+        return num_kept;
+    }
+
+    static void ComputeHeadEstimates(
+        const uint8_t* PDX_RESTRICT head,
+        size_t num_vectors,
+        size_t stride,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        float query_squared_norm,
+        const uint16_t* PDX_RESTRICT head_rescales,
+        const uint16_t* PDX_RESTRICT residual_norms,
+        float* PDX_RESTRICT estimates
+    ) {
+        __m512i query_groups[NUM_HEAD_GROUPS];
+        LoadHeadQuery(query_codes, query_groups);
+        const __m512 dot_scale_vec = _mm512_set1_ps(dot_scale);
+        const __m512 dot_offset_vec = _mm512_set1_ps(dot_offset);
+        const __m512 query_squared_norm_vec = _mm512_set1_ps(query_squared_norm);
+        for (size_t vector_idx = 0; vector_idx < num_vectors; vector_idx += 16) {
+            const size_t remaining = num_vectors - vector_idx;
+            const __mmask16 valid = remaining >= 16 ? static_cast<__mmask16>(0xFFFF)
+                                                    : static_cast<__mmask16>((1u << remaining) - 1);
+            const __mmask64 valid_levels =
+                remaining >= 16 ? ~__mmask64{0} : (__mmask64{1} << (4 * remaining)) - 1;
+            const __m512i dot = HeadDots16(
+                head + vector_idx * U8_INTERLEAVE_SIZE, stride, valid_levels, query_groups
+            );
+            const __m512 rescale =
+                _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, head_rescales + vector_idx));
+            const __m512 residual_norm =
+                _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, residual_norms + vector_idx));
+            _mm512_mask_storeu_ps(
+                estimates + vector_idx,
+                valid,
+                _mm512_fmadd_ps(
+                    rescale,
+                    _mm512_fmsub_ps(_mm512_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
+                    _mm512_fmadd_ps(residual_norm, residual_norm, query_squared_norm_vec)
+                )
+            );
+        }
+    }
+
+    template <uint32_t WIDTH>
+    static void AccumulateTailEstimates(
+        const uint8_t* PDX_RESTRICT records,
+        size_t num_vectors,
+        const int8_t* PDX_RESTRICT query_codes,
+        float dot_scale,
+        float dot_offset,
+        const uint16_t* PDX_RESTRICT segment_rescales,
+        float* PDX_RESTRICT estimates
+    ) {
+        const LevelUnpacker<WIDTH> unpack;
+        const __m512i query = _mm512_loadu_si512(query_codes);
+        const __m512 dot_scale_vec = _mm512_set1_ps(dot_scale);
+        const __m512 dot_offset_vec = _mm512_set1_ps(dot_offset);
+        for (size_t first_vector = 0; first_vector < num_vectors; first_vector += 16) {
+            const size_t batch_size = std::min<size_t>(16, num_vectors - first_vector);
+            const __mmask16 valid = batch_size == 16
+                                        ? static_cast<__mmask16>(0xFFFF)
+                                        : static_cast<__mmask16>((1u << batch_size) - 1);
+            const __m512i dot = TailDots16(unpack, query, [&](size_t lane) {
+                return records + (first_vector + (lane < batch_size ? lane : 0)) * 8 * WIDTH;
+            });
+            const __m512 rescale =
+                _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(valid, segment_rescales + first_vector));
+            _mm512_mask_storeu_ps(
+                estimates + first_vector,
+                valid,
+                _mm512_fmadd_ps(
+                    rescale,
+                    _mm512_fmsub_ps(_mm512_cvtepi32_ps(dot), dot_scale_vec, dot_offset_vec),
+                    _mm512_maskz_loadu_ps(valid, estimates + first_vector)
+                )
+            );
+        }
+    }
+
+    using scalar_computer = ScalarComputer<DistanceMetric::L2SQ, Quantization::SAQ>;
+
+    static float ComputeResidual(
+        const float* PDX_RESTRICT embedding,
+        const float* PDX_RESTRICT mean,
+        size_t num_dimensions,
+        float* PDX_RESTRICT residual
+    ) {
+        __m512 accumulator = _mm512_setzero_ps();
+        size_t j = 0;
+        for (; j + 16 <= num_dimensions; j += 16) {
+            const __m512 value =
+                _mm512_sub_ps(_mm512_loadu_ps(embedding + j), _mm512_loadu_ps(mean + j));
+            _mm512_storeu_ps(residual + j, value);
+            accumulator = _mm512_fmadd_ps(value, value, accumulator);
+        }
+        float squared_norm = _mm512_reduce_add_ps(accumulator);
+        if (j < num_dimensions) {
+            squared_norm += scalar_computer::ComputeResidual(
+                embedding + j, mean + j, num_dimensions - j, residual + j
+            );
+        }
+        return squared_norm;
+    }
+
+    static float EncodeSegment(
+        const float* PDX_RESTRICT values,
+        size_t num_values,
+        uint32_t width,
+        float scale,
+        uint8_t* PDX_RESTRICT codes
+    ) {
+        if (num_values % 16 != 0) {
+            return scalar_computer::EncodeSegment(values, num_values, width, scale, codes);
+        }
+        const int32_t half = int32_t{1} << (width - 1);
+        const int32_t max_level = half - 1;
+        __m512 squares = _mm512_setzero_ps();
+        for (size_t j = 0; j < num_values; j += 16) {
+            const __m512 value = _mm512_loadu_ps(values + j);
+            squares = _mm512_fmadd_ps(value, value, squares);
+        }
+        const float squared_norm = _mm512_reduce_add_ps(squares);
+        if (squared_norm <= 0.0f) {
+            std::fill_n(codes, num_values, static_cast<uint8_t>(half));
+            return 0.0f;
+        }
+        const __m512 epsilon = _mm512_set1_ps(SAQ_LEVEL_ROUNDING_EPSILON);
+        const __m512 point_five = _mm512_set1_ps(0.5f);
+        const __m512i max_level_vec = _mm512_set1_epi32(max_level);
+        const auto levels_of = [&](__m512 magnitude, __m512 k_vec) {
+            return _mm512_min_epi32(
+                _mm512_cvttps_epi32(_mm512_fmadd_ps(magnitude, k_vec, epsilon)), max_level_vec
+            );
+        };
+        float k = scale / std::sqrt(squared_norm);
+        if (max_level > 0) {
+            float best_objective = -1.0f;
+            float best_k = k;
+            for (uint32_t point = 0; point < SAQ_SCALE_GRID_POINTS; ++point) {
+                const float candidate = k * scalar_computer::GridPointFactor(point);
+                const __m512 candidate_vec = _mm512_set1_ps(candidate);
+                __m512 numerator = _mm512_setzero_ps();
+                __m512 denominator = _mm512_setzero_ps();
+                for (size_t j = 0; j < num_values; j += 16) {
+                    const __m512 magnitude = _mm512_abs_ps(_mm512_loadu_ps(values + j));
+                    const __m512 value = _mm512_add_ps(
+                        _mm512_cvtepi32_ps(levels_of(magnitude, candidate_vec)), point_five
+                    );
+                    numerator = _mm512_fmadd_ps(value, magnitude, numerator);
+                    denominator = _mm512_fmadd_ps(value, value, denominator);
+                }
+                const float objective =
+                    _mm512_reduce_add_ps(numerator) / std::sqrt(_mm512_reduce_add_ps(denominator));
+                if (objective > best_objective) {
+                    best_objective = objective;
+                    best_k = candidate;
+                }
+            }
+            k = best_k;
+        }
+        const __m512 k_vec = _mm512_set1_ps(k);
+        const __m512i half_vec = _mm512_set1_epi32(half);
+        const __m512i below_half_vec = _mm512_set1_epi32(half - 1);
+        __m512 inner_product = _mm512_setzero_ps();
+        for (size_t j = 0; j < num_values; j += 16) {
+            const __m512 value = _mm512_loadu_ps(values + j);
+            const __m512 magnitude = _mm512_abs_ps(value);
+            const __m512i level = levels_of(magnitude, k_vec);
+            inner_product = _mm512_fmadd_ps(
+                _mm512_add_ps(_mm512_cvtepi32_ps(level), point_five), magnitude, inner_product
+            );
+            // half + level where value >= 0, half - 1 - level elsewhere
+            const __mmask16 negative = _mm512_cmp_ps_mask(value, _mm512_setzero_ps(), _CMP_LT_OQ);
+            const __m512i level_codes = _mm512_mask_sub_epi32(
+                _mm512_add_epi32(half_vec, level), negative, below_half_vec, level
+            );
+            _mm_storeu_si128(
+                reinterpret_cast<__m128i*>(codes + j), _mm512_cvtepi32_epi8(level_codes)
+            );
+        }
+        return squared_norm / _mm512_reduce_add_ps(inner_product);
+    }
+
+    static void PackRecord(
+        const uint8_t* PDX_RESTRICT levels,
+        uint32_t width,
+        uint8_t* PDX_RESTRICT record
+    ) {
+        static constexpr void (*PACK_RECORDS[SAQ_MAX_CODE_WIDTH + 1])(const uint8_t*, uint8_t*) =
+            {nullptr,
+             PackRecordOfWidth<1>,
+             PackRecordOfWidth<2>,
+             PackRecordOfWidth<3>,
+             PackRecordOfWidth<4>,
+             PackRecordOfWidth<5>,
+             PackRecordOfWidth<6>,
+             PackRecordOfWidth<7>,
+             PackRecordOfWidth<8>};
+        PACK_RECORDS[width](levels, record);
+    }
+
+    static void DecodeRecord(
+        const uint8_t* PDX_RESTRICT record,
+        uint32_t width,
+        float rescale,
+        float center,
+        const float* PDX_RESTRICT mean,
+        size_t num_values,
+        float* PDX_RESTRICT out
+    ) {
+        if (num_values != SAQ_CHUNK_SIZE) {
+            scalar_computer::DecodeRecord(record, width, rescale, center, mean, num_values, out);
+            return;
+        }
+        static constexpr void (*DECODE_RECORDS
+                                   [SAQ_MAX_CODE_WIDTH +
+                                    1])(const uint8_t*, float, float, const float*, float*) =
+            {nullptr,
+             DecodeRecordOfWidth<1>,
+             DecodeRecordOfWidth<2>,
+             DecodeRecordOfWidth<3>,
+             DecodeRecordOfWidth<4>,
+             DecodeRecordOfWidth<5>,
+             DecodeRecordOfWidth<6>,
+             DecodeRecordOfWidth<7>,
+             DecodeRecordOfWidth<8>};
+        DECODE_RECORDS[width](record, rescale, center, mean, out);
+    }
+
+  private:
+    // ScalarComputer::PackRecord for one width
+    template <uint32_t WIDTH>
+    static void PackRecordOfWidth(
+        const uint8_t* PDX_RESTRICT levels,
+        uint8_t* PDX_RESTRICT record
+    ) {
+        const __m512i all_levels = _mm512_loadu_si512(levels);
+        if constexpr (WIDTH == 8) {
+            _mm512_storeu_si512(record, all_levels);
+            return;
+        }
+        if constexpr ((WIDTH & 4u) != 0) {
+            const __m256i bytes = _mm256_or_si256(
+                _mm256_and_si256(_mm512_castsi512_si256(all_levels), _mm256_set1_epi8(0x0F)),
+                _mm256_and_si256(
+                    _mm256_slli_epi16(_mm512_extracti64x4_epi64(all_levels, 1), 4),
+                    _mm256_set1_epi8(static_cast<char>(0xF0))
+                )
+            );
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(record), bytes);
+            record += 32;
+        }
+        if constexpr ((WIDTH & 2u) != 0) {
+            constexpr int SHIFT = (WIDTH & 4u) != 0 ? 4 : 0;
+            const __m512i parts =
+                _mm512_and_si512(_mm512_srli_epi16(all_levels, SHIFT), _mm512_set1_epi8(3));
+            const __m128i bytes = _mm_or_si128(
+                _mm_or_si128(
+                    _mm512_castsi512_si128(parts),
+                    _mm_slli_epi16(_mm512_extracti32x4_epi32(parts, 1), 2)
+                ),
+                _mm_or_si128(
+                    _mm_slli_epi16(_mm512_extracti32x4_epi32(parts, 2), 4),
+                    _mm_slli_epi16(_mm512_extracti32x4_epi32(parts, 3), 6)
+                )
+            );
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(record), bytes);
+            record += 16;
+        }
+        if constexpr ((WIDTH & 1u) != 0) {
+            const uint64_t bits = _mm512_test_epi8_mask(
+                all_levels, _mm512_set1_epi8(static_cast<char>(1u << (WIDTH - 1)))
+            );
+            std::memcpy(record, &bits, sizeof(bits));
+        }
+    }
+
+    // ScalarComputer::DecodeRecord for one width and a whole chunk, levels widened in registers
+    template <uint32_t WIDTH>
+    static void DecodeRecordOfWidth(
+        const uint8_t* PDX_RESTRICT record,
+        float rescale,
+        float center,
+        const float* PDX_RESTRICT mean,
+        float* PDX_RESTRICT out
+    ) {
+        const __m512i levels = LevelUnpacker<WIDTH>{}(record);
+        const __m512 rescale_vec = _mm512_set1_ps(rescale);
+        const __m512 center_vec = _mm512_set1_ps(center);
+        const __m128i quarters[4] = {
+            _mm512_castsi512_si128(levels),
+            _mm512_extracti32x4_epi32(levels, 1),
+            _mm512_extracti32x4_epi32(levels, 2),
+            _mm512_extracti32x4_epi32(levels, 3)
+        };
+        for (size_t quarter = 0; quarter < 4; ++quarter) {
+            const __m512 floats = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(quarters[quarter]));
+            _mm512_storeu_ps(
+                out + 16 * quarter,
+                _mm512_fmadd_ps(
+                    _mm512_sub_ps(floats, center_vec),
+                    rescale_vec,
+                    _mm512_loadu_ps(mean + 16 * quarter)
+                )
+            );
+        }
+    }
+
+    // The 64 levels of a WIDTH-bit tail record (ScalarComputer::PackRecord's format), in order
+    template <uint32_t WIDTH>
+    class LevelUnpacker {
+      public:
+        __m512i operator()(const uint8_t* PDX_RESTRICT record) const {
+            if constexpr (WIDTH == 8) {
+                return _mm512_loadu_si512(record);
+            }
+            __m512i levels = _mm512_setzero_si512();
+            if constexpr ((WIDTH & 4u) != 0) {
+                const __m256i bytes = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(record));
+                const __m256i nibble_mask = _mm256_set1_epi8(0x0F);
+                levels = _mm512_inserti64x4(
+                    _mm512_castsi256_si512(_mm256_and_si256(bytes, nibble_mask)),
+                    _mm256_and_si256(_mm256_srli_epi16(bytes, 4), nibble_mask),
+                    1
+                );
+                record += 32;
+            }
+            if constexpr ((WIDTH & 2u) != 0) {
+                constexpr int SHIFT = (WIDTH & 4u) != 0 ? 4 : 0;
+                // Every 128-bit lane gets the 16 bytes; lane i takes their bits 2i and 2i + 1
+                const __m512i bytes =
+                    _mm512_broadcast_i32x4(_mm_loadu_si128(reinterpret_cast<const __m128i*>(record))
+                    );
+                const __m512i parts = _mm512_and_si512(
+                    _mm512_srlv_epi32(
+                        bytes, _mm512_setr_epi32(0, 0, 0, 0, 2, 2, 2, 2, 4, 4, 4, 4, 6, 6, 6, 6)
+                    ),
+                    _mm512_set1_epi8(3)
+                );
+                levels =
+                    _mm512_or_si512(levels, SHIFT != 0 ? _mm512_slli_epi16(parts, SHIFT) : parts);
+                record += 16;
+            }
+            if constexpr ((WIDTH & 1u) != 0) {
+                uint64_t bits;
+                std::memcpy(&bits, record, sizeof(bits));
+                levels = _mm512_or_si512(
+                    levels,
+                    _mm512_maskz_mov_epi8(
+                        _cvtu64_mask64(bits), _mm512_set1_epi8(static_cast<char>(1u << (WIDTH - 1)))
+                    )
+                );
+            }
+            return levels;
+        }
+    };
+
+    // Lane i of the result is the sum of the 16 lanes of dots[i]
+    static __m512i Reduce16(const __m512i* dots) {
+        __m512i pairs[8];
+        __m512i quads[4];
+        for (size_t i = 0; i < 8; ++i) {
+            pairs[i] = _mm512_add_epi32(
+                _mm512_unpacklo_epi32(dots[2 * i], dots[2 * i + 1]),
+                _mm512_unpackhi_epi32(dots[2 * i], dots[2 * i + 1])
+            );
+        }
+        for (size_t i = 0; i < 4; ++i) {
+            quads[i] = _mm512_add_epi32(
+                _mm512_unpacklo_epi64(pairs[2 * i], pairs[2 * i + 1]),
+                _mm512_unpackhi_epi64(pairs[2 * i], pairs[2 * i + 1])
+            );
+        }
+        const __m512i low = _mm512_add_epi32(
+            _mm512_shuffle_i32x4(quads[0], quads[1], _MM_SHUFFLE(2, 0, 2, 0)),
+            _mm512_shuffle_i32x4(quads[0], quads[1], _MM_SHUFFLE(3, 1, 3, 1))
+        );
+        const __m512i high = _mm512_add_epi32(
+            _mm512_shuffle_i32x4(quads[2], quads[3], _MM_SHUFFLE(2, 0, 2, 0)),
+            _mm512_shuffle_i32x4(quads[2], quads[3], _MM_SHUFFLE(3, 1, 3, 1))
+        );
+        return _mm512_add_epi32(
+            _mm512_shuffle_i32x4(low, high, _MM_SHUFFLE(2, 0, 2, 0)),
+            _mm512_shuffle_i32x4(low, high, _MM_SHUFFLE(3, 1, 3, 1))
+        );
+    }
+
+    // Stores keep's surviving lanes at the front of the outputs (all 16 lanes are written),
+    // returns how many survived
+    static size_t Compact16(
+        __mmask16 keep,
+        __m512i positions_in,
+        __m512 estimates_in,
+        __m512 rescales_in,
+        uint32_t* PDX_RESTRICT positions,
+        float* PDX_RESTRICT estimates,
+        float* PDX_RESTRICT rescales
+    ) {
+        _mm512_storeu_si512(positions, _mm512_maskz_compress_epi32(keep, positions_in));
+        _mm512_storeu_ps(estimates, _mm512_maskz_compress_ps(keep, estimates_in));
+        _mm512_storeu_ps(rescales, _mm512_maskz_compress_ps(keep, rescales_in));
+        return static_cast<size_t>(_mm_popcnt_u32(keep));
+    }
+
+    static constexpr size_t NUM_HEAD_GROUPS = SAQ_CHUNK_SIZE / U8_INTERLEAVE_SIZE;
+
+    // The head query's groups of 4 codes, each in every lane
+    static void LoadHeadQuery(
+        const int8_t* PDX_RESTRICT query_codes,
+        __m512i query_groups[NUM_HEAD_GROUPS]
+    ) {
+        for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
+            int32_t group_codes;
+            std::memcpy(
+                &group_codes, query_codes + group_idx * U8_INTERLEAVE_SIZE, sizeof(int32_t)
+            );
+            query_groups[group_idx] = _mm512_set1_epi32(group_codes);
+        }
+    }
+
+    // The head dots of the 16 vectors whose levels start at levels (groups stride vectors apart),
+    // reading only the bytes of valid_levels
+    static __m512i HeadDots16(
+        const uint8_t* PDX_RESTRICT levels,
+        size_t stride,
+        __mmask64 valid_levels,
+        const __m512i query_groups[NUM_HEAD_GROUPS]
+    ) {
+        __m512i dots[4] = {
+            _mm512_setzero_si512(),
+            _mm512_setzero_si512(),
+            _mm512_setzero_si512(),
+            _mm512_setzero_si512()
+        };
+        for (size_t group_idx = 0; group_idx < NUM_HEAD_GROUPS; ++group_idx) {
+            dots[group_idx % 4] = _mm512_dpbusd_epi32(
+                dots[group_idx % 4],
+                _mm512_maskz_loadu_epi8(
+                    valid_levels, levels + group_idx * U8_INTERLEAVE_SIZE * stride
+                ),
+                query_groups[group_idx]
+            );
+        }
+        return _mm512_add_epi32(
+            _mm512_add_epi32(dots[0], dots[1]), _mm512_add_epi32(dots[2], dots[3])
+        );
+    }
+
+    // The dots of 16 tail records with the query chunk, lane l's record at record_of_lane(l)
+    template <uint32_t WIDTH, class RecordOfLane>
+    static __m512i TailDots16(
+        const LevelUnpacker<WIDTH>& unpack,
+        __m512i query,
+        RecordOfLane record_of_lane
+    ) {
+        __m512i dots[16];
+        for (size_t lane = 0; lane < 16; ++lane) {
+            dots[lane] =
+                _mm512_dpbusd_epi32(_mm512_setzero_si512(), unpack(record_of_lane(lane)), query);
+        }
+        return Reduce16(dots);
+    }
+};
+
+template <>
 class SIMDComputer<DistanceMetric::L2SQ, Quantization::U8> {
   public:
     using distance_t = pdx_distance_t<U8>;

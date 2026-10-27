@@ -27,6 +27,9 @@ namespace PDX {
 
 template <PDX::Quantization Q>
 class PDXTreeIndex : public IPDXIndex {
+    // TODO(@lkuffo, mid): Support SAQ in the tree index
+    static_assert(Q != PDX::SAQ, "The tree index has no SAQ clusters");
+
   public:
     using embedding_storage_t = PDX::pdx_data_t<Q>;
     using cluster_t = PDX::Cluster<Q>;
@@ -99,7 +102,9 @@ class PDXTreeIndex : public IPDXIndex {
         config.normalize = index.is_normalized;
 
         // Create pruner and searchers
-        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(d, matrix.get(), &GetAllocator());
+        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
+            d, matrix.values.get(), matrix.rows, &GetAllocator()
+        );
         pruner = owned_pruner.get();
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         top_level_searcher = std::make_unique<PDX::PDXearch<F32>>(index.l0, *pruner);
@@ -1008,7 +1013,12 @@ class PDXTreeIndex : public IPDXIndex {
 
         // Fully removed the dying cluster before reassignment
         ReassignEmbeddings(
-            cluster_indices.get(), cluster_embeddings.get(), n_emb, mesocluster_id, false
+            cluster_indices.get(),
+            cluster_embeddings.get(),
+            raw_embeddings.get(),
+            n_emb,
+            mesocluster_id,
+            false
         );
 
         CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
@@ -1059,13 +1069,16 @@ class PDXTreeIndex : public IPDXIndex {
         }
 
         // Neighbors' rows closer to A or B than to their own centroid, stolen below
-        const auto rows_to_steal = FindNeighborRowsToSteal<Q>(
+        auto rows_to_steal = FindNeighborRowsToSteal<Q>(
             index,
             neighboring_clusters_ids,
             centroid_a.get(),
             centroid_b.get(),
             GetExecutor(),
             GetAllocator()
+        );
+        CapRowsToSteal(
+            rows_to_steal, config.max_cluster_size, group_a_idx.size(), group_b_idx.size()
         );
         const auto [num_stolen_a, num_stolen_b] = CountRowsToSteal(rows_to_steal);
         const size_t count_a = group_a_idx.size() + num_stolen_a;
@@ -1104,12 +1117,19 @@ class PDXTreeIndex : public IPDXIndex {
 
         // Gather group_rest NOW, before the cluster is replaced
         auto float_rest = skmeans::AllocateBuffer<float>(GetAllocator(), group_rest_idx.size() * d);
+        auto encoded_rest =
+            skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), group_rest_idx.size() * d);
         auto ids_rest = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), group_rest_idx.size());
         for (size_t i = 0; i < group_rest_idx.size(); i++) {
             std::memcpy(
                 float_rest.get() + i * d,
                 cluster_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * d,
                 d * sizeof(float)
+            );
+            std::memcpy(
+                encoded_rest.get() + i * d,
+                raw_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * d,
+                d * sizeof(embedding_storage_t)
             );
             ids_rest[i] = cluster.indices[group_rest_idx[i]];
         }
@@ -1211,6 +1231,7 @@ class PDXTreeIndex : public IPDXIndex {
             ReassignEmbeddings(
                 ids_rest.get(),
                 float_rest.get(),
+                encoded_rest.get(),
                 static_cast<uint32_t>(group_rest_idx.size()),
                 mesocluster_id,
                 false
@@ -1339,8 +1360,9 @@ class PDXTreeIndex : public IPDXIndex {
         }
     }
 
-    // Reassign dequantized (float) embeddings to their closest centroid
-    // within the given mesocluster.
+    // Reassign embeddings to their closest centroid within the given mesocluster: the dequantized
+    // (float) ones choose the cluster, and the encoded ones they were decoded from are appended as
+    // they are.
     // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
     // TODO(@lkuffo, med): We can optimize reassignments by doing GEMM+PRUNING for assignments
     // TODO(@lkuffo, high): Same stale-assignments problem as PDXIndex::ReassignEmbeddings (see the
@@ -1349,6 +1371,7 @@ class PDXTreeIndex : public IPDXIndex {
     void ReassignEmbeddings(
         uint32_t* row_ids,
         const float* embeddings,
+        const embedding_storage_t* encoded_embeddings,
         uint32_t num_embeddings,
         uint32_t mesocluster_id,
         bool allow_merges = true
@@ -1411,9 +1434,8 @@ class PDXTreeIndex : public IPDXIndex {
         for (size_t i = 0; i < num_embeddings; i++) {
             uint32_t best_cluster = candidate_ids[assignments[i]];
             uint32_t row_id = row_ids[i];
-            uint32_t new_pos = QuantizeAndAppend<Q>(
-                index, searcher->quantizer, index.clusters[best_cluster], row_id, embeddings + i * d
-            );
+            uint32_t new_pos =
+                index.clusters[best_cluster].AppendEmbedding(row_id, encoded_embeddings + i * d);
             SetRowIdMapping(row_id, best_cluster, new_pos);
             ReserveClusterSlotIfNeeded();
             CheckClusterHealth(index.clusters[best_cluster], allow_merges);
@@ -1423,6 +1445,7 @@ class PDXTreeIndex : public IPDXIndex {
 
 using PDXIndexF32 = PDXIndex<PDX::F32>;
 using PDXIndexU8 = PDXIndex<PDX::U8>;
+using PDXIndexSAQ = PDXIndex<PDX::SAQ>;
 using PDXTreeIndexF32 = PDXTreeIndex<PDX::F32>;
 using PDXTreeIndexU8 = PDXTreeIndex<PDX::U8>;
 
@@ -1440,6 +1463,9 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndex(
         break;
     case PDXIndexType::PDX_U8:
         idx = std::make_unique<PDXIndexU8>();
+        break;
+    case PDXIndexType::PDX_SAQ:
+        idx = std::make_unique<PDXIndexSAQ>();
         break;
     case PDXIndexType::PDX_TREE_F32:
         idx = std::make_unique<PDXTreeIndexF32>();
@@ -1497,6 +1523,9 @@ inline std::unique_ptr<IPDXIndex> LoadPDXIndexFromStream(
         break;
     case PDXIndexType::PDX_U8:
         idx = std::make_unique<PDXIndexU8>(config, pruner);
+        break;
+    case PDXIndexType::PDX_SAQ:
+        idx = std::make_unique<PDXIndexSAQ>(config, pruner);
         break;
     case PDXIndexType::PDX_TREE_F32:
         idx = std::make_unique<PDXTreeIndexF32>(config, pruner);

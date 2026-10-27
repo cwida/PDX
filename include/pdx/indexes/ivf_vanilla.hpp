@@ -206,10 +206,12 @@ class PDXIndex : public IPDXIndex {
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
-        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
-            config.num_dimensions, config.seed, config.allocator
-        );
-        pruner = owned_pruner.get();
+        if constexpr (Q != SAQ) {
+            owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
+                config.num_dimensions, config.seed, config.allocator
+            );
+            pruner = owned_pruner.get();
+        }
         row_id_cluster_mapping.base_row_id = config.base_row_id;
     }
 
@@ -220,6 +222,24 @@ class PDXIndex : public IPDXIndex {
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
         row_id_cluster_mapping.base_row_id = config.base_row_id;
+    }
+
+    // For DuckIR: indexes that share one SAQ fit, its rotation in the pruner and its model
+    PDXIndex(
+        PDXIndexConfig config,
+        PDX::ADSamplingPruner& external_pruner,
+        const PDX::SAQModel& saq_model
+    )
+        : PDXIndex(config, external_pruner) {
+        static_assert(Q == SAQ, "Only SAQ indexes take an SAQ model");
+        if (external_pruner.GetMatrix().rows() != config.num_dimensions ||
+            saq_model.num_dimensions != config.num_dimensions) {
+            throw std::invalid_argument(
+                "PDXIndex: an SAQ index needs the fit's dense rotation and a model of its "
+                "dimensions"
+            );
+        }
+        index.saq_model = saq_model;
     }
 
     void Save(const std::string& path) override {
@@ -246,7 +266,7 @@ class PDXIndex : public IPDXIndex {
 
         // Create pruner and searcher
         owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
-            index.num_dimensions, matrix.get(), &GetAllocator()
+            index.num_dimensions, matrix.values.get(), matrix.rows, &GetAllocator()
         );
         pruner = owned_pruner.get();
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
@@ -479,6 +499,7 @@ class PDXIndex : public IPDXIndex {
         const float* const embeddings,
         const size_t num_embeddings
     ) {
+        PDX_PROFILE_SCOPE("BuildIndex");
         config.ValidateNumEmbeddings(num_embeddings);
         skmeans::ParallelSection parallel_section(GetExecutor());
         const IVFUtils ivf_utils(GetExecutor(), &GetAllocator());
@@ -492,14 +513,28 @@ class PDXIndex : public IPDXIndex {
             config.normalize || DistanceMetricRequiresNormalization(config.distance_metric);
 
         assert(num_embeddings > 0);
-        assert(pruner);
 
+        if constexpr (Q == PDX::SAQ) {
+            const bool fits_saq = !config.is_data_transformed && (!pruner || owned_pruner);
+            if (!fits_saq && index.saq_model.num_dimensions == 0) {
+                throw std::invalid_argument(
+                    "BuildIndex: an SAQ index on a shared pruner or on transformed data needs the "
+                    "shared fit's model"
+                );
+            }
+        }
         skmeans::AllocatedBuffer<float> transformed;
         if (!config.is_data_transformed) {
-            transformed = ivf_utils.NormalizeAndRotate(
-                embeddings, num_embeddings, num_dimensions, normalize, *pruner
-            );
+            // NOLINTNEXTLINE(bugprone-branch-clone)
+            if constexpr (Q == PDX::SAQ) {
+                transformed = FitSAQAndRotate(ivf_utils, embeddings, num_embeddings, normalize);
+            } else {
+                transformed = ivf_utils.NormalizeAndRotate(
+                    embeddings, num_embeddings, num_dimensions, normalize, *pruner
+                );
+            }
         }
+        assert(pruner);
         const float* preprocessed = config.is_data_transformed ? embeddings : transformed.get();
 
         float quantization_base = 0.0f;
@@ -520,6 +555,17 @@ class PDXIndex : public IPDXIndex {
                 quantization_base,
                 config.centroid_quantization
             );
+        } else if constexpr (Q == PDX::SAQ) {
+            PDX::SAQModel saq_model = std::move(index.saq_model);
+            index = PDX::IVF<Q>(
+                num_dimensions,
+                num_embeddings,
+                num_clusters,
+                normalize,
+                config.centroid_quantization
+            );
+            index.saq_model = std::move(saq_model);
+            index.saq_chunk_epsilons.reset(new float[index.saq_model.num_chunks]);
         } else {
             index = PDX::IVF<Q>(
                 num_dimensions,
@@ -541,7 +587,9 @@ class PDXIndex : public IPDXIndex {
             config.normalize,
             config.sampling_fraction,
             config.kmeans_iters,
-            config.hierarchical_indexing
+            config.hierarchical_indexing,
+            // SuperKMeans' pruning needs a random rotation, and SAQ's starts with a PCA
+            /*use_superkmeans_pruning=*/Q != PDX::SAQ
         );
         if (config.max_cluster_size > 0) {
             ivf_utils.SplitClustersAboveMaxClusterSize(
@@ -551,7 +599,8 @@ class PDXIndex : public IPDXIndex {
                 config.max_cluster_size,
                 config.distance_metric,
                 config.seed,
-                config.normalize
+                config.normalize,
+                /*use_superkmeans_pruning=*/Q != PDX::SAQ
             );
             num_clusters = static_cast<uint32_t>(kmeans_result.assignments.size());
             index.num_clusters = num_clusters;
@@ -570,6 +619,11 @@ class PDXIndex : public IPDXIndex {
             config.max_cluster_size,
             config.expect_appends
         );
+        if constexpr (Q == PDX::SAQ) {
+            CalibrateSAQPruningBoundOnSample(
+                ivf_utils, row_ids, preprocessed, num_embeddings, /*is_data_transformed=*/true
+            );
+        }
 
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
         BuildRowIdClusterMapping();
@@ -690,12 +744,188 @@ class PDXIndex : public IPDXIndex {
         index.ComputeClusterOffsets();
     }
 
+    // For DuckIR: recalibrates the SAQ pruning bound on rows of this index, taken as BulkAppend
+    // takes them (e.g. once its row group stops receiving appends)
+    void CalibratePruningBound(
+        const size_t* row_ids,
+        const float* embeddings,
+        const size_t num_embeddings
+    ) {
+        static_assert(Q == SAQ, "Only SAQ indexes calibrate a pruning bound");
+        if (num_embeddings == 0) {
+            throw std::invalid_argument("CalibratePruningBound: no rows to calibrate on");
+        }
+        if (index.num_clusters == 0) {
+            throw std::logic_error("CalibratePruningBound: the index is not built");
+        }
+        if (searcher->cluster_source) {
+            throw std::logic_error(
+                "CalibratePruningBound: the index was loaded without its clusters' data"
+            );
+        }
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        CalibrateSAQPruningBoundOnSample(
+            IVFUtils(GetExecutor(), &GetAllocator()),
+            row_ids,
+            embeddings,
+            num_embeddings,
+            config.is_data_transformed
+        );
+    }
+
+    // Recalibrates the SAQ pruning bound on up to SAQ_CALIBRATION_QUERIES live rows sampled from
+    // this index and decoded from their codes, for a caller that does not hold the rows
+    void CalibratePruningBound() {
+        static_assert(Q == SAQ, "Only SAQ indexes calibrate a pruning bound");
+        if (index.num_clusters == 0) {
+            throw std::logic_error("CalibratePruningBound: the index is not built");
+        }
+        if (searcher->cluster_source) {
+            throw std::logic_error(
+                "CalibratePruningBound: the index was loaded without its clusters' data"
+            );
+        }
+        const std::vector<size_t> sampled_row_ids = SampleLiveRowIds(SAQ_CALIBRATION_QUERIES);
+        if (sampled_row_ids.empty()) {
+            throw std::logic_error("CalibratePruningBound: the index holds no rows");
+        }
+        auto decoded_embeddings = skmeans::AllocateBuffer<float>(
+            GetAllocator(), sampled_row_ids.size() * index.num_dimensions
+        );
+        GetEmbeddingsFromIndexByRowIds(sampled_row_ids, decoded_embeddings.get());
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        CalibrateSAQPruningBoundOnSample(
+            IVFUtils(GetExecutor(), &GetAllocator()),
+            sampled_row_ids.data(),
+            decoded_embeddings.get(),
+            sampled_row_ids.size(),
+            /*is_data_transformed=*/true
+        );
+    }
+
   private:
     static constexpr PDXIndexType GetIndexType() {
         if constexpr (Q == F32)
             return PDXIndexType::PDX_F32;
-        else
+        else if constexpr (Q == U8)
             return PDXIndexType::PDX_U8;
+        else
+            return PDXIndexType::PDX_SAQ;
+    }
+
+    // A standalone SAQ index fits on its embeddings, and the fit's rotation becomes its pruner.
+    // An index on a shared fit only rotates them.
+    skmeans::AllocatedBuffer<float> FitSAQAndRotate(
+        const IVFUtils& ivf_utils,
+        const float* embeddings,
+        size_t num_embeddings,
+        bool normalize
+    ) {
+        PDX_PROFILE_SCOPE("BuildIndex/FitSAQAndRotate");
+        const uint32_t num_dimensions = config.num_dimensions;
+        if (pruner && !owned_pruner) {
+            return ivf_utils.NormalizeAndRotate(
+                embeddings, num_embeddings, num_dimensions, normalize, *pruner
+            );
+        }
+        skmeans::AllocatedBuffer<float> normalized;
+        if (normalize) {
+            normalized = ivf_utils.Normalize(embeddings, num_embeddings, num_dimensions);
+        }
+        const float* fit_input = normalize ? normalized.get() : embeddings;
+        PDX::SAQFit fit = PDX::SAQQuantizer::Fit(
+            fit_input,
+            num_embeddings,
+            num_dimensions,
+            config.saq_bits_per_dimension,
+            config.seed,
+            GetExecutor(),
+            GetAllocator()
+        );
+        owned_pruner = std::make_unique<PDX::ADSamplingPruner>(
+            num_dimensions, fit.rotation.get(), num_dimensions, &GetAllocator()
+        );
+        pruner = owned_pruner.get();
+        index.saq_model = std::move(fit.model);
+        return ivf_utils.NormalizeAndRotate(
+            fit_input, num_embeddings, num_dimensions, /*normalize=*/false, *pruner
+        );
+    }
+
+    // The row ids of up to max_rows live rows, a uniform sample drawn with the config's seed in one
+    // pass over the clusters: each live row is picked with probability rows still to pick / live
+    // rows left
+    std::vector<size_t> SampleLiveRowIds(const size_t max_rows) const {
+        size_t live_rows_left = 0;
+        for (uint32_t cluster_id = 0; cluster_id < index.num_clusters; ++cluster_id) {
+            const auto& cluster = index.clusters[cluster_id];
+            live_rows_left += cluster.used_capacity - cluster.tombstones.size();
+        }
+        size_t rows_to_pick = std::min(max_rows, live_rows_left);
+        std::vector<size_t> sampled_row_ids;
+        sampled_row_ids.reserve(rows_to_pick);
+        std::mt19937 generator(config.seed);
+        for (uint32_t cluster_id = 0; cluster_id < index.num_clusters && rows_to_pick > 0;
+             ++cluster_id) {
+            const auto& cluster = index.clusters[cluster_id];
+            for (uint32_t position = 0; position < cluster.used_capacity && rows_to_pick > 0;
+                 ++position) {
+                if (cluster.HasTombstone(position)) {
+                    continue;
+                }
+                std::uniform_int_distribution<size_t> pick(0, live_rows_left - 1);
+                if (pick(generator) < rows_to_pick) {
+                    sampled_row_ids.push_back(cluster.indices[position]);
+                    --rows_to_pick;
+                }
+                --live_rows_left;
+            }
+        }
+        return sampled_row_ids;
+    }
+
+    // Calibrates the SAQ pruning bound on up to SAQ_CALIBRATION_QUERIES of these rows of the index,
+    // sampled with the config's seed and transformed unless they already are
+    void CalibrateSAQPruningBoundOnSample(
+        const IVFUtils& ivf_utils,
+        const size_t* row_ids,
+        const float* embeddings,
+        size_t num_embeddings,
+        bool is_data_transformed
+    ) {
+        const uint32_t num_dimensions = index.num_dimensions;
+        const size_t num_pseudo_queries = std::min(num_embeddings, SAQ_CALIBRATION_QUERIES);
+        auto positions = skmeans::AllocateBuffer<size_t>(GetAllocator(), num_embeddings);
+        std::iota(positions.get(), positions.get() + num_embeddings, size_t{0});
+        std::mt19937 generator(config.seed);
+        for (size_t i = 0; i < num_pseudo_queries; ++i) {
+            std::uniform_int_distribution<size_t> pick(i, num_embeddings - 1);
+            std::swap(positions[i], positions[pick(generator)]);
+        }
+        auto sample =
+            skmeans::AllocateBuffer<float>(GetAllocator(), num_pseudo_queries * num_dimensions);
+        std::unique_ptr<size_t[]> sample_row_ids(new size_t[num_pseudo_queries]);
+        for (size_t i = 0; i < num_pseudo_queries; ++i) {
+            std::memcpy(
+                sample.get() + i * num_dimensions,
+                embeddings + positions[i] * num_dimensions,
+                num_dimensions * sizeof(float)
+            );
+            sample_row_ids[i] = row_ids[positions[i]];
+        }
+        skmeans::AllocatedBuffer<float> transformed;
+        if (!is_data_transformed) {
+            transformed = ivf_utils.NormalizeAndRotate(
+                sample.get(), num_pseudo_queries, num_dimensions, index.is_normalized, *pruner
+            );
+        }
+        ivf_utils.CalibrateSAQPruningBound(
+            index,
+            is_data_transformed ? sample.get() : transformed.get(),
+            sample_row_ids.get(),
+            num_pseudo_queries,
+            config.saq_pruning_significance
+        );
     }
 
     void SetRowIdMapping(uint32_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {
@@ -853,7 +1083,9 @@ class PDXIndex : public IPDXIndex {
         index.ComputeClusterOffsets();
 
         // Fully removed the dying cluster before reassignment
-        ReassignEmbeddings(cluster_indices.get(), cluster_embeddings.get(), n_emb, false);
+        ReassignEmbeddings(
+            cluster_indices.get(), cluster_embeddings.get(), raw_embeddings.get(), n_emb, false
+        );
     }
 
     // Assumes cluster is compacted and has no tombstones
@@ -899,7 +1131,7 @@ class PDXIndex : public IPDXIndex {
         }
 
         // Neighbors' rows closer to A or B than to their own centroid, stolen below
-        const auto rows_to_steal = FindNeighborRowsToSteal<Q>(
+        auto rows_to_steal = FindNeighborRowsToSteal<Q>(
             index,
             neighboring_clusters_ids,
             centroid_a.get(),
@@ -907,13 +1139,21 @@ class PDXIndex : public IPDXIndex {
             GetExecutor(),
             GetAllocator()
         );
+        CapRowsToSteal(
+            rows_to_steal, config.max_cluster_size, group_a_idx.size(), group_b_idx.size()
+        );
         const auto [num_stolen_a, num_stolen_b] = CountRowsToSteal(rows_to_steal);
         const size_t count_a = group_a_idx.size() + num_stolen_a;
         const size_t count_b = group_b_idx.size() + num_stolen_b;
 
         // Gather embeddings and IDs, accumulate centroid sums
-        auto embs_a = skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_a * d);
-        auto embs_b = skmeans::AllocateBuffer<embedding_storage_t>(GetAllocator(), count_b * d);
+        const size_t values_per_embedding = index.GetValuesPerEmbedding();
+        auto embs_a = skmeans::AllocateBuffer<embedding_storage_t>(
+            GetAllocator(), count_a * values_per_embedding
+        );
+        auto embs_b = skmeans::AllocateBuffer<embedding_storage_t>(
+            GetAllocator(), count_b * values_per_embedding
+        );
         auto ids_a = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_a);
         auto ids_b = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_b);
         auto centroid_sum_a = std::make_unique<float[]>(d); // zero-init needed
@@ -944,12 +1184,21 @@ class PDXIndex : public IPDXIndex {
 
         // Gather group_rest NOW, before the cluster is replaced
         auto float_rest = skmeans::AllocateBuffer<float>(GetAllocator(), group_rest_idx.size() * d);
+        auto encoded_rest = skmeans::AllocateBuffer<embedding_storage_t>(
+            GetAllocator(), group_rest_idx.size() * values_per_embedding
+        );
         auto ids_rest = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), group_rest_idx.size());
         for (size_t i = 0; i < group_rest_idx.size(); i++) {
             std::memcpy(
                 float_rest.get() + i * d,
                 cluster_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * d,
                 d * sizeof(float)
+            );
+            std::memcpy(
+                encoded_rest.get() + i * values_per_embedding,
+                raw_embeddings.get() +
+                    static_cast<size_t>(group_rest_idx[i]) * values_per_embedding,
+                values_per_embedding * sizeof(embedding_storage_t)
             );
             ids_rest[i] = cluster.indices[group_rest_idx[i]];
         }
@@ -959,10 +1208,10 @@ class PDXIndex : public IPDXIndex {
             index,
             neighboring_clusters_ids,
             rows_to_steal,
-            embs_a.get() + group_a_idx.size() * d,
+            embs_a.get() + group_a_idx.size() * values_per_embedding,
             ids_a.get() + group_a_idx.size(),
             centroid_sum_a.get(),
-            embs_b.get() + group_b_idx.size() * d,
+            embs_b.get() + group_b_idx.size() * values_per_embedding,
             ids_b.get() + group_b_idx.size(),
             centroid_sum_b.get()
         );
@@ -993,9 +1242,13 @@ class PDXIndex : public IPDXIndex {
         // Create new clusters and update all data structures
         {
             PDX_PROFILE_SCOPE("Split/ConsolidateNewClusters");
+            const ClusterFormat<Q> cluster_format = index.GetClusterFormat();
             const auto size_a = static_cast<uint32_t>(count_a);
             cluster_t new_cluster_a(
-                size_a, cluster_t::CapacityFor(size_a, config.max_cluster_size), d, &GetAllocator()
+                size_a,
+                cluster_t::CapacityFor(size_a, config.max_cluster_size),
+                cluster_format,
+                &GetAllocator()
             );
             new_cluster_a.id = cluster_id;
             if (count_a > 0) {
@@ -1005,7 +1258,10 @@ class PDXIndex : public IPDXIndex {
             uint32_t new_cluster_b_id = index.num_clusters;
             const auto size_b = static_cast<uint32_t>(count_b);
             cluster_t new_cluster_b(
-                size_b, cluster_t::CapacityFor(size_b, config.max_cluster_size), d, &GetAllocator()
+                size_b,
+                cluster_t::CapacityFor(size_b, config.max_cluster_size),
+                cluster_format,
+                &GetAllocator()
             );
             new_cluster_b.id = new_cluster_b_id;
             if (count_b > 0) {
@@ -1042,6 +1298,7 @@ class PDXIndex : public IPDXIndex {
             ReassignEmbeddings(
                 ids_rest.get(),
                 float_rest.get(),
+                encoded_rest.get(),
                 static_cast<uint32_t>(group_rest_idx.size()),
                 false,
                 &rest_candidates
@@ -1165,9 +1422,10 @@ class PDXIndex : public IPDXIndex {
         }
     }
 
-    // Reassign dequantized (float) embeddings to their closest centroid among candidate_cluster_ids
-    // (all clusters when null).
-    // allow_merges: passed to CheckClusterHealth — false suppresses merge cascades.
+    // Reassign embeddings to their closest centroid among candidate_cluster_ids (all clusters when
+    // null): the dequantized (float) ones choose the cluster, and the encoded ones they were
+    // decoded from are appended as they are. allow_merges: passed to CheckClusterHealth — false
+    // suppresses merge cascades.
     // TODO(@lkuffo, med): We can optimize reassignments by doing GEMM+PRUNING for assignments
     // TODO(@lkuffo, high): The assignments are computed once, against the centroids at loop start.
     // A split or merge run by CheckClusterHealth inside the loop restructures the clusters (a merge
@@ -1178,6 +1436,7 @@ class PDXIndex : public IPDXIndex {
     void ReassignEmbeddings(
         const uint32_t* row_ids,
         const float* embeddings,
+        const embedding_storage_t* encoded_embeddings,
         uint32_t num_embeddings,
         bool allow_merges = true,
         const std::vector<uint32_t>* candidate_cluster_ids = nullptr
@@ -1234,13 +1493,14 @@ class PDXIndex : public IPDXIndex {
             tmp_distances_buf.get()
         );
 
+        const size_t values_per_embedding = index.GetValuesPerEmbedding();
         for (size_t i = 0; i < num_embeddings; i++) {
             const uint32_t best_cluster = candidate_cluster_ids != nullptr
                                               ? (*candidate_cluster_ids)[assignments[i]]
                                               : assignments[i];
             uint32_t row_id = row_ids[i];
-            uint32_t new_pos = QuantizeAndAppend<Q>(
-                index, searcher->quantizer, index.clusters[best_cluster], row_id, embeddings + i * d
+            uint32_t new_pos = index.clusters[best_cluster].AppendEmbedding(
+                row_id, encoded_embeddings + i * values_per_embedding
             );
             SetRowIdMapping(row_id, best_cluster, new_pos);
             ReserveClusterSlotIfNeeded();

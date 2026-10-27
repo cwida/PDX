@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <gtest/gtest.h>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <random>
 #include <string>
@@ -17,6 +18,16 @@
 namespace {
 
 static constexpr size_t D = 128;
+
+// The least exhaustive recall of each index type over the shared heap's partitions
+const std::map<std::string, float> SHARED_HEAP_MIN_RECALL = {
+    {"pdx_f32", 0.9f},
+    {"pdx_u8", 0.9f},
+    {"pdx_tree_f32", 0.9f},
+    {"pdx_tree_u8", 0.9f},
+    {"pdx_saq3", 0.40f},
+    {"pdx_saq4", 0.70f},
+};
 static constexpr size_t N_QUERIES = 20;
 
 template <typename T>
@@ -34,6 +45,8 @@ void ForIndexType(const std::string& index_type, F&& f) {
         f(Tag<PDX::PDXTreeIndexF32>{});
     } else if (index_type == "pdx_tree_u8") {
         f(Tag<PDX::PDXTreeIndexU8>{});
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        f(Tag<PDX::PDXIndexSAQ>{});
     } else {
         FAIL() << "Unknown index type: " << index_type;
     }
@@ -346,6 +359,8 @@ void RunSharedHeapAcrossPartitions() {
         .sampling_fraction = 1.0f,
         .hierarchical_indexing = true,
     };
+    config.saq_bits_per_dimension =
+        TestUtils::GetSAQBitsPerDimension(::testing::WithParamInterface<std::string>::GetParam());
     std::vector<std::unique_ptr<IndexT>> parts;
     parts.reserve(N_PARTS);
     for (size_t p = 0; p < N_PARTS; ++p) {
@@ -401,7 +416,10 @@ void RunSharedHeapAcrossPartitions() {
         ASSERT_EQ(results.size(), TestUtils::KNN);
         total_recall += TestUtils::ComputeRecall(results, gt.indices[q], TestUtils::KNN);
     }
-    EXPECT_GE(total_recall / static_cast<float>(N_QUERIES), 0.9f);
+    EXPECT_GE(
+        total_recall / static_cast<float>(N_QUERIES),
+        SHARED_HEAP_MIN_RECALL.at(::testing::WithParamInterface<std::string>::GetParam())
+    );
 }
 
 TEST_P(IterativeSearchTest, SharedHeapAcrossPartitionsMatchesBruteForce) {
@@ -484,7 +502,7 @@ TEST_P(IterativeSearchTest, NProbeOneProbesExactlyOneCluster) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     IterativeSearchTest,
-    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 
@@ -519,7 +537,7 @@ TEST_P(VanillaIterativeSearchTest, SplitProbeBudgetMatchesSingleShotNProbe) {
 INSTANTIATE_TEST_SUITE_P(
     VanillaIndexTypes,
     VanillaIterativeSearchTest,
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

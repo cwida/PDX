@@ -22,7 +22,8 @@ void RunBenchmark(
     const std::string& algorithm,
     const float* data,
     const float* queries,
-    const std::vector<size_t>& nprobes_to_use
+    const std::vector<size_t>& nprobes_to_use,
+    const uint32_t saq_bits_per_dimension = PDX::PDXIndexConfig{}.saq_bits_per_dimension
 ) {
     const size_t d = info.num_dimensions;
     const size_t n = info.num_embeddings;
@@ -38,6 +39,7 @@ void RunBenchmark(
         .normalize = true,
         .sampling_fraction = 1.0f
     };
+    index_config.saq_bits_per_dimension = saq_bits_per_dimension;
 
     std::cout << "Building index (num_clusters=auto)...\n";
     auto build_start = std::chrono::high_resolution_clock::now();
@@ -128,7 +130,8 @@ void RunBenchmark(
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe]\n";
-        std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, "
+                     "pdx_saq4\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {
             std::cerr << " " << name;
@@ -205,9 +208,20 @@ int main(int argc, char* argv[]) {
         RunBenchmark<PDX::PDXTreeIndexU8>(
             info, dataset, algorithm, data.data(), queries.data(), nprobes_to_use
         );
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        RunBenchmark<PDX::PDXIndexSAQ>(
+            info,
+            dataset,
+            algorithm,
+            data.data(),
+            queries.data(),
+            nprobes_to_use,
+            index_type == "pdx_saq3" ? 3 : 4
+        );
     } else {
         std::cerr << "Unknown index type: " << index_type << "\n";
-        std::cerr << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr
+            << "Valid types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4\n";
         return 1;
     }
 

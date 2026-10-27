@@ -76,7 +76,7 @@ TEST_P(ExecutorTest, SerialAndThreadedBuildsMatch) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     ExecutorTest,
-    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

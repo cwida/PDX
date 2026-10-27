@@ -296,8 +296,9 @@ class FlatIndex : public IPDXIndex {
         config.num_dimensions = index.num_dimensions;
         config.normalize = index.is_normalized;
 
-        owned_pruner =
-            std::make_unique<ADSamplingPruner>(index.num_dimensions, matrix.get(), &GetAllocator());
+        owned_pruner = std::make_unique<ADSamplingPruner>(
+            index.num_dimensions, matrix.values.get(), matrix.rows, &GetAllocator()
+        );
         pruner = owned_pruner.get();
         searcher = std::make_unique<FlatSearcher>(index, *pruner);
         BuildRowIdClusterMapping();

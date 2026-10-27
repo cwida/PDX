@@ -61,7 +61,8 @@ static IterativeRun RunIterative(
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <dataset> [index_type] [nprobe] [selectivity]\n";
-        std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr << "Index types: pdx_f32 (default), pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, "
+                     "pdx_saq4\n";
         std::cerr << "Selectivity: 0_99, 0_5, 0_1, ...\n";
         std::cerr << "Available datasets:";
         for (const auto& [name, _] : RAW_DATASET_PARAMS) {

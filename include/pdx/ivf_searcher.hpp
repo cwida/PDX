@@ -641,6 +641,195 @@ class PDXearch {
         }
     }
 
+    // The SAQ scan of a cluster while the heap holds fewer than k: every vector's estimate over all
+    // of its chunks, then the live (and passing) ones into the heap. Filtered clusters with fewer
+    // than SAQ_PRUNING_START_MAX_PASSING_FRACTION passing take SAQPrune instead
+    template <bool FILTERED = false>
+    void SAQStart(
+        const data_t* data,
+        const size_t n_vectors,
+        const size_t buffer_stride,
+        uint32_t k,
+        const uint32_t* vector_indices,
+        const SAQQuery& saq_query,
+        uint32_t* pruning_positions,
+        distance_t* pruning_distances,
+        TopKHeap& top_k_heap,
+        const tombstones_t& tombstones,
+        const uint8_t* selection_vector = nullptr
+    ) {
+        if (n_vectors == 0) {
+            return;
+        }
+        ComputeSAQEstimates(
+            data, n_vectors, buffer_stride, pdx_data.saq_model, saq_query, pruning_distances
+        );
+        MaskDistancesWithTombstones(tombstones, pruning_distances);
+        size_t n_candidates = 0;
+        InitPositionsArray<FILTERED>(
+            n_vectors,
+            n_candidates,
+            pruning_positions,
+            std::numeric_limits<distance_t>::max() / 2,
+            pruning_distances,
+            selection_vector
+        );
+        auto lock = top_k_heap.GetLock();
+        MergeIntoHeap(
+            vector_indices, n_candidates, k, pruning_positions, pruning_distances, top_k_heap
+        );
+        top_k_heap.PublishKthDistance(k);
+    }
+
+    // The SAQ scan of a cluster once the heap holds k: the head of every vector, then each tail
+    // chunk for the survivors, kept below the k-th distance plus the chunk's margin
+    void SAQPrune(
+        const data_t* data,
+        const size_t n_vectors,
+        const size_t buffer_stride,
+        uint32_t k,
+        const uint32_t* vector_indices,
+        const SAQQuery& saq_query,
+        const float* chunk_margins,
+        uint32_t* pruning_positions,
+        distance_t* pruning_distances,
+        float* pruning_rescales,
+        TopKHeap& top_k_heap,
+        const tombstones_t& tombstones,
+        const uint8_t* selection_vector = nullptr,
+        uint32_t passing_tuples = 0
+    ) {
+        if (n_vectors == 0) {
+            return;
+        }
+        const SAQModel& model = pdx_data.saq_model;
+        const float kth_distance = top_k_heap.kth_distance.load(std::memory_order_relaxed);
+        const auto chunk_threshold = [&](uint32_t chunk_idx) {
+            return chunk_idx + 1 == model.num_chunks ? kth_distance
+                                                     : kth_distance + chunk_margins[chunk_idx];
+        };
+        const auto* rescales = reinterpret_cast<const uint16_t*>(
+            data + buffer_stride * model.chunk_record_offsets[model.num_chunks]
+        );
+        const int8_t* query_codes = saq_query.GetCodesPtr();
+        const float* dot_scales = saq_query.GetChunkDotScalesPtr();
+        const float* dot_offsets = saq_query.GetChunkDotOffsetsPtr();
+        size_t n_survivors = 0;
+        if (!model.HasPDXU8Head()) {
+            const uint16_t* residual_norms = rescales + model.num_segments * buffer_stride;
+            if (selection_vector != nullptr) {
+                InitPositionsArrayFromSelectionVector(
+                    n_vectors, n_survivors, pruning_positions, selection_vector
+                );
+                StartSAQEstimatesPruning(
+                    residual_norms,
+                    pruning_positions,
+                    n_survivors,
+                    saq_query.GetResidualSquaredNorm(),
+                    pruning_distances
+                );
+            } else {
+                std::iota(pruning_positions, pruning_positions + n_vectors, 0u);
+                n_survivors = n_vectors;
+                StartSAQEstimates(
+                    residual_norms, n_vectors, saq_query.GetResidualSquaredNorm(), pruning_distances
+                );
+            }
+            n_survivors = distance_computer_t::GetScanTail(model.chunk_widths[0])(
+                data,
+                query_codes,
+                dot_scales[0],
+                dot_offsets[0],
+                rescales,
+                chunk_threshold(0),
+                pruning_positions,
+                pruning_distances,
+                pruning_rescales,
+                n_survivors
+            );
+        } else if (selection_vector != nullptr &&
+                   static_cast<float>(passing_tuples) <
+                       SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION * static_cast<float>(n_vectors)) {
+            InitPositionsArrayFromSelectionVector(
+                n_vectors, n_survivors, pruning_positions, selection_vector
+            );
+            n_survivors = distance_computer_t::ScanHeadPruning(
+                data,
+                buffer_stride,
+                query_codes,
+                dot_scales[0],
+                dot_offsets[0],
+                saq_query.GetResidualSquaredNorm(),
+                rescales,
+                rescales + model.num_segments * buffer_stride,
+                chunk_threshold(0),
+                pruning_positions,
+                pruning_distances,
+                pruning_rescales,
+                n_survivors
+            );
+        } else {
+            n_survivors = distance_computer_t::ScanHead(
+                data,
+                n_vectors,
+                buffer_stride,
+                query_codes,
+                dot_scales[0],
+                dot_offsets[0],
+                saq_query.GetResidualSquaredNorm(),
+                rescales,
+                rescales + model.num_segments * buffer_stride,
+                selection_vector,
+                chunk_threshold(0),
+                pruning_positions,
+                pruning_distances,
+                pruning_rescales
+            );
+        }
+        uint32_t segment_idx = model.chunk_segments[0];
+        for (uint32_t chunk_idx = 1; chunk_idx < model.num_chunks && n_survivors > 0; ++chunk_idx) {
+            const uint16_t* segment_rescales = nullptr;
+            if (model.chunk_segments[chunk_idx] != segment_idx) {
+                segment_idx = model.chunk_segments[chunk_idx];
+                segment_rescales = rescales + segment_idx * buffer_stride;
+            }
+            n_survivors = distance_computer_t::GetScanTail(model.chunk_widths[chunk_idx])(
+                data + buffer_stride * model.chunk_record_offsets[chunk_idx],
+                query_codes + static_cast<size_t>(chunk_idx) * SAQ_CHUNK_SIZE,
+                dot_scales[chunk_idx],
+                dot_offsets[chunk_idx],
+                segment_rescales,
+                chunk_threshold(chunk_idx),
+                pruning_positions,
+                pruning_distances,
+                pruning_rescales,
+                n_survivors
+            );
+        }
+        if (n_survivors == 0) {
+            return;
+        }
+        auto lock = top_k_heap.GetLock();
+        Heap& heap = top_k_heap.heap;
+        for (size_t survivor_idx = 0; survivor_idx < n_survivors; ++survivor_idx) {
+            const uint32_t position = pruning_positions[survivor_idx];
+            if (!tombstones.empty() && tombstones.count(position) != 0) {
+                continue;
+            }
+            const float distance = pruning_distances[survivor_idx];
+            if (heap.size() < k || distance < heap.top().distance) {
+                KNNCandidate embedding{};
+                embedding.distance = distance;
+                embedding.index = vector_indices[position];
+                if (heap.size() >= k) {
+                    heap.pop();
+                }
+                heap.push(embedding);
+            }
+        }
+        top_k_heap.PublishKthDistance(k);
+    }
+
     void GetClustersAccessOrderRandom() {
         std::iota(
             cluster_indices_in_access_order.get(),
@@ -752,86 +941,130 @@ class PDXearch {
                 selection_vector = selection.first;
                 passing_tuples = selection.second;
             }
-            if (top_k_heap->kth_distance.load(std::memory_order_relaxed) ==
-                TopKHeap::NOT_FULL_KTH_DISTANCE) {
+            if constexpr (Q == SAQ) {
+                // With few passing rows the first clusters take the pruning kernels too, at the
+                // +inf threshold of a heap that holds fewer than k
+                const bool start_with_pruning_kernels =
+                    FILTERED && static_cast<float>(passing_tuples) <
+                                    SAQ_PRUNING_START_MAX_PASSING_FRACTION *
+                                        static_cast<float>(cluster.used_capacity);
                 // NOLINTNEXTLINE(bugprone-branch-clone)
-                if constexpr (FILTERED) {
-                    s.FilteredStart(
-                        prepared_query,
+                if (top_k_heap->kth_distance.load(std::memory_order_relaxed) ==
+                        TopKHeap::NOT_FULL_KTH_DISTANCE &&
+                    !start_with_pruning_kernels) {
+                    s.template SAQStart<FILTERED>(
                         data,
                         cluster.used_capacity,
                         stride,
                         k,
                         indices,
+                        *saq_query,
                         pruning_positions.get(),
                         pruning_distances.get(),
                         *top_k_heap,
-                        selection_vector,
-                        passing_tuples,
-                        cluster.tombstones
+                        cluster.tombstones,
+                        selection_vector
                     );
                 } else {
-                    s.Start(
-                        prepared_query,
+                    s.SAQPrune(
                         data,
                         cluster.used_capacity,
                         stride,
                         k,
                         indices,
+                        *saq_query,
+                        saq_chunk_margins.get(),
                         pruning_positions.get(),
                         pruning_distances.get(),
+                        saq_rescales.get(),
                         *top_k_heap,
-                        cluster.tombstones
+                        cluster.tombstones,
+                        selection_vector,
+                        passing_tuples
                     );
                 }
-                return;
-            }
-            distance_t pruning_threshold = std::numeric_limits<distance_t>::max();
-            uint32_t current_dimension_idx = 0;
-            size_t n_vectors_not_pruned = 0;
-            s.template Warmup<FILTERED>(
-                prepared_query,
-                data,
-                cluster.used_capacity,
-                stride,
-                k,
-                s.selectivity_threshold,
-                pruning_positions.get(),
-                pruning_distances.get(),
-                pruning_threshold,
-                *top_k_heap,
-                current_dimension_idx,
-                n_vectors_not_pruned,
-                cluster.tombstones,
-                passing_tuples,
-                selection_vector
-            );
-            s.template Prune<FILTERED>(
-                prepared_query,
-                data,
-                cluster.used_capacity,
-                stride,
-                k,
-                pruning_positions.get(),
-                pruning_distances.get(),
-                pruning_threshold,
-                *top_k_heap,
-                current_dimension_idx,
-                n_vectors_not_pruned,
-                cluster.tombstones,
-                selection_vector
-            );
-            if (n_vectors_not_pruned) {
-                auto lock = top_k_heap->GetLock();
-                s.MergeIntoHeap(
-                    indices,
+            } else {
+                if (top_k_heap->kth_distance.load(std::memory_order_relaxed) ==
+                    TopKHeap::NOT_FULL_KTH_DISTANCE) {
+                    // NOLINTNEXTLINE(bugprone-branch-clone)
+                    if constexpr (FILTERED) {
+                        s.FilteredStart(
+                            prepared_query,
+                            data,
+                            cluster.used_capacity,
+                            stride,
+                            k,
+                            indices,
+                            pruning_positions.get(),
+                            pruning_distances.get(),
+                            *top_k_heap,
+                            selection_vector,
+                            passing_tuples,
+                            cluster.tombstones
+                        );
+                    } else {
+                        s.Start(
+                            prepared_query,
+                            data,
+                            cluster.used_capacity,
+                            stride,
+                            k,
+                            indices,
+                            pruning_positions.get(),
+                            pruning_distances.get(),
+                            *top_k_heap,
+                            cluster.tombstones
+                        );
+                    }
+                    return;
+                }
+                distance_t pruning_threshold = std::numeric_limits<distance_t>::max();
+                uint32_t current_dimension_idx = 0;
+                size_t n_vectors_not_pruned = 0;
+                s.template Warmup<FILTERED>(
+                    prepared_query,
+                    data,
+                    cluster.used_capacity,
+                    stride,
+                    k,
+                    s.selectivity_threshold,
+                    pruning_positions.get(),
+                    pruning_distances.get(),
+                    pruning_threshold,
+                    *top_k_heap,
+                    current_dimension_idx,
                     n_vectors_not_pruned,
+                    cluster.tombstones,
+                    passing_tuples,
+                    selection_vector
+                );
+                s.template Prune<FILTERED>(
+                    prepared_query,
+                    data,
+                    cluster.used_capacity,
+                    stride,
                     k,
                     pruning_positions.get(),
                     pruning_distances.get(),
-                    *top_k_heap
+                    pruning_threshold,
+                    *top_k_heap,
+                    current_dimension_idx,
+                    n_vectors_not_pruned,
+                    cluster.tombstones,
+                    selection_vector
                 );
-                top_k_heap->PublishKthDistance(k);
+                if (n_vectors_not_pruned) {
+                    auto lock = top_k_heap->GetLock();
+                    s.MergeIntoHeap(
+                        indices,
+                        n_vectors_not_pruned,
+                        k,
+                        pruning_positions.get(),
+                        pruning_distances.get(),
+                        *top_k_heap
+                    );
+                    top_k_heap->PublishKthDistance(k);
+                }
             }
         }
 
@@ -844,6 +1077,9 @@ class PDXearch {
         std::unique_ptr<float[]> query;
         std::unique_ptr<quantized_embedding_t[]> quantized_query;
         const quantized_embedding_t* prepared_query = nullptr;
+        std::unique_ptr<SAQQuery> saq_query;
+        std::unique_ptr<float[]> saq_chunk_margins;
+        std::unique_ptr<float[]> saq_rescales;
         std::unique_ptr<uint32_t[]> queued_clusters;
         size_t queued_clusters_size = 0;
         size_t n_probed_clusters = 0;
@@ -994,6 +1230,20 @@ class PDXearch {
                 search_cursor.quantized_query.get()
             );
             search_cursor.prepared_query = search_cursor.quantized_query.get();
+        } else if constexpr (Q == SAQ) {
+            const SAQModel& model = pdx_data.saq_model;
+            search_cursor.saq_query = std::make_unique<SAQQuery>(search_cursor.query.get(), model);
+            search_cursor.saq_chunk_margins.reset(new float[model.num_chunks]);
+            float remaining_squared_norm = 0.0f;
+            for (int chunk_idx = static_cast<int>(model.num_chunks) - 1; chunk_idx >= 0;
+                 --chunk_idx) {
+                const float spread =
+                    std::sqrt(remaining_squared_norm * model.chunk_remaining_variances[chunk_idx]);
+                search_cursor.saq_chunk_margins[chunk_idx] =
+                    spread > 0.0f ? pdx_data.saq_chunk_epsilons[chunk_idx] * spread : 0.0f;
+                remaining_squared_norm +=
+                    search_cursor.saq_query->GetChunkSquaredNormsPtr()[chunk_idx];
+            }
         } else {
             search_cursor.prepared_query = search_cursor.query.get();
         }
@@ -1041,8 +1291,13 @@ class PDXearch {
             search_cursor.queued_clusters[search_cursor.queued_clusters_size++] = cluster_id;
         }
 
-        search_cursor.pruning_distances.reset(new distance_t[pdx_data.max_cluster_capacity]);
-        search_cursor.pruning_positions.reset(new uint32_t[pdx_data.max_cluster_capacity]);
+        size_t buffer_size = pdx_data.max_cluster_capacity;
+        if constexpr (Q == SAQ) {
+            buffer_size += SAQ_SCAN_PADDING;
+            search_cursor.saq_rescales.reset(new float[buffer_size]);
+        }
+        search_cursor.pruning_distances.reset(new distance_t[buffer_size]);
+        search_cursor.pruning_positions.reset(new uint32_t[buffer_size]);
     }
 
   public:

@@ -27,7 +27,8 @@ void RunBenchmark(
     const float* queries,
     const size_t batch_size,
     const size_t n_append,
-    const uint32_t n_threads
+    const uint32_t n_threads,
+    const uint32_t saq_bits_per_dimension
 ) {
     const size_t d = info.num_dimensions;
     const size_t n = info.num_embeddings;
@@ -44,6 +45,7 @@ void RunBenchmark(
         .sampling_fraction = 1.0f,
         .n_threads = n_threads,
     };
+    index_config.saq_bits_per_dimension = saq_bits_per_dimension;
     std::vector<size_t> row_ids(n);
     for (size_t i = 0; i < n; i++) {
         row_ids[i] = i;
@@ -141,7 +143,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "Usage: " << argv[0]
                   << " <dataset> <index_type> <batch_size> [n_append] [n_threads]\n";
         std::cerr << "batch_size: 1 = Append per row, 0 = build on all rows (reference)\n";
-        std::cerr << "Index types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8\n";
+        std::cerr
+            << "Index types: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4\n";
         return 1;
     }
     const std::string dataset = argv[1];
@@ -192,9 +195,19 @@ int main(int argc, char* argv[]) {
 
     const std::string algorithm = "bulk_append_" + index_type + "_b" + std::to_string(batch_size) +
                                   "_t" + std::to_string(n_threads);
-    const auto run = [&](auto tag) {
+    const auto run = [&](auto tag,
+                         uint32_t saq_bits_per_dimension =
+                             PDX::PDXIndexConfig{}.saq_bits_per_dimension) {
         RunBenchmark<typename decltype(tag)::type>(
-            info, dataset, algorithm, data.data(), queries.data(), batch_size, n_append, n_threads
+            info,
+            dataset,
+            algorithm,
+            data.data(),
+            queries.data(),
+            batch_size,
+            n_append,
+            n_threads,
+            saq_bits_per_dimension
         );
     };
     if (index_type == "pdx_f32") {
@@ -205,6 +218,8 @@ int main(int argc, char* argv[]) {
         run(Tag<PDX::PDXTreeIndexF32>{});
     } else if (index_type == "pdx_tree_u8") {
         run(Tag<PDX::PDXTreeIndexU8>{});
+    } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        run(Tag<PDX::PDXIndexSAQ>{}, index_type == "pdx_saq3" ? 3 : 4);
     } else {
         std::cerr << "Unknown index type: " << index_type << "\n";
         return 1;

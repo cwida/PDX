@@ -4,7 +4,7 @@ Working notes for the PDX repo.
 
 ## What it is
 
-Fast IVF-based similarity search for high-dim vector embeddings, on `float32` **or quantized** vectors (`sq8`) — you pass `float32`, it quantizes internally. Faster than FAISS at equal quality (~1M×1536 in seconds). Header-only **C++17** + **Python bindings**; CPUs (ARM + x86). Paper: https://arxiv.org/html/2503.04422.
+Fast IVF-based similarity search for high-dim vector embeddings, on `float32` **or quantized** vectors (`sq8`, or SAQ at 3/4 bits per dimension) — you pass `float32`, it quantizes internally. Faster than FAISS at equal quality (~1M×1536 in seconds). Header-only **C++17** + **Python bindings**; CPUs (ARM + x86). Paper: https://arxiv.org/html/2503.04422.
 
 ## Core idea: Efficient memory layout
 
@@ -24,15 +24,31 @@ The split is computed by `GetPDXDimensionSplit()` in `include/pdx/common.hpp`: t
 #### 8 bits
 Smaller data types are not friendly to PDX, as we must accumulate distances on wider types, resulting in asymmetry. We can work around this by changing the PDX layout. For 8 bits, the vertical block is decomposed every 4 dimensions. This allows us to use dot-product instructions (VPDPBUSD on x86 and UDOT/SDOT on NEON) to calculate L2 or IP kernels while still benefiting from PDX. The horizontal block remains decomposed every 64 dimensions.
 
+#### SAQ
+SAQ (`Quantization::SAQ`, `quantizers/saq.hpp`; arXiv 2509.12086) codes the residual to one global mean in PCA space. A
+DP plan cuts the dimensions at 64-dim cuts into segments of widths 1–8, within a 3- or 4-bit budget that counts the fp16
+factors and a partial last chunk's full 64-dim record, and each segment gets its own random rotation: the segment is the unit of quantization, the 64-dim chunk the
+unit of scan. The plan depends on d: below `SAQ_DP_PLAN_MIN_DIMENSIONS` (256) one segment at the declared bits, its
+factors on top of the budget (vanilla RaBitQ; the DP's segments lost 0.11–0.37 recall to it there); from 256 the DP;
+from `SAQ_PDX_U8_HEAD_MIN_DIMENSIONS` (640) the first chunk (the head) is forced to its own 8-bit segment in the PDX U8
+layout, which costs no recall from 640 on but 0.03 at 384 and 0.25 at 200 (4 bits). A head chunk at any other width is
+stored and scanned as a record (`SAQModel::HasPDXU8Head`, `ClusterFormat<SAQ>::GetFirstRecordChunk`). Encoded row: each chunk as a
+T2 record (`PackRecord`/`UnpackRecord`: at 8 bits the levels as they are, else the width split into 4-, 2- and 1-bit
+parts, each interleaved across byte lanes, 8·w bytes); one fp16 rescale per segment; fp16 |r| (not |r|², which fp16
+holds only up to |r| = 256; readers square it). A row with |r| above 65,504 (L2 without normalization only) gets an
+infinite estimate and is never returned. In a cluster every part
+is transposed at the cluster's stride: the head in the U8 vertical layout if 8-bit, then each chunk's records, then the
+factors (illustration above `SAQModel`).
+
 
 ## Index types:
-All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`) and sharing `IPDXIndex`
-(`ivf_vanilla.hpp`); the search loop itself is `PDXearch` in `ivf_searcher.hpp`.
+All in `include/pdx/indexes/`, templated on `Quantization` (`F32`/`U8`, plus `SAQ` for the vanilla IVF) and sharing
+`IPDXIndex` (`ivf_vanilla.hpp`); the search loop itself is `PDXearch` in `ivf_searcher.hpp`.
 - Vanilla IVF: Plain $k$-means partitioned centroids — `PDXIndex` (`ivf_vanilla.hpp`, storage `IVF` in
-  `ivf_core.hpp`). Python: `IndexPDXIVF` / `IndexPDXIVFSQ8`.
+  `ivf_core.hpp`). Python: `IndexPDXIVF` / `IndexPDXIVFSQ8` / `IndexPDXIVFSAQ` (`bits` 3 or 4).
 - Tree IVF: A layer of mesoclusters is added on top of the plain IVF centroids, where PDX-pruning is also
   applied — `PDXTreeIndex` (`ivf_tree.hpp`, storage `IVFTree`). Python: `IndexPDXIVFTree` /
-  `IndexPDXIVFTreeSQ8` (the fastest, README's default).
+  `IndexPDXIVFTreeSQ8` (the fastest, README's default). `static_assert(Q != SAQ)` (TODO: SAQ in the tree).
 - Flat: exact search over one row-major block of transformed `float32` embeddings, for sets too
   small to cluster — `FlatIndex` (`flat.hpp`, storage `Flat` in `flat_core.hpp`, search
   `FlatSearcher` in `flat_searcher.hpp`). Same `IPDXIndex` API (one cluster; the cursor is `Done()`
@@ -65,7 +81,9 @@ loop. Maintenance that needs floats decodes into scratch (`GetF32CentroidPtr`, `
 means); merges move encoded centroids as they are.
 
 Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`;
-`PDX_FLAT` is serialization only).
+`pdx_saq3`/`pdx_saq4` give `PDX_SAQ` (5) with the config's bits; `PDX_FLAT` is serialization only). `IVF<SAQ>` saves its
+`SAQModel` and per-chunk ε right after the header in all four blocks (`Save`/`Load`, `SaveResidentData`/
+`LoadResidentData`); T stays with the pruner, written dense.
 - File: `Save(path)` / `LoadPDXIndex(path)` write and read the type byte, the rotation matrix (`WriteRotationMatrix` /
   `ReadRotationMatrix`) and the payload, but no `PDXIndexConfig`: a restored index has the default config (e.g. no
   `max_cluster_size`) but its centroid quantization.
@@ -125,14 +143,55 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
   off). Held rows are assigned again next round against the new centroids. Not identical to `Append`: rows are
   placed against the round's centroids. Basic exception guarantee. Flat: one transform, then the `AppendEmbedding` loop.
 - **Delete**: tombstone the slot (`DeleteEmbedding`), mark the mapping `DELETED_MARKER`, `CheckClusterHealth`. Search masks tombstones and never lets them into the heap, also while the heap is not yet full (`k` above the live count); `Save()` compacts them away.
-- **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM) with merges disabled to avoid cascades.
-- **SplitCluster**: 2-means into A and B; points closer to one of the `SPLIT_MAX_NEIGHBOR_CLUSTERS` nearest centroids go to a "rest" group that is reassigned, and neighbour points closer to A or B are stolen. If the 2-means leaves A or B empty (identical embeddings cannot be separated), the cluster is not split: `Cluster::Grow()` re-lays it out in `CAPACITY_THRESHOLD` times as many slots (same slots, row ids and centroid). The rest group's reassignment can split other clusters recursively; past `SPLIT_CASCADE_MAX_DEPTH` nested levels a full cluster grows instead of splitting.
+- **DestroyAndMergeCluster**: swap-and-pop the dead cluster (fix `id`, centroid and mapping of the moved one), then `ReassignEmbeddings` (nearest centroid via a `skmeans::BatchComputer` GEMM on the decoded floats; the stored encoded rows are appended as they are) with merges disabled to avoid cascades.
+- **SplitCluster**: 2-means into A and B; points closer to one of the `SPLIT_MAX_NEIGHBOR_CLUSTERS` nearest centroids go to a "rest" group that is reassigned, and neighbour points closer to A or B are stolen (with `max_cluster_size`, only as many as A and B have room for: `CapRowsToSteal`). If the 2-means leaves A or B empty (identical embeddings cannot be separated), the cluster is not split: `Cluster::Grow()` re-lays it out in `CAPACITY_THRESHOLD` times as many slots (same slots, row ids and centroid). The rest group's reassignment can split other clusters recursively; past `SPLIT_CASCADE_MAX_DEPTH` nested levels a full cluster grows instead of splitting.
 - **Size limit**: `Cluster::CapacityFor(n, PDXIndexConfig::max_cluster_size)` sizes the leaf clusters of a build and of a split. With 0 (default) it is `CAPACITY_THRESHOLD` times the creation size (at least 256), and a cluster splits when its slots fill. With a limit, it is `CAPACITY_THRESHOLD` times the rows (at least one free slot), capped at the limit: a full cluster below the limit grows instead (`Cluster::GrowTo`, which moves the used slots into a larger stride and keeps slots and tombstones; `BulkAppend` grows each cluster for its batch first, `Cluster::GrowToFit`), and splits once it holds the limit. `PDXIndexConfig::expect_appends = false` (build-time, not serialized) builds the leaf clusters with one free slot; appends still grow them (with a limit) or split them (without). `IPDXIndex::ShrinkToFit()` leaves one free slot after each leaf cluster's used slots, for an index that stops receiving appends (vanilla also trims the centroids, which splits grow by doubling). Streams save each cluster's capacity, and loads restore it. With a limit, `BuildIndex` also splits the k-means clusters above it (`IVFUtils::SplitClustersAboveMaxClusterSize`: k-means on each cluster's own embeddings into splits of half the limit, repeated until they fit) before populating, so the tree's L0 is built over them. Clusters k-means can't separate (identical embeddings) stay above the limit, at build and on append. L0 clusters and the merge threshold ignore the limit.
 - **ReassignEmbeddings** (also used by `SplitCluster` for the "rest" group) always runs with merges disabled: it snapshots the nearest-centroid assignments before its loop, and a merge inside the loop would swap-and-pop cluster ids from under it (see the TODO at its definition for the root fix). Clusters drained by `StealNeighborEmbeddings` therefore merge only when a later Append/Delete touches them.
 - **Invariants**: `ReserveClusterSlotIfNeeded()` before holding a `cluster_t&` (splits `push_back`); every structural change, a cluster re-layout included, ends with `ComputeClusterOffsets()` (the searcher sizes its buffers from `max_cluster_capacity` on each query); single writer thread.
 - **Row id mapping**: `RowIdClusterMapping` (`ivf_utils.hpp`) is a dense vector indexed by row id holding `(cluster, index_in_cluster)`, `DELETED_MARKER` (`common.hpp`) for absent/deleted ids; exposed as `IPDXIndex::GetRowIdMapping`. Row ids are expected dense (PDX assigns them by position); the vector grows to the largest appended id, counted from `PDXIndexConfig::base_row_id` (for an index that holds one row-id range of a larger table). `Delete` returns whether the id was in the index (an absent id is a no-op), `Contains` whether it is; `Append` of a live id throws.
 - **Transformed input**: `PDXIndexConfig::is_data_transformed` makes `BuildIndex`/`Append` take embeddings that are already normalized and rotated. Pair it with the `(config, ADSamplingPruner&)` constructors of `PDXIndex`/`PDXTreeIndex`/`FlatIndex` to share one rotation matrix across indexes; cursors take `is_query_transformed` for the matching query.
 - Knobs: `indexes/cluster.hpp` (`CAPACITY_THRESHOLD`, `MIN_CAPACITY_THRESHOLD`, `DEFAULT_MAX_CAPACITY_LOWER_BOUND = 256`, so without a size limit small clusters need 256 slots before they split). Split knobs: `common.hpp` (`SPLIT_MAX_NEIGHBOR_CLUSTERS`, `SPLIT_KMEANS_ITERS`, `SPLIT_CASCADE_MAX_DEPTH`, `MAX_CLUSTER_SIZE_LOWER_BOUND`).
+
+## SAQ index (`PDXIndex<SAQ>`, alias `PDXIndexSAQ`)
+
+- **Fit**: `SAQQuantizer::Fit(rows, n, d, bits, seed, executor, allocator)` (on up to `SAQ_FIT_SAMPLE_SIZE` rows)
+  returns the d×d rotation T (PCA, then a random rotation per segment) and the `SAQModel` (plan, rotated mean,
+  per-chunk widths, code centres, record offsets and remaining variances, and each segment's `scale`).
+- **Encoding**: `EncodeEmbedding` runs `ComputeResidual`, then `EncodeSegment` per segment: the levels of the best
+  of `SAQ_SCALE_GRID_POINTS` (4) scales over ±`SAQ_SCALE_GRID_SPAN` (25%) around the segment's `scale`, which the
+  fit sets to the mean best scale of `SAQ_CONSTANT_SCALE_VECTORS` (100) Gaussian vectors of the segment's length
+  (RaBitQ-Library's `get_const_scaling_factors`), then `PackRecord` per chunk. The exact extended-RaBitQ search
+  (`FindBestScale`, a heap over level steps) runs only in the fit, for the scales and the plan's per-width
+  distortion: per row it cost 44–799× U8. `DecodeEmbedding` runs `DecodeRecord` per chunk.
+- **Standalone build**: `BuildIndex` normalizes once, fits, makes the owned pruner from T (`ADSamplingPruner(d, T, d, …)`:
+  dense, no random QR), rotates, runs k-means with `use_superkmeans_pruning = false` (SuperKMeans' bounds need a random
+  rotation, T starts with a PCA; also through `SplitClustersAboveMaxClusterSize`), encodes and calibrates the bound.
+- **Shared fit (DuckIR)**: `PDXIndex(config, pruner, model)`, usually with `is_data_transformed`. Without a model, an SAQ
+  index on an external pruner or on transformed data throws. The loaders read the model from the file or stream.
+- **Search**: `ProbeClusterData` runs `SAQStart` (every chunk of every vector, `ComputeSAQEstimates`) while the heap holds
+  fewer than k, else `SAQPrune`: `ScanHead` over every vector (the selection vector applied), then `ScanTail<W>` per chunk
+  over the survivors against τ + margin_k (the last chunk at τ); tombstones drop at the merge. The query is int8 per
+  chunk (`SAQQuery`). Filtered, by the cluster's passing fraction: below `SAQ_PRUNING_START_MAX_PASSING_FRACTION`
+  (70%) the first clusters take `SAQPrune` too (τ = +∞ until the heap holds k), and below
+  `SAQ_POSITIONS_HEAD_MAX_PASSING_FRACTION` (10%) its head is `ScanHeadPruning` over the passing positions. Without a
+  PDX U8 head, `StartSAQEstimates`/`StartSAQEstimatesPruning` start the estimates at |r|² + |q_c|² (the head kernels do
+  it themselves) and chunk 0 goes through `AccumulateTailEstimates`/`ScanTail` over every (or every passing) vector.
+- **Pruning bound**: margin_k = ε_k·√(|q_c unseen|²·remaining variance). `IVFUtils::CalibrateSAQPruningBound` estimates
+  ε at `saq_pruning_significance` (0.1), DADE-style (arXiv 2411.17229): the (1 − P_s) quantile of the unseen term's
+  ratio over `SAQ_CALIBRATION_QUERIES` sampled rows, each against its `SAQ_CALIBRATION_NEIGHBORS` nearest neighbours by
+  estimate in its `SAQ_CALIBRATION_CLUSTERS` nearest clusters. SAQ's own Chebyshev bound (§4.3) is not used: near
+  neighbours' unseen term isn't centred at zero. P_s 0.1 against 0.01 costs 0.003–0.008 recall@10 at n_probe 128 on
+  clip/jina/mxbai/openai and makes them 1.1–1.5× faster; it costs more where the head holds little of the variance
+  (the near-isotropic test data: up to 0.035 probing every cluster). `CalibratePruningBound(row_ids, embeddings, n)` recalibrates on the
+  caller's rows; `CalibratePruningBound()` on up to `SAQ_CALIBRATION_QUERIES` live rows sampled from the index
+  (`SampleLiveRowIds`) and decoded, which calibrates as well as the original rows. The bound goes stale when appended
+  rows differ from the ones it was calibrated on (rows stored in order); when to recalibrate is the caller's call.
+- **Maintenance**: codes don't depend on the cluster (global mean, frozen model), so splits, steals, merges and
+  `ReassignEmbeddings` move encoded rows as they are; decoded floats only drive the 2-means and the assignments.
+  `GetEmbeddingsFromIndexByRowIds` returns decoded rows in T-space.
+- **Tests** run SAQ at each suite's dimensions: mostly 128 (one segment) and 384 (the DP, free head). The PDX U8 head
+  needs 640 dimensions, past the test data, so `test_saq` covers it on synthetic rows: it checks the plan in all three
+  regimes and the cluster layout for both heads.
 
 ## Verification gate (definition of done)
 
@@ -158,7 +217,8 @@ Header-only, no submodules; consumers link the `PDX` INTERFACE target (alias `PD
 ```bash
 cmake . -DPDX_COMPILE_BENCHMARKS=ON && make benchmarks
 # Index building + search (index_type defaults to pdx_f32; nprobe 0/omitted sweeps a preset list)
-# `index_type`: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8
+# `index_type`: pdx_f32, pdx_u8, pdx_tree_f32, pdx_tree_u8, pdx_saq3, pdx_saq4 (every benchmark that takes an index type;
+# BenchmarkPDXIVF and the filtered ones load what BenchmarkSerialization saved)
 ./benchmarks/BenchmarkEndToEnd <dataset_id> [index_type] [nprobe]
 # Appends: build on n - n_append rows, append the rest in batches (1 = Append per row, 0 = rebuild reference)
 ./benchmarks/BenchmarkBulkAppend <dataset_id> <index_type> <batch_size> [n_append] [n_threads]
@@ -197,14 +257,21 @@ Performance-critical — weigh every copy/allocation.
   widening `madd_epi16`; on NEON `vdotq_s32` under DOTPROD, LVQ8 on its codes XOR 0x80 plus 128·Σq (no i8mm: `-march=native`
 can claim it on CPUs that lack it), else a widening `vmlal_s16`),
   `MinMax`, `QuantizeToU8`/`U4`, `DequantizeFromU4` and `QuantizeToInt8`. The SIMD backends hand their scalar
-  remainders to `ScalarComputer` (`scalar_computer`).
+  remainders to `ScalarComputer` (`scalar_computer`). `DistanceComputer<L2SQ, SAQ>` holds SAQ's kernels on every backend:
+  `ScanHead`, `ScanHeadPruning` (the head over given positions, gathered), `ScanTail<W>` (per-chunk table
+  `GetScanTail(w)`), the no-pruning pair `ComputeHeadEstimates` /
+  `AccumulateTailEstimates<W>`, the T2 `PackRecord` (`UnpackRecord` stays scalar), and the codec's `ComputeResidual`,
+  `EncodeSegment` and `DecodeRecord` (float, 16 values per step; a segment whose length is not a multiple of 16 and a
+  partial last chunk take the scalar kernels); the scans read and
+  write up to `SAQ_SCAN_PADDING` lanes past the last vector.
   **All** SIMD lives in `include/pdx/distance_computers/` (`neon_computers.hpp`, `avx2_computers.hpp`,
   `avx512_computers.hpp`, `scalar_computers.hpp`) — don't scatter it elsewhere; keep all backends in
   sync when changing a kernel (on ARM the x86 ones aren't compiled or linted). Cover kernels in
   `tests/test_distance_computers.cpp`.
 - **`PDX_VECTORIZE_LOOP`** (`common.hpp`) forces loop autovectorization (esp. FP reductions) — put it
   on its own line right above the `for`, never a raw `#pragma clang loop`. Other macros there: `PDX_RESTRICT`, `PDX_ALWAYS_INLINE`, `PDX_NO_INLINE`,
-  `PDX_LIKELY`/`PDX_UNLIKELY`, `PDX_PREFETCH`, `PDX_ENSURE_POSITIVE`.
+  `PDX_LIKELY`/`PDX_UNLIKELY`, `PDX_PREFETCH`, `PDX_POPCOUNT` (never a raw `__builtin_popcount`: MSVC
+  lacks it), `PDX_ENSURE_POSITIVE`.
 - **Parallelism: no OpenMP.** Every parallel loop runs on SuperKMeans' `ParallelExecutor` (aliased in
   `common.hpp`). `IPDXIndex` is a `skmeans::ExecutorHolder`: it binds `PDXIndexConfig::executor` or owns a
   default sized by `n_threads`, and `BuildIndex`/`Append`/`Delete` open a `skmeans::ParallelSection`. It

@@ -22,7 +22,7 @@ class SerializationTest : public ::testing::TestWithParam<std::string> {
 
 TEST_P(SerializationTest, SaveLoadProducesSameSearchResults) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
@@ -66,7 +66,7 @@ TEST_P(SerializationTest, SaveLoadProducesSameSearchResults) {
 // tree
 TEST_P(SerializationTest, SaveLoadProducesSameFilteredSearchResults) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
@@ -106,7 +106,7 @@ TEST_P(SerializationTest, SaveLoadProducesSameFilteredSearchResults) {
 
 TEST_P(SerializationTest, LoadedIndexProperties) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
@@ -131,7 +131,7 @@ TEST_P(SerializationTest, LoadedIndexProperties) {
 
 TEST_P(SerializationTest, LoadAutoDetectsType) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
@@ -150,18 +150,63 @@ TEST_P(SerializationTest, LoadAutoDetectsType) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     SerializationTest,
-    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
+
+// The rotation indexes share: SAQ's comes from a fit on the rows, with its model
+struct SharedRotation {
+    std::unique_ptr<PDX::ADSamplingPruner> pruner;
+    PDX::SAQModel saq_model;
+};
+
+SharedRotation MakeSharedRotation(
+    const std::string& index_type,
+    const PDX::PDXIndexConfig& config,
+    const float* rows,
+    size_t num_rows
+) {
+    const uint32_t d = config.num_dimensions;
+    SharedRotation shared_rotation;
+    if (index_type != "pdx_saq3" && index_type != "pdx_saq4") {
+        shared_rotation.pruner = std::make_unique<PDX::ADSamplingPruner>(d, TestUtils::SEED);
+        return shared_rotation;
+    }
+    std::vector<float> normalized(rows, rows + num_rows * d);
+    if (config.normalize || PDX::DistanceMetricRequiresNormalization(config.distance_metric)) {
+        PDX::Quantizer normalizer(d);
+        for (size_t i = 0; i < num_rows; ++i) {
+            normalizer.NormalizeQuery(&normalized[i * d], &normalized[i * d]);
+        }
+    }
+    skmeans::SerialExecutor executor;
+    skmeans::VanillaAllocator allocator;
+    PDX::SAQFit fit = PDX::SAQQuantizer::Fit(
+        normalized.data(),
+        num_rows,
+        d,
+        TestUtils::GetSAQBitsPerDimension(index_type),
+        TestUtils::SEED,
+        executor,
+        allocator
+    );
+    shared_rotation.pruner = std::make_unique<PDX::ADSamplingPruner>(d, fit.rotation.get(), d);
+    shared_rotation.saq_model = std::move(fit.model);
+    return shared_rotation;
+}
 
 // On an external pruner, as indexes that share one rotation are built.
 std::unique_ptr<PDX::IPDXIndex> BuildOnPruner(
     const std::string& index_type,
     const PDX::PDXIndexConfig& config,
-    PDX::ADSamplingPruner& pruner
+    PDX::ADSamplingPruner& pruner,
+    const PDX::SAQModel& saq_model
 ) {
     if (index_type == "pdx_f32") {
         return std::make_unique<PDX::PDXIndexF32>(config, pruner);
+    }
+    if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+        return std::make_unique<PDX::PDXIndexSAQ>(config, pruner, saq_model);
     }
     if (index_type == "pdx_u8") {
         return std::make_unique<PDX::PDXIndexU8>(config, pruner);
@@ -214,8 +259,10 @@ TEST_P(StreamSerializationTest, LoadsTheSameIndexOnTheSamePruner) {
         .sampling_fraction = 1.0f,
         .hierarchical_indexing = true,
     };
-    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
-    auto index = BuildOnPruner(index_type, config, pruner);
+    auto shared_rotation =
+        MakeSharedRotation(index_type, config, data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
+    auto index = BuildOnPruner(index_type, config, pruner, shared_rotation.saq_model);
     index->BuildIndex(data.train.data(), TestUtils::N_TRAIN);
     index->SetNProbe(16);
     // The save compacts these tombstones away.
@@ -290,8 +337,10 @@ TEST_P(StreamSerializationTest, ResidentDataLoadSearchesThroughTheClusterSource)
         .sampling_fraction = 1.0f,
         .hierarchical_indexing = true,
     };
-    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
-    auto index = BuildOnPruner(index_type, config, pruner);
+    auto shared_rotation =
+        MakeSharedRotation(index_type, config, data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
+    auto index = BuildOnPruner(index_type, config, pruner, shared_rotation.saq_model);
     index->BuildIndex(data.train.data(), TestUtils::N_TRAIN);
     index->SetNProbe(16);
 
@@ -322,7 +371,8 @@ TEST_P(StreamSerializationTest, ResidentDataLoadSearchesThroughTheClusterSource)
     ExpectSameResults(*index, *loaded, data.queries.data(), d, passing_ids);
 
     // Flat and the tree load everything.
-    const bool pages_clusters = index_type == "pdx_f32" || index_type == "pdx_u8";
+    const bool pages_clusters = index_type == "pdx_f32" || index_type == "pdx_u8" ||
+                                index_type == "pdx_saq3" || index_type == "pdx_saq4";
     EXPECT_EQ(source.num_acquired > 0, pages_clusters);
     EXPECT_TRUE(source.acquired_clusters.empty());
     if (pages_clusters) {
@@ -333,7 +383,8 @@ TEST_P(StreamSerializationTest, ResidentDataLoadSearchesThroughTheClusterSource)
 // An index with empty clusters (more clusters than distinct rows) loads back from its stream
 TEST_P(StreamSerializationTest, LoadsAnIndexWithEmptyClusters) {
     const std::string& index_type = GetParam();
-    if (index_type != "pdx_f32" && index_type != "pdx_u8") {
+    if (index_type != "pdx_f32" && index_type != "pdx_u8" && index_type != "pdx_saq3" &&
+        index_type != "pdx_saq4") {
         GTEST_SKIP() << "Only PDXIndex streams place clusters by offset";
     }
     const size_t d = 128;
@@ -354,8 +405,10 @@ TEST_P(StreamSerializationTest, LoadsAnIndexWithEmptyClusters) {
         .sampling_fraction = 1.0f,
         .hierarchical_indexing = true,
     };
-    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
-    auto index = BuildOnPruner(index_type, config, pruner);
+    auto shared_rotation =
+        MakeSharedRotation(index_type, config, data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
+    auto index = BuildOnPruner(index_type, config, pruner, shared_rotation.saq_model);
     index->BuildIndex(rows.data(), TestUtils::N_TRAIN);
     index->SetNProbe(16);
     ASSERT_GT(TestUtils::CountEmptyClusters(*index), 0u);
@@ -391,8 +444,10 @@ TEST_P(StreamSerializationTest, KeepsMaxClusterSize) {
         .hierarchical_indexing = true,
         .max_cluster_size = 64,
     };
-    PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
-    auto index = BuildOnPruner(index_type, config, pruner);
+    auto shared_rotation =
+        MakeSharedRotation(index_type, config, data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
+    auto index = BuildOnPruner(index_type, config, pruner, shared_rotation.saq_model);
     index->BuildIndex(data.train.data(), n_build);
 
     std::stringstream stream;
@@ -434,8 +489,10 @@ TEST_P(StreamSerializationTest, KeepsCentroidQuantization) {
             .hierarchical_indexing = true,
             .centroid_quantization = centroid_quantization,
         };
-        PDX::ADSamplingPruner pruner(static_cast<uint32_t>(d), TestUtils::SEED);
-        auto index = BuildOnPruner(index_type, config, pruner);
+        auto shared_rotation =
+            MakeSharedRotation(index_type, config, data.train.data(), TestUtils::N_TRAIN);
+        PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
+        auto index = BuildOnPruner(index_type, config, pruner, shared_rotation.saq_model);
         index->BuildIndex(data.train.data(), TestUtils::N_TRAIN);
         index->SetNProbe(16);
 
@@ -469,7 +526,8 @@ TEST_P(StreamSerializationTest, KeepsCentroidQuantization) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     StreamSerializationTest,
-    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "flat"),
+    ::testing::
+        Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "flat", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

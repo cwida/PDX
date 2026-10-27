@@ -13,9 +13,9 @@ namespace {
 
 static constexpr size_t D = 128;
 
-PDX::PDXIndexConfig MakeConfig() {
+PDX::PDXIndexConfig MakeConfig(size_t d = D) {
     return PDX::PDXIndexConfig{
-        .num_dimensions = static_cast<uint32_t>(D),
+        .num_dimensions = static_cast<uint32_t>(d),
         .distance_metric = PDX::DistanceMetric::L2SQ,
         .seed = TestUtils::SEED,
         .normalize = true,
@@ -82,6 +82,55 @@ TEST(TransformedInput, PDXTreeIndexF32) {
     RunTransformedBuildMatchesRawBuild<PDX::PDXTreeIndexF32>();
 }
 
+// An SAQ index fit on its rows, and one on a shared fit of the same rows, are the same index
+TEST(TransformedInput, PDXIndexSAQ) {
+    const size_t d = D;
+    auto data = TestUtils::LoadTestData(d);
+    const size_t n_build = TestUtils::N_TRAIN - 1;
+    const size_t last = TestUtils::N_TRAIN - 1;
+
+    // One executor for both builds and the fit: a GEMM split over another number of workers can
+    // round differently, and the fitted rotation amplifies it (seen on the macOS runner)
+    skmeans::SerialExecutor executor;
+    skmeans::VanillaAllocator allocator;
+    auto config = MakeConfig(d);
+    config.executor = &executor;
+    PDX::PDXIndexSAQ raw_index(config);
+    raw_index.BuildIndex(data.train.data(), n_build);
+
+    const PDX::IVFUtils ivf_utils(executor);
+    auto normalized = ivf_utils.Normalize(data.train.data(), n_build, d);
+    PDX::SAQFit fit = PDX::SAQQuantizer::Fit(
+        normalized.get(),
+        n_build,
+        d,
+        config.saq_bits_per_dimension,
+        config.seed,
+        executor,
+        allocator
+    );
+    PDX::ADSamplingPruner pruner(d, fit.rotation.get(), d);
+    auto transformed = ivf_utils.NormalizeAndRotate(data.train.data(), n_build, d, true, pruner);
+    config.is_data_transformed = true;
+    PDX::PDXIndexSAQ transformed_index(config, pruner, fit.model);
+    transformed_index.BuildIndex(transformed.get(), n_build);
+
+    for (size_t q = 0; q < 50; q++) {
+        const float* query = data.queries.data() + q * d;
+        EXPECT_EQ(
+            Ids(raw_index.Search(query, TestUtils::KNN)),
+            Ids(transformed_index.Search(query, TestUtils::KNN))
+        );
+    }
+
+    auto transformed_last =
+        ivf_utils.NormalizeAndRotate(data.train.data() + last * d, 1, d, true, pruner);
+    raw_index.Append(last, data.train.data() + last * d);
+    transformed_index.Append(last, transformed_last.get());
+    const float* query = data.train.data() + last * d;
+    EXPECT_EQ(Ids(raw_index.Search(query, 1)), Ids(transformed_index.Search(query, 1)));
+}
+
 // GetEmbeddingsFromIndexByRowIds gives back the transformed embeddings the index was built from
 // (u8: within its quantization error), in the order of the requested row ids.
 template <typename IndexT>
@@ -130,6 +179,54 @@ TEST(EmbeddingsFromIndexByRowIds, PDXTreeIndexF32) {
 
 TEST(EmbeddingsFromIndexByRowIds, FlatIndex) {
     RunEmbeddingsFromIndexByRowIdsComeBack<PDX::FlatIndex>(0.0f);
+}
+
+// SAQ gives back the transformed embeddings as its model decodes their codes
+TEST(EmbeddingsFromIndexByRowIds, PDXIndexSAQ) {
+    const size_t d = D;
+    auto data = TestUtils::LoadTestData(d);
+    skmeans::SerialExecutor executor;
+    skmeans::VanillaAllocator allocator;
+    const PDX::IVFUtils ivf_utils(executor);
+    auto config = MakeConfig(d);
+    auto normalized = ivf_utils.Normalize(data.train.data(), TestUtils::N_TRAIN, d);
+    PDX::SAQFit fit = PDX::SAQQuantizer::Fit(
+        normalized.get(),
+        TestUtils::N_TRAIN,
+        d,
+        config.saq_bits_per_dimension,
+        config.seed,
+        executor,
+        allocator
+    );
+    PDX::ADSamplingPruner pruner(d, fit.rotation.get(), d);
+    auto transformed =
+        ivf_utils.NormalizeAndRotate(data.train.data(), TestUtils::N_TRAIN, d, true, pruner);
+    config.is_data_transformed = true;
+    PDX::PDXIndexSAQ index(config, pruner, fit.model);
+    index.BuildIndex(transformed.get(), TestUtils::N_TRAIN);
+
+    std::vector<size_t> row_ids;
+    for (size_t row_id = TestUtils::N_TRAIN; row_id-- > 0;) {
+        if (row_id % 3 == 0) {
+            row_ids.push_back(row_id);
+        }
+    }
+    std::vector<float> embeddings(row_ids.size() * d);
+    index.GetEmbeddingsFromIndexByRowIds(row_ids, embeddings.data());
+
+    const PDX::SAQQuantizer quantizer(d);
+    PDX::SAQEncodingScratch scratch(static_cast<uint32_t>(d));
+    std::vector<uint8_t> encoded(fit.model.GetEncodedEmbeddingSize());
+    std::vector<float> expected(d);
+    for (size_t i = 0; i < row_ids.size(); i++) {
+        quantizer.EncodeEmbedding(
+            transformed.get() + row_ids[i] * d, fit.model, encoded.data(), scratch
+        );
+        quantizer.DecodeEmbedding(encoded.data(), fit.model, expected.data());
+        EXPECT_TRUE(std::equal(expected.begin(), expected.end(), embeddings.begin() + i * d))
+            << "row " << row_ids[i];
+    }
 }
 
 TEST(RowIdMapping, GrowsAndReusesIds) {

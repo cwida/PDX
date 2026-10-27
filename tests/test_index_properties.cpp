@@ -21,7 +21,7 @@ class IndexPropertiesTest : public ::testing::TestWithParam<std::string> {
 
 TEST_P(IndexPropertiesTest, ClusterRowIdsCoverAllPoints) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
 
@@ -43,7 +43,7 @@ TEST_P(IndexPropertiesTest, ClusterRowIdsCoverAllPoints) {
 
 TEST_P(IndexPropertiesTest, ClusterSizeMatchesRowIdCount) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
 
@@ -56,7 +56,7 @@ TEST_P(IndexPropertiesTest, ClusterSizeMatchesRowIdCount) {
 
 TEST_P(IndexPropertiesTest, GetNumDimensionsMatchesInput) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
     EXPECT_EQ(index->GetNumDimensions(), d);
@@ -64,7 +64,7 @@ TEST_P(IndexPropertiesTest, GetNumDimensionsMatchesInput) {
 
 TEST_P(IndexPropertiesTest, InMemorySizeIsPositive) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
     auto index = TestUtils::BuildIndex(index_type, data.train.data(), TestUtils::N_TRAIN, d);
     EXPECT_GT(index->GetInMemorySizeInBytes(), 0u);
@@ -136,7 +136,7 @@ TEST(FlatIndexSizeTest, SelfManagedMemoryExcludesAllocatedBytes) {
 
 TEST_P(IndexPropertiesTest, KnnLargerThanDataReturnsAvailable) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
 
     // Build a tiny index with 5 points
     auto data = TestUtils::LoadTestData(d);
@@ -151,7 +151,7 @@ TEST_P(IndexPropertiesTest, KnnLargerThanDataReturnsAvailable) {
 
 TEST_P(IndexPropertiesTest, NumClustersMatchesConfig) {
     std::string index_type = GetParam();
-    size_t d = 128;
+    const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
 
     for (uint32_t requested : {10, 50, 100}) {
@@ -172,6 +172,10 @@ TEST_P(IndexPropertiesTest, NumClustersMatchesConfig) {
             auto p = std::make_unique<PDX::PDXIndexF32>(config);
             p->BuildIndex(data.train.data(), TestUtils::N_TRAIN);
             index = std::move(p);
+        } else if (index_type == "pdx_saq3" || index_type == "pdx_saq4") {
+            index = TestUtils::BuildIndexWithConfig(
+                index_type, config, data.train.data(), TestUtils::N_TRAIN
+            );
         } else {
             auto p = std::make_unique<PDX::PDXIndexU8>(config);
             p->BuildIndex(data.train.data(), TestUtils::N_TRAIN);
@@ -208,7 +212,7 @@ TEST_P(IndexPropertiesTest, NumClustersMatchesConfig) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     IndexPropertiesTest,
-    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 
@@ -218,7 +222,7 @@ class EdgeCaseTest : public ::testing::TestWithParam<std::string> {};
 
 TEST_P(EdgeCaseTest, SinglePointIndex) {
     std::string index_type = GetParam();
-    constexpr size_t d = 128;
+    const size_t d = 128;
 
     auto all_data = skmeans::MakeBlobs(1, d, 1, true, 5.0f, 2.0f, 42);
 
@@ -245,7 +249,7 @@ TEST_P(EdgeCaseTest, SinglePointIndex) {
 
 TEST_P(EdgeCaseTest, TwoPointIndex) {
     std::string index_type = GetParam();
-    constexpr size_t d = 128;
+    const size_t d = 128;
 
     auto all_data = skmeans::MakeBlobs(2, d, 2, true, 5.0f, 2.0f, 42);
 
@@ -274,7 +278,7 @@ TEST_P(EdgeCaseTest, TwoPointIndex) {
 
 TEST_P(EdgeCaseTest, NumClustersExceedsNumPointsThrows) {
     std::string index_type = GetParam();
-    constexpr size_t d = 128;
+    const size_t d = 128;
     constexpr size_t n = 10;
 
     auto all_data = skmeans::MakeBlobs(n, d, 5, true, 5.0f, 2.0f, 42);
@@ -298,7 +302,7 @@ TEST_P(EdgeCaseTest, NumClustersExceedsNumPointsThrows) {
 INSTANTIATE_TEST_SUITE_P(
     EdgeCases,
     EdgeCaseTest,
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 

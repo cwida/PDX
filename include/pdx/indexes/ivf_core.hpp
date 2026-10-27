@@ -3,6 +3,7 @@
 #include "pdx/common.hpp"
 #include "pdx/indexes/centroids.hpp"
 #include "pdx/indexes/cluster.hpp"
+#include "pdx/quantizers/saq.hpp"
 #include "pdx/utils.hpp"
 #include <algorithm>
 #include <cassert>
@@ -51,6 +52,10 @@ class IVF : public skmeans::AllocatorHolder {
     float inverse_quantization_scale_squared = 1.0f;
     float quantization_base = 0.0f;
 
+    // SAQ-specific parameters
+    SAQModel saq_model;
+    std::unique_ptr<float[]> saq_chunk_epsilons;
+
     IVF() = default;
     ~IVF() = default;
     IVF(IVF&&) = default;
@@ -86,6 +91,28 @@ class IVF : public skmeans::AllocatorHolder {
           inverse_quantization_scale_squared(1.0f / (quantization_scale * quantization_scale)),
           quantization_base(quantization_base) {
         clusters.reserve(num_clusters);
+    }
+
+    // In data_t values, as ClusterFormat::GetValuesPerEmbedding
+    uint32_t GetValuesPerEmbedding() const {
+        if constexpr (Q == Quantization::SAQ) {
+            return static_cast<uint32_t>(saq_model.GetEncodedEmbeddingSize());
+        } else {
+            return num_dimensions;
+        }
+    }
+
+    ClusterFormat<Q> GetClusterFormat() const {
+        if constexpr (Q == Quantization::SAQ) {
+            return {
+                saq_model.chunk_record_offsets.get(),
+                saq_model.num_chunks,
+                saq_model.num_segments,
+                saq_model.HasPDXU8Head()
+            };
+        } else {
+            return num_dimensions;
+        }
     }
 
     // Compute cluster_offsets, total_capacity, and max_cluster_capacity from current clusters.
@@ -125,9 +152,10 @@ class IVF : public skmeans::AllocatorHolder {
             cluster_headers.get(), static_cast<size_t>(num_clusters) * 2 * sizeof(uint32_t)
         );
         clusters.reserve(num_clusters);
+        const ClusterFormat<Q> cluster_format = GetClusterFormat();
         for (size_t i = 0; i < num_clusters; ++i) {
             clusters.emplace_back(
-                cluster_headers[i * 2], cluster_headers[i * 2 + 1], num_dimensions, &GetAllocator()
+                cluster_headers[i * 2], cluster_headers[i * 2 + 1], cluster_format, &GetAllocator()
             );
             clusters[i].id = i;
             clusters[i].LoadPDXData(reader);
@@ -143,6 +171,11 @@ class IVF : public skmeans::AllocatorHolder {
         num_vertical_dimensions = ReadValue<uint32_t>(reader);
         num_horizontal_dimensions = ReadValue<uint32_t>(reader);
         num_clusters = ReadValue<uint32_t>(reader);
+        if constexpr (Q == Quantization::SAQ) {
+            saq_model.Load(reader);
+            saq_chunk_epsilons.reset(new float[saq_model.num_chunks]);
+            reader.Read(saq_chunk_epsilons.get(), saq_model.num_chunks * sizeof(float));
+        }
         LoadClusters(reader);
 
         is_normalized = ReadValue<char>(reader) != 0;
@@ -164,6 +197,13 @@ class IVF : public skmeans::AllocatorHolder {
         out.write(reinterpret_cast<const char*>(&num_vertical_dimensions), sizeof(uint32_t));
         out.write(reinterpret_cast<const char*>(&num_horizontal_dimensions), sizeof(uint32_t));
         out.write(reinterpret_cast<const char*>(&num_clusters), sizeof(uint32_t));
+        if constexpr (Q == Quantization::SAQ) {
+            saq_model.Save(out);
+            out.write(
+                reinterpret_cast<const char*>(saq_chunk_epsilons.get()),
+                static_cast<std::streamsize>(saq_model.num_chunks * sizeof(float))
+            );
+        }
 
         for (size_t i = 0; i < num_clusters; ++i) {
             out.write(reinterpret_cast<const char*>(&clusters[i].num_embeddings), sizeof(uint32_t));
@@ -192,7 +232,7 @@ class IVF : public skmeans::AllocatorHolder {
 
     [[nodiscard]] uint64_t GetClusterDataSizeInBytes(const uint32_t num_embeddings) const {
         return static_cast<uint64_t>(num_embeddings) *
-               (num_dimensions * sizeof(data_t) + sizeof(uint32_t));
+               (GetValuesPerEmbedding() * sizeof(data_t) + sizeof(uint32_t));
     }
 
     // The first half of the stream format (SaveToStream): what a search keeps in memory, with the
@@ -202,6 +242,13 @@ class IVF : public skmeans::AllocatorHolder {
         WriteValue(out, num_vertical_dimensions);
         WriteValue(out, num_horizontal_dimensions);
         WriteValue(out, num_clusters);
+        if constexpr (Q == Quantization::SAQ) {
+            saq_model.Save(out);
+            out.write(
+                reinterpret_cast<const char*>(saq_chunk_epsilons.get()),
+                static_cast<std::streamsize>(saq_model.num_chunks * sizeof(float))
+            );
+        }
         std::unique_ptr<uint64_t[]> cluster_data_offsets_to_save(new uint64_t[num_clusters]);
         uint64_t cluster_data_offset = 0;
         for (size_t position = 0; position < num_clusters; ++position) {
@@ -244,13 +291,19 @@ class IVF : public skmeans::AllocatorHolder {
         num_vertical_dimensions = ReadValue<uint32_t>(reader);
         num_horizontal_dimensions = ReadValue<uint32_t>(reader);
         num_clusters = ReadValue<uint32_t>(reader);
+        if constexpr (Q == Quantization::SAQ) {
+            saq_model.Load(reader);
+            saq_chunk_epsilons.reset(new float[saq_model.num_chunks]);
+            reader.Read(saq_chunk_epsilons.get(), saq_model.num_chunks * sizeof(float));
+        }
         clusters.reserve(num_clusters);
         cluster_data_offsets.resize(num_clusters);
+        const ClusterFormat<Q> cluster_format = GetClusterFormat();
         for (uint32_t i = 0; i < num_clusters; ++i) {
             const auto num_embeddings = ReadValue<uint32_t>(reader);
             const auto max_capacity = ReadValue<uint32_t>(reader);
             clusters.emplace_back(
-                num_embeddings, max_capacity, num_dimensions, &GetAllocator(), allocate_cluster_data
+                num_embeddings, max_capacity, cluster_format, &GetAllocator(), allocate_cluster_data
             );
             clusters[i].id = i;
             cluster_data_offsets[i] = ReadValue<uint64_t>(reader);
@@ -316,6 +369,11 @@ class IVF : public skmeans::AllocatorHolder {
         in_memory_size_in_bytes += centroids.GetAllocatedSizeInBytes();
         in_memory_size_in_bytes += num_clusters * sizeof(size_t); // cluster_offsets
         in_memory_size_in_bytes += cluster_data_offsets.capacity() * sizeof(uint64_t);
+        if constexpr (Q == Quantization::SAQ) {
+            // The model's sizeof is already in the IVF's
+            in_memory_size_in_bytes += saq_model.GetInMemorySizeInBytes() - sizeof(saq_model) +
+                                       saq_model.num_chunks * sizeof(float);
+        }
         return in_memory_size_in_bytes;
     }
 };

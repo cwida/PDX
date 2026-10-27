@@ -341,7 +341,7 @@ TEST_P(CentroidQuantizationTest, MaintenanceKeepsRowsRecallAndAccounting) {
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     CentroidQuantizationTest,
-    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_tree_f32", "pdx_tree_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 
@@ -384,7 +384,7 @@ TEST_P(VanillaCentroidQuantizationTest, QuantizedCentroidsSaveTheirBytes) {
 INSTANTIATE_TEST_SUITE_P(
     VanillaIndexTypes,
     VanillaCentroidQuantizationTest,
-    ::testing::Values("pdx_f32", "pdx_u8"),
+    ::testing::Values("pdx_f32", "pdx_u8", "pdx_saq3", "pdx_saq4"),
     [](const ::testing::TestParamInfo<std::string>& info) { return info.param; }
 );
 
