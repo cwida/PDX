@@ -243,7 +243,7 @@ enum class ClusterStorageOrder : uint8_t { ID = 0, NEAREST_CENTROID_CHAIN = 1 };
     return static_cast<CentroidQuantization>(type_byte >> 4);
 }
 
-static constexpr uint8_t PDX_SERIALIZATION_VERSION = 4;
+static constexpr uint8_t PDX_SERIALIZATION_VERSION = 5;
 
 template <Quantization Q>
 struct DistanceType {

@@ -577,4 +577,51 @@ TEST(StreamSerialization, OtherVersionThrows) {
     EXPECT_THROW(PDX::LoadPDXIndexFromStream(other_version, pruner), std::runtime_error);
 }
 
+// Whether the SAQ pruning bound needs a recalibration after appends survives a stream load
+TEST(StreamSerialization, SAQKeepsDirtyCalibration) {
+    const size_t d = 128;
+    const size_t n_build = TestUtils::N_TRAIN / 2;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+    };
+    auto shared_rotation =
+        MakeSharedRotation("pdx_saq4", config, data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
+    PDX::PDXIndexSAQ index(config, pruner, shared_rotation.saq_model);
+    index.BuildIndex(data.train.data(), n_build);
+    std::vector<size_t> row_ids(TestUtils::N_TRAIN - n_build);
+    std::iota(row_ids.begin(), row_ids.end(), n_build);
+    index.BulkAppend(row_ids.data(), data.train.data() + n_build * d, row_ids.size());
+
+    const auto epsilons = [](const PDX::IPDXIndex& saq_index) {
+        const auto& pdx_data =
+            dynamic_cast<const PDX::PDXIndexSAQ&>(saq_index).GetSearcher().pdx_data;
+        return std::vector<float>(
+            pdx_data.saq_chunk_epsilons.get(),
+            pdx_data.saq_chunk_epsilons.get() + pdx_data.saq_model.num_chunks
+        );
+    };
+    const auto save_and_load = [&](PDX::IPDXIndex& saved) {
+        std::stringstream stream;
+        saved.SaveToStream(stream);
+        return PDX::LoadPDXIndexFromStream(stream, pruner);
+    };
+
+    auto dirty = save_and_load(index);
+    const auto saved_epsilons = epsilons(*dirty);
+    dirty->CalibrateIndex();
+    EXPECT_NE(epsilons(*dirty), saved_epsilons);
+
+    auto calibrated = save_and_load(*dirty);
+    const auto calibrated_epsilons = epsilons(*calibrated);
+    calibrated->CalibrateIndex();
+    EXPECT_EQ(epsilons(*calibrated), calibrated_epsilons);
+}
+
 } // namespace
