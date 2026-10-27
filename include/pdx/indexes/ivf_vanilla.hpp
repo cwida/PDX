@@ -84,7 +84,6 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     virtual bool Delete(size_t row_id) = 0;
     // Leaves one free slot per cluster, for an index that stops receiving appends.
     virtual void ShrinkToFit() {}
-    virtual void CalibrateIndex() {}
     virtual std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const = 0;
     bool Contains(size_t row_id) const { return GetRowIdMapping(row_id).first != DELETED_MARKER; }
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
@@ -672,8 +671,8 @@ class PDXIndex : public IPDXIndex {
         );
         SetRowIdMapping(row_id, closest_centroid_idx, new_index_in_cluster);
         index.total_num_embeddings++;
-        index.dirty_calibration = true;
         CheckClusterHealth(cluster);
+        CalibratePruningBoundIfGrown();
     }
 
     void BulkAppend(const size_t* row_ids, const float* embeddings, size_t num_embeddings)
@@ -705,13 +704,13 @@ class PDXIndex : public IPDXIndex {
             pending_row_ids[i] = static_cast<uint32_t>(row_ids[i]);
         }
         skmeans::AllocatedBuffer<float> held_embeddings;
-        index.dirty_calibration = true;
         while (pending_row_ids.get_deleter().Size() > 0) {
             PDX_PROFILE_SCOPE("BulkAppend/Round");
             held_embeddings = BulkAppendRound(ivf_utils, pending_embeddings, pending_row_ids);
             pending_embeddings = held_embeddings.get();
         }
         index.ComputeClusterOffsets();
+        CalibratePruningBoundIfGrown();
     }
 
     // Concurrent deletes must always go through a single writer thread
@@ -747,16 +746,7 @@ class PDXIndex : public IPDXIndex {
         index.ComputeClusterOffsets();
     }
 
-    void CalibrateIndex() override {
-        if constexpr (Q == SAQ) {
-            if (index.dirty_calibration && index.total_num_embeddings > 0) {
-                CalibratePruningBound();
-            }
-        }
-    }
-
-    // For DuckIR: recalibrates the SAQ pruning bound on rows of this index, taken as BulkAppend
-    // takes them (e.g. once its row group stops receiving appends)
+    // Recalibrates the SAQ pruning bound on rows of this index, taken as BulkAppend takes them
     void CalibratePruningBound(
         const size_t* row_ids,
         const float* embeddings,
@@ -895,6 +885,16 @@ class PDXIndex : public IPDXIndex {
         return sampled_row_ids;
     }
 
+    void CalibratePruningBoundIfGrown() {
+        if constexpr (Q == SAQ) {
+            if (static_cast<double>(index.total_num_embeddings) >=
+                SAQ_RECALIBRATION_GROWTH_FACTOR *
+                    static_cast<double>(index.num_embeddings_at_calibration)) {
+                CalibratePruningBound();
+            }
+        }
+    }
+
     // Calibrates the SAQ pruning bound on up to SAQ_CALIBRATION_QUERIES of these rows of the index,
     // sampled with the config's seed and transformed unless they already are
     void CalibrateSAQPruningBoundOnSample(
@@ -937,7 +937,7 @@ class PDXIndex : public IPDXIndex {
             num_pseudo_queries,
             config.saq_pruning_significance
         );
-        index.dirty_calibration = false;
+        index.num_embeddings_at_calibration = index.total_num_embeddings;
     }
 
     void SetRowIdMapping(uint32_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {

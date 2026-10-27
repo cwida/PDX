@@ -82,7 +82,7 @@ means); merges move encoded centroids as they are.
 
 Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, `pdx_u8`, `pdx_tree_f32`, `pdx_tree_u8`;
 `pdx_saq3`/`pdx_saq4` give `PDX_SAQ` (5) with the config's bits; `PDX_FLAT` is serialization only). `IVF<SAQ>` saves its
-`SAQModel`, per-chunk ε and `dirty_calibration` right after the header in all four blocks (`Save`/`Load`, `SaveResidentData`/
+`SAQModel`, per-chunk ε and `num_embeddings_at_calibration` right after the header in all four blocks (`Save`/`Load`, `SaveResidentData`/
 `LoadResidentData`); T stays with the pruner, written dense.
 - File: `Save(path)` / `LoadPDXIndex(path)` write and read the type byte, the rotation matrix (`WriteRotationMatrix` /
   `ReadRotationMatrix`) and the payload, but no `PDXIndexConfig`: a restored index has the default config (e.g. no
@@ -185,10 +185,9 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
   (the near-isotropic test data: up to 0.035 probing every cluster). `CalibratePruningBound(row_ids, embeddings, n)` recalibrates on the
   caller's rows; `CalibratePruningBound()` on up to `SAQ_CALIBRATION_QUERIES` live rows sampled from the index
   (`SampleLiveRowIds`) and decoded, which calibrates as well as the original rows. The bound goes stale when appended
-  rows differ from the ones it was calibrated on (rows stored in order); when to recalibrate is the caller's call.
-  `IPDXIndex::CalibrateIndex()` (a no-op on other indexes) runs `CalibratePruningBound()` only if rows were appended
-  since the last calibration (`IVF::dirty_calibration`, saved after ε, so a reloaded index keeps it), e.g. when the
-  caller stops appending to the index.
+  rows differ from the ones it was calibrated on (rows stored in order), so the index recalibrates itself: `Append` and
+  `BulkAppend` end with `CalibratePruningBound()` once the live rows reach `SAQ_RECALIBRATION_GROWTH_FACTOR` (1.25)
+  times `IVF::num_embeddings_at_calibration` (saved after ε; the loaders restore `total_num_embeddings`).
 - **Maintenance**: codes don't depend on the cluster (global mean, frozen model), so splits, steals, merges and
   `ReassignEmbeddings` move encoded rows as they are; decoded floats only drive the 2-means and the assignments.
   `GetEmbeddingsFromIndexByRowIds` returns decoded rows in T-space.

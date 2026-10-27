@@ -577,8 +577,8 @@ TEST(StreamSerialization, OtherVersionThrows) {
     EXPECT_THROW(PDX::LoadPDXIndexFromStream(other_version, pruner), std::runtime_error);
 }
 
-// Whether the SAQ pruning bound needs a recalibration after appends survives a stream load
-TEST(StreamSerialization, SAQKeepsDirtyCalibration) {
+// A stream-loaded SAQ index recalibrates its pruning bound after the same growth as the saved one
+TEST(StreamSerialization, SAQRecalibrationGrowthSurvivesAStreamLoad) {
     const size_t d = 128;
     const size_t n_build = TestUtils::N_TRAIN / 2;
     auto data = TestUtils::LoadTestData(d);
@@ -595,33 +595,32 @@ TEST(StreamSerialization, SAQKeepsDirtyCalibration) {
     PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
     PDX::PDXIndexSAQ index(config, pruner, shared_rotation.saq_model);
     index.BuildIndex(data.train.data(), n_build);
-    std::vector<size_t> row_ids(TestUtils::N_TRAIN - n_build);
-    std::iota(row_ids.begin(), row_ids.end(), n_build);
-    index.BulkAppend(row_ids.data(), data.train.data() + n_build * d, row_ids.size());
 
-    const auto epsilons = [](const PDX::IPDXIndex& saq_index) {
+    std::stringstream stream;
+    index.SaveToStream(stream);
+    auto loaded = PDX::LoadPDXIndexFromStream(stream, pruner);
+    const auto epsilons = [&]() {
         const auto& pdx_data =
-            dynamic_cast<const PDX::PDXIndexSAQ&>(saq_index).GetSearcher().pdx_data;
+            dynamic_cast<const PDX::PDXIndexSAQ&>(*loaded).GetSearcher().pdx_data;
         return std::vector<float>(
             pdx_data.saq_chunk_epsilons.get(),
             pdx_data.saq_chunk_epsilons.get() + pdx_data.saq_model.num_chunks
         );
     };
-    const auto save_and_load = [&](PDX::IPDXIndex& saved) {
-        std::stringstream stream;
-        saved.SaveToStream(stream);
-        return PDX::LoadPDXIndexFromStream(stream, pruner);
+    const auto bulk_append = [&](size_t first_row_id, size_t end_row_id) {
+        std::vector<size_t> row_ids(end_row_id - first_row_id);
+        std::iota(row_ids.begin(), row_ids.end(), first_row_id);
+        loaded->BulkAppend(row_ids.data(), data.train.data() + first_row_id * d, row_ids.size());
     };
+    const auto saved_epsilons = epsilons();
+    const auto num_grown = static_cast<size_t>(
+        std::ceil(PDX::SAQ_RECALIBRATION_GROWTH_FACTOR * static_cast<double>(n_build))
+    );
 
-    auto dirty = save_and_load(index);
-    const auto saved_epsilons = epsilons(*dirty);
-    dirty->CalibrateIndex();
-    EXPECT_NE(epsilons(*dirty), saved_epsilons);
-
-    auto calibrated = save_and_load(*dirty);
-    const auto calibrated_epsilons = epsilons(*calibrated);
-    calibrated->CalibrateIndex();
-    EXPECT_EQ(epsilons(*calibrated), calibrated_epsilons);
+    bulk_append(n_build, (n_build + num_grown) / 2);
+    EXPECT_EQ(epsilons(), saved_epsilons);
+    bulk_append((n_build + num_grown) / 2, TestUtils::N_TRAIN);
+    EXPECT_NE(epsilons(), saved_epsilons);
 }
 
 } // namespace

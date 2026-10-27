@@ -55,7 +55,7 @@ class IVF : public skmeans::AllocatorHolder {
     // SAQ-specific parameters
     SAQModel saq_model;
     std::unique_ptr<float[]> saq_chunk_epsilons;
-    bool dirty_calibration = false;
+    uint64_t num_embeddings_at_calibration = 0;
 
     IVF() = default;
     ~IVF() = default;
@@ -177,7 +177,7 @@ class IVF : public skmeans::AllocatorHolder {
             saq_model.Load(reader);
             saq_chunk_epsilons.reset(new float[saq_model.num_chunks]);
             reader.Read(saq_chunk_epsilons.get(), saq_model.num_chunks * sizeof(float));
-            dirty_calibration = ReadValue<char>(reader) != 0;
+            num_embeddings_at_calibration = ReadValue<uint64_t>(reader);
         }
         LoadClusters(reader);
 
@@ -206,7 +206,7 @@ class IVF : public skmeans::AllocatorHolder {
                 reinterpret_cast<const char*>(saq_chunk_epsilons.get()),
                 static_cast<std::streamsize>(saq_model.num_chunks * sizeof(float))
             );
-            WriteValue(out, static_cast<char>(dirty_calibration));
+            WriteValue(out, num_embeddings_at_calibration);
         }
 
         for (size_t i = 0; i < num_clusters; ++i) {
@@ -252,7 +252,7 @@ class IVF : public skmeans::AllocatorHolder {
                 reinterpret_cast<const char*>(saq_chunk_epsilons.get()),
                 static_cast<std::streamsize>(saq_model.num_chunks * sizeof(float))
             );
-            WriteValue(out, static_cast<char>(dirty_calibration));
+            WriteValue(out, num_embeddings_at_calibration);
         }
         std::unique_ptr<uint64_t[]> cluster_data_offsets_to_save(new uint64_t[num_clusters]);
         uint64_t cluster_data_offset = 0;
@@ -300,7 +300,7 @@ class IVF : public skmeans::AllocatorHolder {
             saq_model.Load(reader);
             saq_chunk_epsilons.reset(new float[saq_model.num_chunks]);
             reader.Read(saq_chunk_epsilons.get(), saq_model.num_chunks * sizeof(float));
-            dirty_calibration = ReadValue<char>(reader) != 0;
+            num_embeddings_at_calibration = ReadValue<uint64_t>(reader);
         }
         clusters.reserve(num_clusters);
         cluster_data_offsets.resize(num_clusters);

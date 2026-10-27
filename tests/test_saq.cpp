@@ -554,8 +554,8 @@ TEST(SAQPruningBoundTest, RecalibrationOnDecodedRowsSkipsDeletedRows) {
     EXPECT_NO_THROW(index.CalibratePruningBound());
 }
 
-// CalibrateIndex recalibrates the pruning bound only after rows were appended
-TEST(SAQPruningBoundTest, CalibrateIndexRecalibratesOnlyAfterAppends) {
+// Appends recalibrate the pruning bound once the live rows have grown by the growth factor
+TEST(SAQPruningBoundTest, AppendsRecalibrateOnceTheIndexHasGrown) {
     constexpr size_t d = TestUtils::MAX_D;
     const auto data = TestUtils::LoadTestData(d);
     PDX::PDXIndexConfig config{
@@ -577,13 +577,19 @@ TEST(SAQPruningBoundTest, CalibrateIndexRecalibratesOnlyAfterAppends) {
         );
     };
     const auto built_epsilons = epsilons();
-    index.CalibrateIndex();
-    EXPECT_EQ(epsilons(), built_epsilons);
+    const auto num_grown = static_cast<size_t>(
+        std::ceil(PDX::SAQ_RECALIBRATION_GROWTH_FACTOR * static_cast<double>(num_built))
+    );
+    const size_t num_bulk_appended = (num_built + num_grown) / 2;
 
-    std::vector<size_t> row_ids(TestUtils::N_TRAIN - num_built);
+    std::vector<size_t> row_ids(num_bulk_appended - num_built);
     std::iota(row_ids.begin(), row_ids.end(), num_built);
     index.BulkAppend(row_ids.data(), data.train.data() + num_built * d, row_ids.size());
-    index.CalibrateIndex();
+    EXPECT_EQ(epsilons(), built_epsilons);
+
+    for (size_t row_id = num_bulk_appended; row_id < num_grown; ++row_id) {
+        index.Append(row_id, data.train.data() + row_id * d);
+    }
     const auto recalibrated_epsilons = epsilons();
     EXPECT_NE(recalibrated_epsilons, built_epsilons);
     index.CalibratePruningBound();
