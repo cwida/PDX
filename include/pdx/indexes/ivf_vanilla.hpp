@@ -84,6 +84,7 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     virtual bool Delete(size_t row_id) = 0;
     // Leaves one free slot per cluster, for an index that stops receiving appends.
     virtual void ShrinkToFit() {}
+    virtual void CalibrateIndex() {}
     virtual std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const = 0;
     bool Contains(size_t row_id) const { return GetRowIdMapping(row_id).first != DELETED_MARKER; }
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
@@ -197,6 +198,7 @@ class PDXIndex : public IPDXIndex {
     std::unique_ptr<PDX::PDXearch<Q>> searcher;
     RowIdClusterMapping row_id_cluster_mapping;
     uint32_t split_depth = 0;
+    bool dirty_calibration = false;
 
   public:
     PDXIndex() = default;
@@ -671,6 +673,7 @@ class PDXIndex : public IPDXIndex {
         );
         SetRowIdMapping(row_id, closest_centroid_idx, new_index_in_cluster);
         index.total_num_embeddings++;
+        dirty_calibration = true;
         CheckClusterHealth(cluster);
     }
 
@@ -703,6 +706,7 @@ class PDXIndex : public IPDXIndex {
             pending_row_ids[i] = static_cast<uint32_t>(row_ids[i]);
         }
         skmeans::AllocatedBuffer<float> held_embeddings;
+        dirty_calibration = true;
         while (pending_row_ids.get_deleter().Size() > 0) {
             PDX_PROFILE_SCOPE("BulkAppend/Round");
             held_embeddings = BulkAppendRound(ivf_utils, pending_embeddings, pending_row_ids);
@@ -742,6 +746,14 @@ class PDXIndex : public IPDXIndex {
         }
         index.centroids.ShrinkToFit();
         index.ComputeClusterOffsets();
+    }
+
+    void CalibrateIndex() override {
+        if constexpr (Q == SAQ) {
+            if (dirty_calibration && index.total_num_embeddings > 0) {
+                CalibratePruningBound();
+            }
+        }
     }
 
     // For DuckIR: recalibrates the SAQ pruning bound on rows of this index, taken as BulkAppend
@@ -926,6 +938,7 @@ class PDXIndex : public IPDXIndex {
             num_pseudo_queries,
             config.saq_pruning_significance
         );
+        dirty_calibration = false;
     }
 
     void SetRowIdMapping(uint32_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {

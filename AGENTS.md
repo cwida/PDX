@@ -186,6 +186,8 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
   caller's rows; `CalibratePruningBound()` on up to `SAQ_CALIBRATION_QUERIES` live rows sampled from the index
   (`SampleLiveRowIds`) and decoded, which calibrates as well as the original rows. The bound goes stale when appended
   rows differ from the ones it was calibrated on (rows stored in order); when to recalibrate is the caller's call.
+  `IPDXIndex::CalibrateIndex()` (a no-op on other indexes) runs `CalibratePruningBound()` only if rows were appended
+  since the last calibration (`dirty_calibration`, not serialized), e.g. when the caller stops appending to the index.
 - **Maintenance**: codes don't depend on the cluster (global mean, frozen model), so splits, steals, merges and
   `ReassignEmbeddings` move encoded rows as they are; decoded floats only drive the 2-means and the assignments.
   `GetEmbeddingsFromIndexByRowIds` returns decoded rows in T-space.
