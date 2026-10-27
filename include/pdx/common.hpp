@@ -138,6 +138,7 @@ static constexpr size_t SAQ_SCAN_PADDING = 16;
 static constexpr size_t SAQ_CALIBRATION_QUERIES = 1000;
 static constexpr uint32_t SAQ_CALIBRATION_CLUSTERS = 16;
 static constexpr size_t SAQ_CALIBRATION_NEIGHBORS = 20;
+static constexpr double SAQ_RECALIBRATION_GROWTH_FACTOR = 1.25;
 // Filtered SAQ scans by the fraction of a cluster's rows that pass: below the first, the start runs
 // the pruning kernels (the rows that don't pass skip their tail chunks); below the second, the head
 // reads only the passing rows instead of scanning every row
@@ -243,7 +244,7 @@ enum class ClusterStorageOrder : uint8_t { ID = 0, NEAREST_CENTROID_CHAIN = 1 };
     return static_cast<CentroidQuantization>(type_byte >> 4);
 }
 
-static constexpr uint8_t PDX_SERIALIZATION_VERSION = 4;
+static constexpr uint8_t PDX_SERIALIZATION_VERSION = 5;
 
 template <Quantization Q>
 struct DistanceType {

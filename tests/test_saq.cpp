@@ -554,4 +554,46 @@ TEST(SAQPruningBoundTest, RecalibrationOnDecodedRowsSkipsDeletedRows) {
     EXPECT_NO_THROW(index.CalibratePruningBound());
 }
 
+// Appends recalibrate the pruning bound once the live rows have grown by the growth factor
+TEST(SAQPruningBoundTest, AppendsRecalibrateOnceTheIndexHasGrown) {
+    constexpr size_t d = TestUtils::MAX_D;
+    const auto data = TestUtils::LoadTestData(d);
+    PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+    };
+    PDX::PDXIndexSAQ index(config);
+    const size_t num_built = TestUtils::N_TRAIN / 2;
+    index.BuildIndex(data.train.data(), num_built);
+    const auto epsilons = [&]() {
+        const auto& pdx_data = index.GetSearcher().pdx_data;
+        return std::vector<float>(
+            pdx_data.saq_chunk_epsilons.get(),
+            pdx_data.saq_chunk_epsilons.get() + pdx_data.saq_model.num_chunks
+        );
+    };
+    const auto built_epsilons = epsilons();
+    const auto num_grown = static_cast<size_t>(
+        std::ceil(PDX::SAQ_RECALIBRATION_GROWTH_FACTOR * static_cast<double>(num_built))
+    );
+    const size_t num_bulk_appended = (num_built + num_grown) / 2;
+
+    std::vector<size_t> row_ids(num_bulk_appended - num_built);
+    std::iota(row_ids.begin(), row_ids.end(), num_built);
+    index.BulkAppend(row_ids.data(), data.train.data() + num_built * d, row_ids.size());
+    EXPECT_EQ(epsilons(), built_epsilons);
+
+    for (size_t row_id = num_bulk_appended; row_id < num_grown; ++row_id) {
+        index.Append(row_id, data.train.data() + row_id * d);
+    }
+    const auto recalibrated_epsilons = epsilons();
+    EXPECT_NE(recalibrated_epsilons, built_epsilons);
+    index.CalibratePruningBound();
+    EXPECT_EQ(epsilons(), recalibrated_epsilons);
+}
+
 } // namespace

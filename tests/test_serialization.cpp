@@ -577,4 +577,50 @@ TEST(StreamSerialization, OtherVersionThrows) {
     EXPECT_THROW(PDX::LoadPDXIndexFromStream(other_version, pruner), std::runtime_error);
 }
 
+// A stream-loaded SAQ index recalibrates its pruning bound after the same growth as the saved one
+TEST(StreamSerialization, SAQRecalibrationGrowthSurvivesAStreamLoad) {
+    const size_t d = 128;
+    const size_t n_build = TestUtils::N_TRAIN / 2;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+    };
+    auto shared_rotation =
+        MakeSharedRotation("pdx_saq4", config, data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
+    PDX::PDXIndexSAQ index(config, pruner, shared_rotation.saq_model);
+    index.BuildIndex(data.train.data(), n_build);
+
+    std::stringstream stream;
+    index.SaveToStream(stream);
+    auto loaded = PDX::LoadPDXIndexFromStream(stream, pruner);
+    const auto epsilons = [&]() {
+        const auto& pdx_data =
+            dynamic_cast<const PDX::PDXIndexSAQ&>(*loaded).GetSearcher().pdx_data;
+        return std::vector<float>(
+            pdx_data.saq_chunk_epsilons.get(),
+            pdx_data.saq_chunk_epsilons.get() + pdx_data.saq_model.num_chunks
+        );
+    };
+    const auto bulk_append = [&](size_t first_row_id, size_t end_row_id) {
+        std::vector<size_t> row_ids(end_row_id - first_row_id);
+        std::iota(row_ids.begin(), row_ids.end(), first_row_id);
+        loaded->BulkAppend(row_ids.data(), data.train.data() + first_row_id * d, row_ids.size());
+    };
+    const auto saved_epsilons = epsilons();
+    const auto num_grown = static_cast<size_t>(
+        std::ceil(PDX::SAQ_RECALIBRATION_GROWTH_FACTOR * static_cast<double>(n_build))
+    );
+
+    bulk_append(n_build, (n_build + num_grown) / 2);
+    EXPECT_EQ(epsilons(), saved_epsilons);
+    bulk_append((n_build + num_grown) / 2, TestUtils::N_TRAIN);
+    EXPECT_NE(epsilons(), saved_epsilons);
+}
+
 } // namespace

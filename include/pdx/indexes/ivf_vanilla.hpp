@@ -672,6 +672,7 @@ class PDXIndex : public IPDXIndex {
         SetRowIdMapping(row_id, closest_centroid_idx, new_index_in_cluster);
         index.total_num_embeddings++;
         CheckClusterHealth(cluster);
+        CalibratePruningBoundIfGrown();
     }
 
     void BulkAppend(const size_t* row_ids, const float* embeddings, size_t num_embeddings)
@@ -709,6 +710,7 @@ class PDXIndex : public IPDXIndex {
             pending_embeddings = held_embeddings.get();
         }
         index.ComputeClusterOffsets();
+        CalibratePruningBoundIfGrown();
     }
 
     // Concurrent deletes must always go through a single writer thread
@@ -744,8 +746,7 @@ class PDXIndex : public IPDXIndex {
         index.ComputeClusterOffsets();
     }
 
-    // For DuckIR: recalibrates the SAQ pruning bound on rows of this index, taken as BulkAppend
-    // takes them (e.g. once its row group stops receiving appends)
+    // Recalibrates the SAQ pruning bound on rows of this index, taken as BulkAppend takes them
     void CalibratePruningBound(
         const size_t* row_ids,
         const float* embeddings,
@@ -884,6 +885,16 @@ class PDXIndex : public IPDXIndex {
         return sampled_row_ids;
     }
 
+    void CalibratePruningBoundIfGrown() {
+        if constexpr (Q == SAQ) {
+            if (static_cast<double>(index.total_num_embeddings) >=
+                SAQ_RECALIBRATION_GROWTH_FACTOR *
+                    static_cast<double>(index.num_embeddings_at_calibration)) {
+                CalibratePruningBound();
+            }
+        }
+    }
+
     // Calibrates the SAQ pruning bound on up to SAQ_CALIBRATION_QUERIES of these rows of the index,
     // sampled with the config's seed and transformed unless they already are
     void CalibrateSAQPruningBoundOnSample(
@@ -926,6 +937,7 @@ class PDXIndex : public IPDXIndex {
             num_pseudo_queries,
             config.saq_pruning_significance
         );
+        index.num_embeddings_at_calibration = index.total_num_embeddings;
     }
 
     void SetRowIdMapping(uint32_t row_id, uint32_t cluster_id, uint32_t idx_in_cluster) {
