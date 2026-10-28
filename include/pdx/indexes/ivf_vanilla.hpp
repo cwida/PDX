@@ -61,6 +61,9 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     virtual std::pair<uint64_t, uint64_t> GetClusterDataRange(uint32_t /*cluster_id*/) const {
         throw std::logic_error("GetClusterDataRange: the index does not page its clusters");
     }
+    virtual std::pair<uint64_t, uint64_t> GetClusterSketchRange(uint32_t /*cluster_id*/) const {
+        throw std::logic_error("GetClusterSketchRange: the index does not page its clusters");
+    }
     virtual uint32_t GetNumDimensions() const = 0;
     virtual uint32_t GetNumClusters() const = 0;
     virtual uint32_t GetClusterSize(uint32_t cluster_id) const = 0;
@@ -294,13 +297,19 @@ class PDXIndex : public IPDXIndex {
         index.SaveResidentData(out, storage_order.get());
         row_id_cluster_mapping.Save(out);
         index.SaveClusterData(out, storage_order.get());
+        if (index.sketch_mean) {
+            index.SaveSketchData(out, storage_order.get());
+        }
     }
 
     void LoadFromStream(std::istream& in) override {
         StreamReader reader{in};
         index.LoadResidentData(reader, config.centroid_quantization);
         row_id_cluster_mapping.Load(reader);
-        index.LoadClusterData(reader);
+        const uint64_t cluster_data_end = index.LoadClusterData(reader);
+        if (index.sketch_mean) {
+            index.LoadSketchData(reader, cluster_data_end);
+        }
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);
     }
 
@@ -318,6 +327,13 @@ class PDXIndex : public IPDXIndex {
         return {
             index.cluster_data_offsets.at(cluster_id),
             index.GetClusterDataSizeInBytes(index.clusters[cluster_id].used_capacity)
+        };
+    }
+
+    std::pair<uint64_t, uint64_t> GetClusterSketchRange(uint32_t cluster_id) const override {
+        return {
+            index.cluster_sketch_offsets.at(cluster_id),
+            index.clusters[cluster_id].GetSavedSketchesSizeInBytes()
         };
     }
 

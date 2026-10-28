@@ -391,7 +391,7 @@ struct Cluster : skmeans::AllocatorHolder {
     }
 
     size_t GetSavedSketchesSizeInBytes() const {
-        return ClusterSketchQuantizer::GetNumBatches(num_embeddings) *
+        return ClusterSketchQuantizer::GetNumBatches(used_capacity) *
                sketch_quantizer.batch_size_in_bytes;
     }
 

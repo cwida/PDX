@@ -48,6 +48,7 @@ class IVF : public skmeans::AllocatorHolder {
     size_t total_capacity{0};
     std::unique_ptr<size_t[]> cluster_offsets;
     std::vector<uint64_t> cluster_data_offsets;
+    std::vector<uint64_t> cluster_sketch_offsets;
     bool is_normalized{};
     Centroids centroids;
     std::unique_ptr<float[]> sketch_mean;
@@ -260,6 +261,13 @@ class IVF : public skmeans::AllocatorHolder {
             );
             WriteValue(out, num_embeddings_at_calibration);
         }
+        WriteValue(out, static_cast<uint8_t>(sketch_mean != nullptr));
+        if (sketch_mean) {
+            out.write(
+                reinterpret_cast<const char*>(sketch_mean.get()),
+                static_cast<std::streamsize>(num_dimensions * sizeof(float))
+            );
+        }
         std::unique_ptr<uint64_t[]> cluster_data_offsets_to_save(new uint64_t[num_clusters]);
         uint64_t cluster_data_offset = 0;
         for (size_t position = 0; position < num_clusters; ++position) {
@@ -267,10 +275,24 @@ class IVF : public skmeans::AllocatorHolder {
             cluster_data_offsets_to_save[cluster_id] = cluster_data_offset;
             cluster_data_offset += GetClusterDataSizeInBytes(clusters[cluster_id].num_embeddings);
         }
+        // The sketch section follows the cluster data, in the same storage order
+        std::unique_ptr<uint64_t[]> cluster_sketch_offsets_to_save;
+        if (sketch_mean) {
+            cluster_sketch_offsets_to_save.reset(new uint64_t[num_clusters]);
+            uint64_t cluster_sketch_offset = cluster_data_offset;
+            for (size_t position = 0; position < num_clusters; ++position) {
+                const uint32_t cluster_id = storage_order[position];
+                cluster_sketch_offsets_to_save[cluster_id] = cluster_sketch_offset;
+                cluster_sketch_offset += clusters[cluster_id].GetSavedSketchesSizeInBytes();
+            }
+        }
         for (size_t i = 0; i < num_clusters; ++i) {
             WriteValue(out, clusters[i].num_embeddings);
             WriteValue(out, clusters[i].max_capacity);
             WriteValue(out, cluster_data_offsets_to_save[i]);
+            if (sketch_mean) {
+                WriteValue(out, cluster_sketch_offsets_to_save[i]);
+            }
         }
         WriteValue(out, static_cast<char>(is_normalized));
         centroids.Save(out);
@@ -292,6 +314,13 @@ class IVF : public skmeans::AllocatorHolder {
         }
     }
 
+    // After the cluster data: each cluster's sketch batches, in storage order.
+    void SaveSketchData(std::ostream& out, const uint32_t* storage_order) const {
+        for (size_t position = 0; position < num_clusters; ++position) {
+            clusters[storage_order[position]].SaveSketches(out);
+        }
+    }
+
     template <class Reader>
     void LoadResidentData(
         Reader& reader,
@@ -308,6 +337,12 @@ class IVF : public skmeans::AllocatorHolder {
             reader.Read(saq_chunk_epsilons.get(), saq_model.num_chunks * sizeof(float));
             num_embeddings_at_calibration = ReadValue<uint64_t>(reader);
         }
+        const bool has_sketches = ReadValue<uint8_t>(reader) != 0;
+        if (has_sketches) {
+            sketch_mean.reset(new float[num_dimensions]);
+            reader.Read(sketch_mean.get(), num_dimensions * sizeof(float));
+            cluster_sketch_offsets.resize(num_clusters);
+        }
         clusters.reserve(num_clusters);
         cluster_data_offsets.resize(num_clusters);
         const ClusterFormat<Q> cluster_format = GetClusterFormat();
@@ -319,6 +354,9 @@ class IVF : public skmeans::AllocatorHolder {
             );
             clusters[i].id = i;
             cluster_data_offsets[i] = ReadValue<uint64_t>(reader);
+            if (has_sketches) {
+                cluster_sketch_offsets[i] = ReadValue<uint64_t>(reader);
+            }
             total_num_embeddings += num_embeddings;
         }
         is_normalized = ReadValue<char>(reader) != 0;
@@ -335,8 +373,9 @@ class IVF : public skmeans::AllocatorHolder {
 
     // Reads the clusters in the order of their offsets, skipping the bytes between them. An empty
     // cluster holds no bytes (it shares its offset with the next cluster), so it is not read.
+    // Returns where it stopped, from the start of the cluster data.
     template <class Reader>
-    void LoadClusterData(Reader& reader) {
+    uint64_t LoadClusterData(Reader& reader) {
         std::vector<uint32_t> clusters_in_stream_order(num_clusters);
         std::iota(clusters_in_stream_order.begin(), clusters_in_stream_order.end(), 0);
         std::sort(
@@ -361,6 +400,34 @@ class IVF : public skmeans::AllocatorHolder {
             position = cluster_data_offsets[cluster_id] +
                        GetClusterDataSizeInBytes(cluster.num_embeddings);
         }
+        return position;
+    }
+
+    // The sketch section, as LoadClusterData reads the cluster data, from position (where
+    // LoadClusterData stopped).
+    template <class Reader>
+    void LoadSketchData(Reader& reader, uint64_t position) {
+        std::vector<uint32_t> clusters_in_stream_order(num_clusters);
+        std::iota(clusters_in_stream_order.begin(), clusters_in_stream_order.end(), 0);
+        std::sort(
+            clusters_in_stream_order.begin(),
+            clusters_in_stream_order.end(),
+            [&](uint32_t a, uint32_t b) {
+                return cluster_sketch_offsets[a] < cluster_sketch_offsets[b];
+            }
+        );
+        for (const uint32_t cluster_id : clusters_in_stream_order) {
+            auto& cluster = clusters[cluster_id];
+            if (cluster.num_embeddings == 0) {
+                continue;
+            }
+            if (cluster_sketch_offsets[cluster_id] < position) {
+                throw std::runtime_error("Overlapping cluster sketches in a PDX index stream");
+            }
+            reader.Skip(cluster_sketch_offsets[cluster_id] - position);
+            cluster.LoadSketches(reader);
+            position = cluster_sketch_offsets[cluster_id] + cluster.GetSavedSketchesSizeInBytes();
+        }
     }
 
     size_t GetAllocatedSizeInBytes() const {
@@ -382,6 +449,7 @@ class IVF : public skmeans::AllocatorHolder {
         in_memory_size_in_bytes += centroids.GetAllocatedSizeInBytes();
         in_memory_size_in_bytes += num_clusters * sizeof(size_t); // cluster_offsets
         in_memory_size_in_bytes += cluster_data_offsets.capacity() * sizeof(uint64_t);
+        in_memory_size_in_bytes += cluster_sketch_offsets.capacity() * sizeof(uint64_t);
         if (sketch_mean) {
             in_memory_size_in_bytes += num_dimensions * sizeof(float);
         }
