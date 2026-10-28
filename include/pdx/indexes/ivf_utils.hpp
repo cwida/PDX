@@ -38,7 +38,8 @@ struct PDXIndexConfig {
     bool is_data_transformed = false;
     size_t base_row_id = 0;
     uint32_t max_cluster_size = 0; // Clusters split at this size (0 = at 1.3x their initial size)
-    bool expect_appends = true;    // false: built clusters get one free slot (not serialized)
+    bool build_cluster_sketches = false;
+    bool expect_appends = true; // false: built clusters get one free slot (not serialized)
     CentroidQuantization centroid_quantization = CentroidQuantization::F32;
     ClusterStorageOrder cluster_storage_order = ClusterStorageOrder::NEAREST_CENTROID_CHAIN;
     uint32_t saq_bits_per_dimension = 3;
@@ -65,6 +66,7 @@ struct PDXIndexConfig {
         WriteValue(out, static_cast<uint8_t>(is_data_transformed));
         WriteValue(out, static_cast<uint64_t>(base_row_id));
         WriteValue(out, max_cluster_size);
+        WriteValue(out, static_cast<uint8_t>(build_cluster_sketches));
     }
 
     template <class Reader>
@@ -82,6 +84,7 @@ struct PDXIndexConfig {
         is_data_transformed = ReadValue<uint8_t>(reader) != 0;
         base_row_id = static_cast<size_t>(ReadValue<uint64_t>(reader));
         max_cluster_size = ReadValue<uint32_t>(reader);
+        build_cluster_sketches = ReadValue<uint8_t>(reader) != 0;
     }
 
     void Validate() const {

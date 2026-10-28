@@ -59,6 +59,9 @@ class PDXTreeIndex : public IPDXIndex {
 
     explicit PDXTreeIndex(PDXIndexConfig config) : config(config), d(config.num_dimensions) {
         config.Validate();
+        if (config.build_cluster_sketches) {
+            throw std::invalid_argument("PDXTreeIndex: the tree index has no cluster sketches");
+        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
@@ -72,6 +75,9 @@ class PDXTreeIndex : public IPDXIndex {
     PDXTreeIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
         : config(config), d(config.num_dimensions), pruner(&external_pruner) {
         config.Validate();
+        if (config.build_cluster_sketches) {
+            throw std::invalid_argument("PDXTreeIndex: the tree index has no cluster sketches");
+        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);

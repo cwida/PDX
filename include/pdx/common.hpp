@@ -153,6 +153,10 @@ static constexpr uint32_t SAQ_SCALE_GRID_POINTS = 4;
 static constexpr float SAQ_SCALE_GRID_SPAN = 0.25f;
 static constexpr float SAQ_LEVEL_ROUNDING_EPSILON = 1e-5f;
 
+static constexpr float CLUSTER_SKETCH_EPSILON = 1.9f;
+static constexpr size_t CLUSTER_SKETCH_BATCH_SIZE = 32;
+static constexpr uint32_t CLUSTER_SKETCH_DIMENSION_ALIGNMENT = 16;
+
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most
 // SPLIT_MAX_NEIGHBOR_CLUSTERS
@@ -225,6 +229,8 @@ enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1, LVQ4 = 2 };
 
 enum class ClusterStorageOrder : uint8_t { ID = 0, NEAREST_CENTROID_CHAIN = 1 };
 
+enum class ClusterSketchCheck : uint8_t { NEVER = 0, WHEN_CLUSTER_NOT_CACHED = 1, ALWAYS = 2 };
+
 // A saved index's type byte: its PDXIndexType in the low nibble, its CentroidQuantization in the
 // high
 [[nodiscard]] constexpr uint8_t MakeIndexTypeByte(
@@ -244,7 +250,7 @@ enum class ClusterStorageOrder : uint8_t { ID = 0, NEAREST_CENTROID_CHAIN = 1 };
     return static_cast<CentroidQuantization>(type_byte >> 4);
 }
 
-static constexpr uint8_t PDX_SERIALIZATION_VERSION = 5;
+static constexpr uint8_t PDX_SERIALIZATION_VERSION = 6;
 
 template <Quantization Q>
 struct DistanceType {

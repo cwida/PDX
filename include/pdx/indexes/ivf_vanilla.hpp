@@ -203,6 +203,11 @@ class PDXIndex : public IPDXIndex {
 
     explicit PDXIndex(PDXIndexConfig config) : config(config) {
         config.Validate();
+        if constexpr (Q == SAQ) {
+            if (config.build_cluster_sketches) {
+                throw std::invalid_argument("PDXIndex: SAQ indexes have no cluster sketches");
+            }
+        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
@@ -218,6 +223,11 @@ class PDXIndex : public IPDXIndex {
     PDXIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
         : config(config), pruner(&external_pruner) {
         config.Validate();
+        if constexpr (Q == SAQ) {
+            if (config.build_cluster_sketches) {
+                throw std::invalid_argument("PDXIndex: SAQ indexes have no cluster sketches");
+            }
+        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
