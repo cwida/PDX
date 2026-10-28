@@ -165,4 +165,75 @@ class ClusterSketchQuantizer {
     const size_t batch_size_in_bytes;
 };
 
+// A query's side of the sketch estimate (RaBitQ-Library's SplitBatchQuery, high-accuracy table).
+// The lookup table holds, per 4 dimensions, the 16 sums of the query values a nibble's bits pick,
+// as u16 split into low and high bytes; per group of 4 such codebooks, the 64 low bytes, then the
+// 64 high bytes.
+class ClusterSketchQuery {
+  public:
+    static constexpr uint32_t NIBBLE_VALUES = 16;
+    static constexpr uint32_t CODEBOOKS_PER_GROUP = 4;
+
+    // transformed_query and mean: normalized if the index needs it, then rotated
+    ClusterSketchQuery(
+        const float* PDX_RESTRICT transformed_query,
+        const float* PDX_RESTRICT mean,
+        const ClusterSketchQuantizer& quantizer
+    )
+        : num_codebooks(quantizer.padded_num_dimensions / 4),
+          lookup_table(new uint8_t[static_cast<size_t>(num_codebooks) * NIBBLE_VALUES * 2]) {
+        const uint32_t num_dimensions = quantizer.num_dimensions;
+        std::unique_ptr<float[]> padded_query(new float[quantizer.padded_num_dimensions]());
+        std::copy_n(transformed_query, num_dimensions, padded_query.get());
+        float query_sum = 0.0f;
+        squared_distance_to_mean = 0.0f;
+        for (uint32_t i = 0; i < num_dimensions; ++i) {
+            const float difference = transformed_query[i] - mean[i];
+            squared_distance_to_mean += difference * difference;
+            query_sum += transformed_query[i];
+        }
+        // Turns <b, q> into <b - 1/2, q>, b being a row's bits
+        centering_correction = -0.5f * query_sum;
+        error_scale = CLUSTER_SKETCH_EPSILON * std::sqrt(squared_distance_to_mean);
+
+        const size_t num_entries = static_cast<size_t>(num_codebooks) * NIBBLE_VALUES;
+        std::unique_ptr<float[]> entries(new float[num_entries]);
+        for (uint32_t codebook = 0; codebook < num_codebooks; ++codebook) {
+            const float* values = padded_query.get() + static_cast<size_t>(codebook) * 4;
+            for (uint32_t nibble = 0; nibble < NIBBLE_VALUES; ++nibble) {
+                entries[static_cast<size_t>(codebook) * NIBBLE_VALUES + nibble] =
+                    ((nibble & 8) ? values[0] : 0.0f) + ((nibble & 4) ? values[1] : 0.0f) +
+                    ((nibble & 2) ? values[2] : 0.0f) + ((nibble & 1) ? values[3] : 0.0f);
+            }
+        }
+        const auto [lowest, highest] = std::minmax_element(entries.get(), entries.get() + num_entries);
+        const float lowest_entry = *lowest;
+        lookup_table_step = (*highest - lowest_entry) / 65535.0f;
+        lookup_table_base_sum = lowest_entry * static_cast<float>(num_codebooks);
+        const float inverse_step = lookup_table_step > 0.0f ? 1.0f / lookup_table_step : 0.0f;
+        for (uint32_t codebook = 0; codebook < num_codebooks; ++codebook) {
+            const size_t group = codebook / CODEBOOKS_PER_GROUP;
+            uint8_t* low_bytes = lookup_table.get() +
+                                 group * CODEBOOKS_PER_GROUP * NIBBLE_VALUES * 2 +
+                                 (codebook % CODEBOOKS_PER_GROUP) * NIBBLE_VALUES;
+            uint8_t* high_bytes = low_bytes + CODEBOOKS_PER_GROUP * NIBBLE_VALUES;
+            for (uint32_t nibble = 0; nibble < NIBBLE_VALUES; ++nibble) {
+                const float entry = entries[static_cast<size_t>(codebook) * NIBBLE_VALUES + nibble];
+                const auto quantized =
+                    static_cast<uint16_t>(std::lround((entry - lowest_entry) * inverse_step));
+                low_bytes[nibble] = static_cast<uint8_t>(quantized & 0xFF);
+                high_bytes[nibble] = static_cast<uint8_t>(quantized >> 8);
+            }
+        }
+    }
+
+    const uint32_t num_codebooks;
+    std::unique_ptr<uint8_t[]> lookup_table;
+    float lookup_table_step;
+    float lookup_table_base_sum;
+    float centering_correction;
+    float squared_distance_to_mean;
+    float error_scale;
+};
+
 } // namespace PDX
