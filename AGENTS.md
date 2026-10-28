@@ -86,7 +86,7 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 `LoadResidentData`); T stays with the pruner, written dense.
 - File: `Save(path)` / `LoadPDXIndex(path)` write and read the type byte, the rotation matrix (`WriteRotationMatrix` /
   `ReadRotationMatrix`) and the payload, but no `PDXIndexConfig`: a restored index has the default config (e.g. no
-  `max_cluster_size`) but its centroid quantization.
+  `max_cluster_size`, no cluster sketches) but its centroid quantization.
 - The type byte (file and stream, `MakeIndexTypeByte`) holds the `PDXIndexType` in its low nibble and the
   `CentroidQuantization` in its high one (F32 = 0, so F32 indexes keep the bytes they had; Flat always writes 0). The
   payload holds the centroids in that encoding; an unknown one throws `std::runtime_error`.
@@ -98,6 +98,9 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
   `IVF::SaveResidentData` (cluster sizes and capacities, each cluster's offset in the cluster data, the centroids),
   then the row-id mapping (`RowIdClusterMapping::Save`), then `IVF::SaveClusterData` (per cluster: row ids, then
   compact PDX data). `LoadClusterData` reads by offset and skips gaps and empty clusters (which hold no bytes and share the next cluster's offset), so the writer may reorder or pad clusters.
+  With cluster sketches, the resident data also holds the sketch mean (before the cluster records, a `u8` flag first)
+  and each cluster's offset in a sketch section that follows the cluster data (`IVF::SaveSketchData`: every cluster's
+  batches in the same storage order; `LoadSketchData` reads them by offset, from where `LoadClusterData` stopped).
   `IVFTree` and `FlatIndex` stream the file format's payload.
 - Cluster storage order: `SaveResidentData`/`SaveClusterData` lay the clusters out in the order
   `IVFUtils::ComputeClusterStorageOrder` gives for `PDXIndexConfig::cluster_storage_order` (write-time, not
@@ -110,7 +113,10 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 - Paging: `LoadPDXIndexFromStream(in, pruner, &cluster_source)` (`LoadResidentDataFromStream`) loads a `PDXIndex`
   without its clusters' arrays (`data`/`indices` null; Flat and the tree load everything). `ProbeCluster` then gets
   a cluster's bytes from the caller's `IClusterSource` (`Acquire`/`Release`, concurrent; row ids, then PDX data with
-  stride `used_capacity`), which locates them with `GetClusterDataRange`. Such an index is read-only but for `Delete`,
+  stride `used_capacity`), which locates them with `GetClusterDataRange`. With cluster sketches, `AcquireSketch`/
+  `ReleaseSketch` give a cluster's sketch batches (`GetClusterSketchRange`, from the same start as the cluster data)
+  and `IsClusterCached` hints whether `Acquire` would find the bytes in memory; all three have defaults (no sketch, not
+  cached). Such an index is read-only but for `Delete`,
   which only tombstones (no `CheckClusterHealth`): the caller replays its deletes on a full load before rewriting it.
   `Append` throws; `GetEmbeddingsFromIndexByRowIds` acquires each cluster it reads once.
 - Every format is implemented once: the `Load` functions are templates over a reader (`BufferReader` for buffers,
@@ -195,6 +201,37 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
   needs 640 dimensions, past the test data, so `test_saq` covers it on synthetic rows: it checks the plan in all three
   regimes and the cluster layout for both heads.
 
+## Cluster sketches (`PDXIndexConfig::build_cluster_sketches`, `quantizers/cluster_sketch.hpp`)
+
+A 1-bit RaBitQ sketch of every row lets a search skip a probed cluster whose rows provably can't enter the heap, before
+fetching or scanning it (RemoteANN §3.2.1). `PDXIndex` on F32/U8 only: the tree, Flat and SAQ throw.
+- **Codec** (`ClusterSketchQuantizer`, RaBitQ-Library's split batches): a row's signs of its residual to the index's mean
+  (`IVF::sketch_mean`, d floats in the rotated space, frozen at `BuildIndex`: `ComputeMean` of up to
+  `CLUSTER_SKETCH_MEAN_SAMPLE_SIZE` rows), zero-padded to `CLUSTER_SKETCH_DIMENSION_ALIGNMENT` dimensions, and three
+  factors (`f_add`, `f_rescale`, `f_error`; `EncodeRow`, scalar for now). Codes don't depend on the cluster, so splits,
+  steals, merges and reassigns move sketch rows as they are (`sketch_rows` of `ReassignEmbeddings`,
+  `GatherGroupEmbeddings`, `StealNeighborEmbeddings`, `StoreEmbeddings`, `AppendEmbedding(s)`).
+- **Storage**: `Cluster::sketches`, apart from `data` and from the allocator: `GetNumBatches(max_capacity)` batches of
+  `CLUSTER_SKETCH_BATCH_SIZE` lanes, every lane's code in FastScan order, then each factor of every lane. A batch doesn't
+  depend on the stride, so `Restride` copies whole batches. A lane with `f_add = +inf` never blocks pruning: free slots,
+  tombstones (`DeleteEmbedding` clears the lane) and the slots compaction vacates. A cluster learns its sketch size from
+  `ClusterFormat::sketch_num_dimensions` (`IVF::GetClusterFormat`: d when the index has a mean, else 0).
+- **Query** (`ClusterSketchQuery`, RaBitQ-Library's `SplitBatchQuery` with the high-accuracy table): built at a cursor's
+  first check; per 4 dimensions the 16 nibble sums of the query as u16, split into low and high bytes, in one layout for
+  every ISA (per group of 4 codebooks, the 64 low bytes, then the 64 high bytes). A row's lower bound is its estimate
+  minus `f_error` · `CLUSTER_SKETCH_EPSILON` (ε₀ 1.9) · |q − mean|; it exceeds the true distance for ~2.8% of rows.
+- **Scan** (`SketchBatchMayHoldNeighbor`, `DistanceComputer<L2SQ, F32>`, all four backends): FastScan over one batch,
+  the u16 sums flushed into u32 every 1024 dimensions; true when some lane's bound is not above the threshold (a NaN
+  bound counts as not above).
+- **Check** (`IterativeSearch::SketchProvesClusterCannotChangeHeap`, first thing in `ProbeCluster`): once the heap holds
+  k, by the searcher's `ClusterSketchCheck` (`IPDXIndex::SetClusterSketchCheck`; not serialized, and builds and loads
+  reset it, like n_probe): `NEVER`, `WHEN_CLUSTER_NOT_CACHED` (default: only a paged cluster whose source says
+  `!IsClusterCached`, so a resident index never checks) or `ALWAYS`. Measured: where the cluster must be fetched it saves
+  28–97% of the time a query spends on probed clusters; in memory it changes that time by −55% to +47%, by dataset. A
+  skipped cluster counts as probed for `Next(n)`, not in `n_accessed`.
+- **Tests** (`test_cluster_sketch`): `ALWAYS` against `NEVER` (same top-k, fewer vectors accessed), every saved lane
+  against a fresh encode of its row after maintenance (F32), and full and paged stream loads.
+
 ## Verification gate (definition of done)
 
 **When you believe a feature is finished, prompt the user to run the verification gate. DO NOT RUN WITH EACH CODE CHANGE YOU MAKE. Run in the FOREGROUND — never background these.**
@@ -258,7 +295,8 @@ Performance-critical — weigh every copy/allocation.
   `HorizontalDotInt8WithU8`/`U4` (int8 query · codes: VPDPBUSD on AVX-512, and on AVX2 under `__AVXVNNI__`, else a
   widening `madd_epi16`; on NEON `vdotq_s32` under DOTPROD, LVQ8 on its codes XOR 0x80 plus 128·Σq (no i8mm: `-march=native`
 can claim it on CPUs that lack it), else a widening `vmlal_s16`),
-  `MinMax`, `QuantizeToU8`/`U4`, `DequantizeFromU4` and `QuantizeToInt8`. The SIMD backends hand their scalar
+  `MinMax`, `QuantizeToU8`/`U4`, `DequantizeFromU4`, `QuantizeToInt8` and the cluster sketch scan
+  `SketchBatchMayHoldNeighbor`. The SIMD backends hand their scalar
   remainders to `ScalarComputer` (`scalar_computer`). `DistanceComputer<L2SQ, SAQ>` holds SAQ's kernels on every backend:
   `ScanHead`, `ScanHeadPruning` (the head over given positions, gathered), `ScanTail<W>` (per-chunk table
   `GetScanTail(w)`), the no-pruning pair `ComputeHeadEstimates` /
@@ -290,7 +328,7 @@ can claim it on CPUs that lack it), else a widening `vmlal_s16`),
   hands the allocator to its owned pruner, to `IVFUtils(executor, &allocator)` (which passes it to
   SuperKMeans' k-means) and to new clusters; each `Cluster` keeps it for `Grow`.
   `LoadPDXIndex`/`LoadPDXIndexFromStream` take it as a parameter, since loading allocates the clusters.
-  Routed: cluster `data`/`indices`, the pruner's rotation (an `AllocatedBuffer` behind an `Eigen::Map`),
+  Routed: cluster `data`/`indices`/`sketches`, the pruner's rotation (an `AllocatedBuffer` behind an `Eigen::Map`),
   the centroids (`Centroids`: the encoded centroids and their squared norms) and their decode scratch,
   `NormalizeAndRotate`, the population gathers, split/merge/reassign scratch
   (the split's A/B embeddings and ids, sized up front by `CountRowsToSteal`), `BulkAppend`'s row-id
