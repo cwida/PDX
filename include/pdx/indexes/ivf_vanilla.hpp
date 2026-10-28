@@ -586,6 +586,10 @@ class PDXIndex : public IPDXIndex {
             );
         }
         index.SetAllocator(&GetAllocator());
+        if (config.build_cluster_sketches) {
+            index.sketch_mean =
+                ClusterSketchQuantizer::ComputeMean(preprocessed, num_embeddings, num_dimensions);
+        }
 
         KMeansResult kmeans_result = ivf_utils.ComputeKMeans(
             preprocessed,
@@ -1077,6 +1081,10 @@ class PDXIndex : public IPDXIndex {
         const uint32_t n_emb = cluster.num_embeddings;
 
         auto raw_embeddings = cluster.GetHorizontalEmbeddingsFromPDXBuffer();
+        skmeans::AllocatedBuffer<uint8_t> sketch_rows;
+        if (cluster.HasSketches()) {
+            sketch_rows = cluster.GetSketchRows();
+        }
         auto cluster_indices = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_emb);
         std::memcpy(cluster_indices.get(), cluster.indices.get(), n_emb * sizeof(uint32_t));
         auto cluster_embeddings = DequantizeClusterEmbeddings<Q>(
@@ -1106,7 +1114,12 @@ class PDXIndex : public IPDXIndex {
 
         // Fully removed the dying cluster before reassignment
         ReassignEmbeddings(
-            cluster_indices.get(), cluster_embeddings.get(), raw_embeddings.get(), n_emb, false
+            cluster_indices.get(),
+            cluster_embeddings.get(),
+            raw_embeddings.get(),
+            sketch_rows.get(),
+            n_emb,
+            false
         );
     }
 
@@ -1120,6 +1133,10 @@ class PDXIndex : public IPDXIndex {
         auto cluster_embeddings = DequantizeClusterEmbeddings<Q>(
             index, searcher->quantizer, raw_embeddings.get(), cluster.num_embeddings, GetAllocator()
         );
+        skmeans::AllocatedBuffer<uint8_t> cluster_sketch_rows;
+        if (cluster.HasSketches()) {
+            cluster_sketch_rows = cluster.GetSketchRows();
+        }
 
         std::unique_ptr<float[]> decoded_centroid_to_split(new float[d]);
         const float* centroid_to_split =
@@ -1178,6 +1195,13 @@ class PDXIndex : public IPDXIndex {
         );
         auto ids_a = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_a);
         auto ids_b = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), count_b);
+        const size_t sketch_row_size = cluster.sketch_quantizer.row_size_in_bytes;
+        skmeans::AllocatedBuffer<uint8_t> sketches_a;
+        skmeans::AllocatedBuffer<uint8_t> sketches_b;
+        if (cluster.HasSketches()) {
+            sketches_a = skmeans::AllocateBuffer<uint8_t>(GetAllocator(), count_a * sketch_row_size);
+            sketches_b = skmeans::AllocateBuffer<uint8_t>(GetAllocator(), count_b * sketch_row_size);
+        }
         auto centroid_sum_a = std::make_unique<float[]>(d); // zero-init needed
         auto centroid_sum_b = std::make_unique<float[]>(d); // zero-init needed
         {
@@ -1190,7 +1214,9 @@ class PDXIndex : public IPDXIndex {
                 cluster_embeddings.get(),
                 embs_a.get(),
                 ids_a.get(),
-                centroid_sum_a.get()
+                centroid_sum_a.get(),
+                cluster_sketch_rows.get(),
+                sketches_a.get()
             );
             GatherGroupEmbeddings<Q>(
                 index,
@@ -1200,7 +1226,9 @@ class PDXIndex : public IPDXIndex {
                 cluster_embeddings.get(),
                 embs_b.get(),
                 ids_b.get(),
-                centroid_sum_b.get()
+                centroid_sum_b.get(),
+                cluster_sketch_rows.get(),
+                sketches_b.get()
             );
         }
 
@@ -1210,7 +1238,21 @@ class PDXIndex : public IPDXIndex {
             GetAllocator(), group_rest_idx.size() * values_per_embedding
         );
         auto ids_rest = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), group_rest_idx.size());
+        skmeans::AllocatedBuffer<uint8_t> sketch_rest;
+        if (cluster.HasSketches()) {
+            sketch_rest = skmeans::AllocateBuffer<uint8_t>(
+                GetAllocator(), group_rest_idx.size() * sketch_row_size
+            );
+        }
         for (size_t i = 0; i < group_rest_idx.size(); i++) {
+            if (cluster.HasSketches()) {
+                std::memcpy(
+                    sketch_rest.get() + i * sketch_row_size,
+                    cluster_sketch_rows.get() +
+                        static_cast<size_t>(group_rest_idx[i]) * sketch_row_size,
+                    sketch_row_size
+                );
+            }
             std::memcpy(
                 float_rest.get() + i * d,
                 cluster_embeddings.get() + static_cast<size_t>(group_rest_idx[i]) * d,
@@ -1235,7 +1277,9 @@ class PDXIndex : public IPDXIndex {
             centroid_sum_a.get(),
             embs_b.get() + group_b_idx.size() * values_per_embedding,
             ids_b.get() + group_b_idx.size(),
-            centroid_sum_b.get()
+            centroid_sum_b.get(),
+            sketches_a ? sketches_a.get() + group_a_idx.size() * sketch_row_size : nullptr,
+            sketches_b ? sketches_b.get() + group_b_idx.size() * sketch_row_size : nullptr
         );
 
         // Compute true centroids from accumulated sums
@@ -1275,7 +1319,7 @@ class PDXIndex : public IPDXIndex {
             new_cluster_a.id = cluster_id;
             if (count_a > 0) {
                 std::memcpy(new_cluster_a.indices.get(), ids_a.get(), count_a * sizeof(uint32_t));
-                new_cluster_a.StoreEmbeddings(embs_a.get(), count_a);
+                new_cluster_a.StoreEmbeddings(embs_a.get(), count_a, sketches_a.get());
             }
             uint32_t new_cluster_b_id = index.num_clusters;
             const auto size_b = static_cast<uint32_t>(count_b);
@@ -1288,7 +1332,7 @@ class PDXIndex : public IPDXIndex {
             new_cluster_b.id = new_cluster_b_id;
             if (count_b > 0) {
                 std::memcpy(new_cluster_b.indices.get(), ids_b.get(), count_b * sizeof(uint32_t));
-                new_cluster_b.StoreEmbeddings(embs_b.get(), count_b);
+                new_cluster_b.StoreEmbeddings(embs_b.get(), count_b, sketches_b.get());
             }
             // Replace old cluster with A, append B
             index.clusters[cluster_id] = std::move(new_cluster_a);
@@ -1321,6 +1365,7 @@ class PDXIndex : public IPDXIndex {
                 ids_rest.get(),
                 float_rest.get(),
                 encoded_rest.get(),
+                sketch_rest.get(),
                 static_cast<uint32_t>(group_rest_idx.size()),
                 false,
                 &rest_candidates
@@ -1459,6 +1504,7 @@ class PDXIndex : public IPDXIndex {
         const uint32_t* row_ids,
         const float* embeddings,
         const embedding_storage_t* encoded_embeddings,
+        const uint8_t* sketch_rows,
         uint32_t num_embeddings,
         bool allow_merges = true,
         const std::vector<uint32_t>* candidate_cluster_ids = nullptr
@@ -1516,13 +1562,16 @@ class PDXIndex : public IPDXIndex {
         );
 
         const size_t values_per_embedding = index.GetValuesPerEmbedding();
+        const size_t sketch_row_size = ClusterSketchQuantizer(d).row_size_in_bytes;
         for (size_t i = 0; i < num_embeddings; i++) {
             const uint32_t best_cluster = candidate_cluster_ids != nullptr
                                               ? (*candidate_cluster_ids)[assignments[i]]
                                               : assignments[i];
             uint32_t row_id = row_ids[i];
             uint32_t new_pos = index.clusters[best_cluster].AppendEmbedding(
-                row_id, encoded_embeddings + i * values_per_embedding
+                row_id,
+                encoded_embeddings + i * values_per_embedding,
+                sketch_rows != nullptr ? sketch_rows + i * sketch_row_size : nullptr
             );
             SetRowIdMapping(row_id, best_cluster, new_pos);
             ReserveClusterSlotIfNeeded();

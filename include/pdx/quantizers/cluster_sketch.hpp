@@ -31,6 +31,29 @@ class ClusterSketchQuantizer {
                CLUSTER_SKETCH_BATCH_SIZE;
     }
 
+    // The mean of up to CLUSTER_SKETCH_MEAN_SAMPLE_SIZE evenly spaced rows (as SAQ's fit)
+    [[nodiscard]] static std::unique_ptr<float[]> ComputeMean(
+        const float* embeddings,
+        size_t num_embeddings,
+        uint32_t num_dimensions
+    ) {
+        const size_t num_samples = std::min(num_embeddings, CLUSTER_SKETCH_MEAN_SAMPLE_SIZE);
+        std::unique_ptr<double[]> mean_sum(new double[num_dimensions]());
+        for (size_t sample_idx = 0; sample_idx < num_samples; ++sample_idx) {
+            const float* row =
+                embeddings + (sample_idx * num_embeddings / num_samples) * num_dimensions;
+            for (uint32_t j = 0; j < num_dimensions; ++j) {
+                mean_sum[j] += row[j];
+            }
+        }
+        const double inverse_num_samples = 1.0 / static_cast<double>(num_samples);
+        std::unique_ptr<float[]> mean(new float[num_dimensions]);
+        for (uint32_t j = 0; j < num_dimensions; ++j) {
+            mean[j] = static_cast<float>(mean_sum[j] * inverse_num_samples);
+        }
+        return mean;
+    }
+
     // embedding and mean: normalized if the index needs it, then rotated. sketch_row: the code
     // (bit 7 of byte i is dimension 8i), then f_add, f_rescale and f_error.
     void EncodeRow(

@@ -156,6 +156,7 @@ static constexpr float SAQ_LEVEL_ROUNDING_EPSILON = 1e-5f;
 static constexpr float CLUSTER_SKETCH_EPSILON = 1.9f;
 static constexpr size_t CLUSTER_SKETCH_BATCH_SIZE = 32;
 static constexpr uint32_t CLUSTER_SKETCH_DIMENSION_ALIGNMENT = 16;
+static constexpr size_t CLUSTER_SKETCH_MEAN_SAMPLE_SIZE = 122880;
 
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most
