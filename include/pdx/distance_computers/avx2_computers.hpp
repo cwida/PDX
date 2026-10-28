@@ -699,6 +699,163 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
+    // scalar_computer documents it. Per column (its halves in the two 128-bit lanes), the lane's
+    // nibbles broadcast (vpshufb) and merged under the lane's mask; 16 columns per step
+    static void StoreSketchLane(
+        const uint8_t* PDX_RESTRICT code,
+        size_t num_columns,
+        uint8_t* PDX_RESTRICT columns,
+        uint32_t lane
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        const bool high_lanes = lane >= HALF_COLUMN;
+        const __m128i half_mask = _mm_and_si128(
+            _mm_cmpeq_epi8(
+                _mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+                _mm_set1_epi8(static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN]))
+            ),
+            _mm_set1_epi8(static_cast<char>(high_lanes ? 0xF0 : 0x0F))
+        );
+        const __m256i lane_mask = _mm256_set_m128i(half_mask, half_mask);
+        const __m128i low_nibble = _mm_set1_epi8(0x0F);
+        const __m256i one = _mm256_set1_epi8(1);
+        size_t column = 0;
+        for (; column + 16 <= num_columns; column += 16) {
+            const __m128i bytes = LoadBytes16(code + column);
+            __m128i upper_nibbles = _mm_and_si128(_mm_srli_epi16(bytes, 4), low_nibble);
+            __m128i lower_nibbles = _mm_and_si128(bytes, low_nibble);
+            if (high_lanes) {
+                upper_nibbles = _mm_slli_epi16(upper_nibbles, 4);
+                lower_nibbles = _mm_slli_epi16(lower_nibbles, 4);
+            }
+            const __m256i nibbles = _mm256_set_m128i(lower_nibbles, upper_nibbles);
+            __m256i index = _mm256_setzero_si256();
+            for (size_t c = 0; c < 16; ++c) {
+                uint8_t* packed = columns + (column + c) * CLUSTER_SKETCH_BATCH_SIZE;
+                const __m256i values = _mm256_shuffle_epi8(nibbles, index);
+                _mm256_storeu_si256(
+                    reinterpret_cast<__m256i*>(packed),
+                    _mm256_or_si256(
+                        _mm256_andnot_si256(lane_mask, LoadBytes32(packed)),
+                        _mm256_and_si256(lane_mask, values)
+                    )
+                );
+                index = _mm256_add_epi8(index, one);
+            }
+        }
+        scalar_computer::StoreSketchLane(
+            code + column,
+            num_columns - column,
+            columns + column * CLUSTER_SKETCH_BATCH_SIZE,
+            lane
+        );
+    }
+
+    // scalar_computer documents it. Per column, the lane's byte of both halves broadcast (vpshufb)
+    // and slid into a 16-byte accumulator per half (vpalignr), byte c holding column c after 16
+    static void ReadSketchLane(
+        const uint8_t* PDX_RESTRICT columns,
+        size_t num_columns,
+        uint32_t lane,
+        uint8_t* PDX_RESTRICT code
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        const bool high_lanes = lane >= HALF_COLUMN;
+        const __m256i position =
+            _mm256_set1_epi8(static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN]));
+        const __m128i low_nibble = _mm_set1_epi8(0x0F);
+        size_t column = 0;
+        for (; column + 16 <= num_columns; column += 16) {
+            __m256i halves = _mm256_setzero_si256();
+            for (size_t c = 0; c < 16; ++c) {
+                const __m256i lane_bytes = _mm256_shuffle_epi8(
+                    LoadBytes32(columns + (column + c) * CLUSTER_SKETCH_BATCH_SIZE), position
+                );
+                halves = _mm256_alignr_epi8(lane_bytes, halves, 1);
+            }
+            __m128i upper_nibbles = _mm256_castsi256_si128(halves);
+            __m128i lower_nibbles = _mm256_extracti128_si256(halves, 1);
+            if (high_lanes) {
+                upper_nibbles = _mm_srli_epi16(upper_nibbles, 4);
+                lower_nibbles = _mm_srli_epi16(lower_nibbles, 4);
+            }
+            upper_nibbles = _mm_and_si128(upper_nibbles, low_nibble);
+            lower_nibbles = _mm_and_si128(lower_nibbles, low_nibble);
+            _mm_storeu_si128(
+                reinterpret_cast<__m128i*>(code + column),
+                _mm_or_si128(_mm_slli_epi16(upper_nibbles, 4), lower_nibbles)
+            );
+        }
+        scalar_computer::ReadSketchLane(
+            columns + column * CLUSTER_SKETCH_BATCH_SIZE, num_columns - column, lane, code + column
+        );
+    }
+
+    // scalar_computer documents it. Per 16 columns, ReadSketchLane's loop gathers the source lane's
+    // nibbles into one register (both halves), then StoreSketchLane's loop writes them: every source
+    // column is read before a target column is written
+    static void CopySketchLane(
+        const uint8_t* source_columns,
+        uint32_t source_lane,
+        uint8_t* target_columns,
+        uint32_t target_lane,
+        size_t num_columns
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        const __m256i source_position = _mm256_set1_epi8(
+            static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[source_lane % HALF_COLUMN])
+        );
+        const __m128i half_mask = _mm_and_si128(
+            _mm_cmpeq_epi8(
+                _mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+                _mm_set1_epi8(
+                    static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[target_lane % HALF_COLUMN])
+                )
+            ),
+            _mm_set1_epi8(static_cast<char>(target_lane >= HALF_COLUMN ? 0xF0 : 0x0F))
+        );
+        const __m256i target_mask = _mm256_set_m128i(half_mask, half_mask);
+        const __m256i low_nibble = _mm256_set1_epi8(0x0F);
+        const __m256i one = _mm256_set1_epi8(1);
+        size_t column = 0;
+        for (; column + 16 <= num_columns; column += 16) {
+            __m256i nibbles = _mm256_setzero_si256();
+            for (size_t c = 0; c < 16; ++c) {
+                const __m256i lane_bytes = _mm256_shuffle_epi8(
+                    LoadBytes32(source_columns + (column + c) * CLUSTER_SKETCH_BATCH_SIZE),
+                    source_position
+                );
+                nibbles = _mm256_alignr_epi8(lane_bytes, nibbles, 1);
+            }
+            if (source_lane >= HALF_COLUMN) {
+                nibbles = _mm256_srli_epi16(nibbles, 4);
+            }
+            nibbles = _mm256_and_si256(nibbles, low_nibble);
+            if (target_lane >= HALF_COLUMN) {
+                nibbles = _mm256_slli_epi16(nibbles, 4);
+            }
+            __m256i index = _mm256_setzero_si256();
+            for (size_t c = 0; c < 16; ++c) {
+                uint8_t* packed = target_columns + (column + c) * CLUSTER_SKETCH_BATCH_SIZE;
+                _mm256_storeu_si256(
+                    reinterpret_cast<__m256i*>(packed),
+                    _mm256_or_si256(
+                        _mm256_andnot_si256(target_mask, LoadBytes32(packed)),
+                        _mm256_and_si256(target_mask, _mm256_shuffle_epi8(nibbles, index))
+                    )
+                );
+                index = _mm256_add_epi8(index, one);
+            }
+        }
+        scalar_computer::CopySketchLane(
+            source_columns + column * CLUSTER_SKETCH_BATCH_SIZE,
+            source_lane,
+            target_columns + column * CLUSTER_SKETCH_BATCH_SIZE,
+            target_lane,
+            num_columns - column
+        );
+    }
+
   private:
     static float ReduceAdd(const __m256 vec) {
         __m128 halves = _mm_add_ps(_mm256_castps256_ps128(vec), _mm256_extractf128_ps(vec, 1));

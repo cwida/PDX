@@ -579,6 +579,65 @@ TEST_F(DistanceComputerTest, F32_PackSketchColumns_SIMD_MatchesScalar) {
     }
 }
 
+// The SIMD lane store and copy write the scalar bytes (only the target lane's nibbles change), and
+// both lane reads give the code back, for every lane
+TEST_F(DistanceComputerTest, F32_StoreSketchLane_SIMD_MatchesScalar) {
+    constexpr size_t BATCH_SIZE = PDX::CLUSTER_SKETCH_BATCH_SIZE;
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<int> byte_distribution(0, 255);
+    for (size_t num_columns : {size_t{1}, size_t{15}, size_t{16}, size_t{17}, size_t{130}, size_t{258}}) {
+        std::vector<uint8_t> code(num_columns);
+        std::vector<uint8_t> batch(num_columns * BATCH_SIZE);
+        for (auto& byte : code) {
+            byte = static_cast<uint8_t>(byte_distribution(rng));
+        }
+        for (auto& byte : batch) {
+            byte = static_cast<uint8_t>(byte_distribution(rng));
+        }
+        for (uint32_t lane = 0; lane < BATCH_SIZE; ++lane) {
+            SCOPED_TRACE("num_columns=" + std::to_string(num_columns) + " lane=" + std::to_string(lane));
+            std::vector<uint8_t> scalar_batch = batch;
+            std::vector<uint8_t> simd_batch = batch;
+            ScalarF32Computer::StoreSketchLane(code.data(), num_columns, scalar_batch.data(), lane);
+            F32Computer::StoreSketchLane(code.data(), num_columns, simd_batch.data(), lane);
+            EXPECT_EQ(simd_batch, scalar_batch);
+            std::vector<uint8_t> scalar_code(num_columns);
+            std::vector<uint8_t> simd_code(num_columns);
+            ScalarF32Computer::ReadSketchLane(simd_batch.data(), num_columns, lane, scalar_code.data());
+            F32Computer::ReadSketchLane(simd_batch.data(), num_columns, lane, simd_code.data());
+            EXPECT_EQ(scalar_code, code);
+            EXPECT_EQ(simd_code, code);
+            // Lane + 16 shares the lane's bytes
+            const uint32_t target_lanes[2] = {(lane + 5) % 32u, (lane + 16) % 32u};
+            for (const uint32_t target_lane : target_lanes) {
+                for (const bool same_batch : {true, false}) {
+                    std::vector<uint8_t> scalar_target = same_batch ? simd_batch : batch;
+                    std::vector<uint8_t> simd_target = scalar_target;
+                    ScalarF32Computer::CopySketchLane(
+                        same_batch ? scalar_target.data() : simd_batch.data(),
+                        lane,
+                        scalar_target.data(),
+                        target_lane,
+                        num_columns
+                    );
+                    F32Computer::CopySketchLane(
+                        same_batch ? simd_target.data() : simd_batch.data(),
+                        lane,
+                        simd_target.data(),
+                        target_lane,
+                        num_columns
+                    );
+                    EXPECT_EQ(simd_target, scalar_target) << "target lane " << target_lane;
+                    F32Computer::ReadSketchLane(
+                        simd_target.data(), num_columns, target_lane, simd_code.data()
+                    );
+                    EXPECT_EQ(simd_code, code) << "target lane " << target_lane;
+                }
+            }
+        }
+    }
+}
+
 // Storing whole batches writes the bytes of storing lane by lane, and reading them gives the rows
 // back, also for a batch short of rows
 TEST_F(DistanceComputerTest, F32_StoreRowsInBatches_MatchesStoreRowInBatch) {

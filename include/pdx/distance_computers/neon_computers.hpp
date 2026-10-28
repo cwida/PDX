@@ -723,6 +723,81 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
+    // scalar_computer documents it. Per column, the lane's nibbles broadcast into both halves
+    // (vqtbl1q_u8) and merged under the lane's mask (vbslq_u8); 16 columns per step
+    static void StoreSketchLane(
+        const uint8_t* PDX_RESTRICT code,
+        size_t num_columns,
+        uint8_t* PDX_RESTRICT columns,
+        uint32_t lane
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        alignas(16) static constexpr uint8_t BYTE_INDICES[16] =
+            {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+        const bool high_lanes = lane >= HALF_COLUMN;
+        const uint8x16_t lane_mask = vandq_u8(
+            vceqq_u8(
+                vld1q_u8(BYTE_INDICES), vdupq_n_u8(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN])
+            ),
+            vdupq_n_u8(high_lanes ? 0xF0 : 0x0F)
+        );
+        const uint8x16_t low_nibble = vdupq_n_u8(0x0F);
+        const uint8x16_t one = vdupq_n_u8(1);
+        size_t column = 0;
+        for (; column + 16 <= num_columns; column += 16) {
+            const uint8x16_t bytes = vld1q_u8(code + column);
+            uint8x16_t upper_nibbles = vshrq_n_u8(bytes, 4);
+            uint8x16_t lower_nibbles = vandq_u8(bytes, low_nibble);
+            if (high_lanes) {
+                upper_nibbles = vshlq_n_u8(upper_nibbles, 4);
+                lower_nibbles = vshlq_n_u8(lower_nibbles, 4);
+            }
+            uint8x16_t index = vdupq_n_u8(0);
+            for (size_t c = 0; c < 16; ++c) {
+                uint8_t* packed = columns + (column + c) * CLUSTER_SKETCH_BATCH_SIZE;
+                vst1q_u8(
+                    packed, vbslq_u8(lane_mask, vqtbl1q_u8(upper_nibbles, index), vld1q_u8(packed))
+                );
+                vst1q_u8(
+                    packed + HALF_COLUMN,
+                    vbslq_u8(
+                        lane_mask, vqtbl1q_u8(lower_nibbles, index), vld1q_u8(packed + HALF_COLUMN)
+                    )
+                );
+                index = vaddq_u8(index, one);
+            }
+        }
+        scalar_computer::StoreSketchLane(
+            code + column,
+            num_columns - column,
+            columns + column * CLUSTER_SKETCH_BATCH_SIZE,
+            lane
+        );
+    }
+
+    // scalar_computer's: clang vectorizes its loop with lane loads, faster than a vextq_u8 chain
+    static void ReadSketchLane(
+        const uint8_t* PDX_RESTRICT columns,
+        size_t num_columns,
+        uint32_t lane,
+        uint8_t* PDX_RESTRICT code
+    ) {
+        scalar_computer::ReadSketchLane(columns, num_columns, lane, code);
+    }
+
+    // scalar_computer's: its fused loop beats a lane read followed by StoreSketchLane on NEON
+    static void CopySketchLane(
+        const uint8_t* source_columns,
+        uint32_t source_lane,
+        uint8_t* target_columns,
+        uint32_t target_lane,
+        size_t num_columns
+    ) {
+        scalar_computer::CopySketchLane(
+            source_columns, source_lane, target_columns, target_lane, num_columns
+        );
+    }
+
   private:
     // Without DOTPROD: widens 16 bytes of query and codes to s16, then multiply-accumulates into
     // s32

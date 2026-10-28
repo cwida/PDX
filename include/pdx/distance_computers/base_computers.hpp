@@ -53,6 +53,9 @@ class DistanceComputer<DistanceMetric::L2SQ, Quantization::F32> {
     constexpr static auto ComputeSketchCodeAndSums = computer::ComputeSketchCodeAndSums;
     constexpr static auto PackSketchColumns = computer::PackSketchColumns;
     constexpr static auto UnpackSketchColumns = computer::UnpackSketchColumns;
+    constexpr static auto StoreSketchLane = computer::StoreSketchLane;
+    constexpr static auto ReadSketchLane = computer::ReadSketchLane;
+    constexpr static auto CopySketchLane = computer::CopySketchLane;
 };
 
 template <>

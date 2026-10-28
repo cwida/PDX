@@ -139,19 +139,9 @@ class ClusterSketchQuantizer {
         uint8_t* PDX_RESTRICT batch,
         uint32_t lane
     ) const {
-        constexpr uint32_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
-        const uint32_t position = 2 * (lane % 8) + (lane % HALF_COLUMN) / 8;
-        const uint32_t shift = lane < HALF_COLUMN ? 0 : 4;
-        const auto kept_nibble = static_cast<uint8_t>(lane < HALF_COLUMN ? 0xF0 : 0x0F);
-        for (uint32_t i = 0; i < code_size_in_bytes; ++i) {
-            uint8_t* column = batch + static_cast<size_t>(i) * CLUSTER_SKETCH_BATCH_SIZE;
-            const uint8_t code = sketch_row[i];
-            column[position] =
-                static_cast<uint8_t>((column[position] & kept_nibble) | ((code >> 4) << shift));
-            column[HALF_COLUMN + position] = static_cast<uint8_t>(
-                (column[HALF_COLUMN + position] & kept_nibble) | ((code & 0x0F) << shift)
-            );
-        }
+        DistanceComputer<DistanceMetric::L2SQ, Quantization::F32>::StoreSketchLane(
+            sketch_row, code_size_in_bytes, batch, lane
+        );
         uint8_t* factors = batch + static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE;
         for (uint32_t factor = 0; factor < 3; ++factor) {
             std::memcpy(
@@ -229,15 +219,9 @@ class ClusterSketchQuantizer {
         uint32_t lane,
         uint8_t* PDX_RESTRICT sketch_row
     ) const {
-        constexpr uint32_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
-        const uint32_t position = 2 * (lane % 8) + (lane % HALF_COLUMN) / 8;
-        const uint32_t shift = lane < HALF_COLUMN ? 0 : 4;
-        for (uint32_t i = 0; i < code_size_in_bytes; ++i) {
-            const uint8_t* column = batch + static_cast<size_t>(i) * CLUSTER_SKETCH_BATCH_SIZE;
-            const uint32_t upper = (column[position] >> shift) & 0x0F;
-            const uint32_t lower = (column[HALF_COLUMN + position] >> shift) & 0x0F;
-            sketch_row[i] = static_cast<uint8_t>((upper << 4) | lower);
-        }
+        DistanceComputer<DistanceMetric::L2SQ, Quantization::F32>::ReadSketchLane(
+            batch, code_size_in_bytes, lane, sketch_row
+        );
         const uint8_t* factors =
             batch + static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE;
         for (uint32_t factor = 0; factor < 3; ++factor) {
@@ -286,29 +270,15 @@ class ClusterSketchQuantizer {
     }
 
     // The two lanes may share a batch
-    // TODO(@lkuffo, mid): Benchmark this nibble-by-nibble copy (compactions and splits call it)
     void CopyLaneBetweenBatches(
         const uint8_t* source_batch,
         uint32_t source_lane,
         uint8_t* target_batch,
         uint32_t target_lane
     ) const {
-        constexpr uint32_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
-        const uint32_t source_position = 2 * (source_lane % 8) + (source_lane % HALF_COLUMN) / 8;
-        const uint32_t source_shift = source_lane < HALF_COLUMN ? 0 : 4;
-        const uint32_t target_position = 2 * (target_lane % 8) + (target_lane % HALF_COLUMN) / 8;
-        const uint32_t target_shift = target_lane < HALF_COLUMN ? 0 : 4;
-        const auto kept_nibble = static_cast<uint8_t>(target_lane < HALF_COLUMN ? 0xF0 : 0x0F);
-        for (uint32_t i = 0; i < code_size_in_bytes; ++i) {
-            const size_t column = static_cast<size_t>(i) * CLUSTER_SKETCH_BATCH_SIZE;
-            for (size_t half = 0; half < 2; ++half) {
-                const uint32_t nibble =
-                    (source_batch[column + half * HALF_COLUMN + source_position] >> source_shift) &
-                    0x0F;
-                uint8_t& target = target_batch[column + half * HALF_COLUMN + target_position];
-                target = static_cast<uint8_t>((target & kept_nibble) | (nibble << target_shift));
-            }
-        }
+        DistanceComputer<DistanceMetric::L2SQ, Quantization::F32>::CopySketchLane(
+            source_batch, source_lane, target_batch, target_lane, code_size_in_bytes
+        );
         const size_t factors = static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE;
         for (uint32_t factor = 0; factor < 3; ++factor) {
             std::memcpy(
