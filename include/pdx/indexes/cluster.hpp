@@ -233,24 +233,21 @@ struct Cluster : skmeans::AllocatorHolder {
     void StoreSketchRow(uint32_t index_in_cluster, const uint8_t* PDX_RESTRICT sketch_row) {
         sketch_quantizer.StoreRowInBatch(
             sketch_row,
-            sketches.get() + (index_in_cluster / CLUSTER_SKETCH_BATCH_SIZE) *
-                                 sketch_quantizer.batch_size_in_bytes,
+            sketches.get() + sketch_quantizer.GetBatchOffsetInBytes(index_in_cluster),
             index_in_cluster % CLUSTER_SKETCH_BATCH_SIZE
         );
     }
 
     void ClearSketchLane(uint32_t index_in_cluster) {
         sketch_quantizer.ClearLaneInBatch(
-            sketches.get() + (index_in_cluster / CLUSTER_SKETCH_BATCH_SIZE) *
-                                 sketch_quantizer.batch_size_in_bytes,
+            sketches.get() + sketch_quantizer.GetBatchOffsetInBytes(index_in_cluster),
             index_in_cluster % CLUSTER_SKETCH_BATCH_SIZE
         );
     }
 
     void ReadSketchRow(uint32_t index_in_cluster, uint8_t* PDX_RESTRICT sketch_row) const {
         sketch_quantizer.ReadRowFromBatch(
-            sketches.get() + (index_in_cluster / CLUSTER_SKETCH_BATCH_SIZE) *
-                                 sketch_quantizer.batch_size_in_bytes,
+            sketches.get() + sketch_quantizer.GetBatchOffsetInBytes(index_in_cluster),
             index_in_cluster % CLUSTER_SKETCH_BATCH_SIZE,
             sketch_row
         );
@@ -906,11 +903,10 @@ struct Cluster : skmeans::AllocatorHolder {
     // This function assumes thread safety (caller must hold cluster_mutex).
     void CopyEmbeddingInPDXLayout(uint32_t src_idx, uint32_t dst_idx) {
         if (HasSketches()) {
-            const size_t batch_size = sketch_quantizer.batch_size_in_bytes;
             sketch_quantizer.CopyLaneBetweenBatches(
-                sketches.get() + (src_idx / CLUSTER_SKETCH_BATCH_SIZE) * batch_size,
+                sketches.get() + sketch_quantizer.GetBatchOffsetInBytes(src_idx),
                 src_idx % CLUSTER_SKETCH_BATCH_SIZE,
-                sketches.get() + (dst_idx / CLUSTER_SKETCH_BATCH_SIZE) * batch_size,
+                sketches.get() + sketch_quantizer.GetBatchOffsetInBytes(dst_idx),
                 dst_idx % CLUSTER_SKETCH_BATCH_SIZE
             );
         }

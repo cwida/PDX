@@ -297,7 +297,7 @@ class PDXIndex : public IPDXIndex {
         index.SaveResidentData(out, storage_order.get());
         row_id_cluster_mapping.Save(out);
         index.SaveClusterData(out, storage_order.get());
-        if (index.sketch_mean) {
+        if (index.HasSketches()) {
             index.SaveSketchData(out, storage_order.get());
         }
     }
@@ -307,7 +307,7 @@ class PDXIndex : public IPDXIndex {
         index.LoadResidentData(reader, config.centroid_quantization);
         row_id_cluster_mapping.Load(reader);
         const uint64_t cluster_data_end = index.LoadClusterData(reader);
-        if (index.sketch_mean) {
+        if (index.HasSketches()) {
             index.LoadSketchData(reader, cluster_data_end);
         }
         searcher = std::make_unique<PDX::PDXearch<Q>>(index, *pruner);

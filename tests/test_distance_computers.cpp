@@ -414,7 +414,7 @@ TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) 
             quantizer.EncodeRow(rows.data() + i * d, mean.data(), sketch_row);
             quantizer.StoreRowInBatch(
                 sketch_row,
-                batches.data() + (i / PDX::CLUSTER_SKETCH_BATCH_SIZE) * quantizer.batch_size_in_bytes,
+                batches.data() + quantizer.GetBatchOffsetInBytes(i),
                 static_cast<uint32_t>(i % PDX::CLUSTER_SKETCH_BATCH_SIZE)
             );
         }
@@ -597,8 +597,7 @@ TEST_F(DistanceComputerTest, F32_StoreRowsInBatches_MatchesStoreRowInBatch) {
                 quantizer.EncodeRow(rows.data() + i * d, mean.data(), sketch_row);
                 quantizer.StoreRowInBatch(
                     sketch_row,
-                    lane_by_lane.data() +
-                        (i / PDX::CLUSTER_SKETCH_BATCH_SIZE) * quantizer.batch_size_in_bytes,
+                    lane_by_lane.data() + quantizer.GetBatchOffsetInBytes(i),
                     static_cast<uint32_t>(i % PDX::CLUSTER_SKETCH_BATCH_SIZE)
                 );
             }

@@ -605,7 +605,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
         }
         const ClusterSketchQuantizer sketch_quantizer(cluster_format.sketch_num_dimensions);
         std::vector<skmeans::AllocatedBuffer<uint8_t>> sketch_buffers(n_workers);
-        if (ivf.sketch_mean) {
+        if (ivf.HasSketches()) {
             for (size_t w = 0; w < n_workers; w++) {
                 sketch_buffers[w] = skmeans::AllocateBuffer<uint8_t>(
                     GetAllocator(), largest_cluster_size * sketch_quantizer.row_size_in_bytes
@@ -974,9 +974,9 @@ class IVFUtils : public skmeans::AllocatorHolder {
             skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_workers * largest_range);
         auto positions_buffer =
             skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_workers * largest_range);
-        const ClusterSketchQuantizer sketch_quantizer(ivf.sketch_mean ? ivf.num_dimensions : 0);
+        const ClusterSketchQuantizer sketch_quantizer(ivf.HasSketches() ? ivf.num_dimensions : 0);
         skmeans::AllocatedBuffer<uint8_t> sketches_buffer;
-        if (ivf.sketch_mean) {
+        if (ivf.HasSketches()) {
             sketches_buffer = skmeans::AllocateBuffer<uint8_t>(
                 GetAllocator(), n_workers * largest_range * sketch_quantizer.row_size_in_bytes
             );
@@ -986,7 +986,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
             uint32_t* ids = ids_buffer.get() + worker * largest_range;
             uint32_t* positions = positions_buffer.get() + worker * largest_range;
             uint8_t* sketch_rows =
-                ivf.sketch_mean
+                ivf.HasSketches()
                     ? sketches_buffer.get() + worker * largest_range * sketch_quantizer.row_size_in_bytes
                     : nullptr;
             ScalarQuantizer<Q> quantizer(d);
@@ -1273,7 +1273,7 @@ inline uint32_t QuantizeAndAppend(
     const float* embedding
 ) {
     std::unique_ptr<uint8_t[]> sketch_row;
-    if (index.sketch_mean) {
+    if (index.HasSketches()) {
         const ClusterSketchQuantizer sketch_quantizer(index.num_dimensions);
         sketch_row.reset(new uint8_t[sketch_quantizer.row_size_in_bytes]);
         sketch_quantizer.EncodeRow(embedding, index.sketch_mean.get(), sketch_row.get());

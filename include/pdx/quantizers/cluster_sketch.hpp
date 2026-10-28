@@ -55,6 +55,11 @@ class ClusterSketchQuantizer {
                CLUSTER_SKETCH_BATCH_SIZE;
     }
 
+    // Where the batch holding slot index starts (its lane is index % CLUSTER_SKETCH_BATCH_SIZE)
+    [[nodiscard]] size_t GetBatchOffsetInBytes(size_t index) const {
+        return (index / CLUSTER_SKETCH_BATCH_SIZE) * batch_size_in_bytes;
+    }
+
     // The mean of up to CLUSTER_SKETCH_MEAN_SAMPLE_SIZE evenly spaced rows (as SAQ's fit)
     [[nodiscard]] static std::unique_ptr<float[]> ComputeMean(
         const float* embeddings,
@@ -170,7 +175,7 @@ class ClusterSketchQuantizer {
         for (size_t first_row = 0; first_row < num_rows; first_row += CLUSTER_SKETCH_BATCH_SIZE) {
             const size_t batch_rows = std::min(CLUSTER_SKETCH_BATCH_SIZE, num_rows - first_row);
             const uint8_t* rows = sketch_rows + first_row * row_size_in_bytes;
-            uint8_t* batch = batches + (first_row / CLUSTER_SKETCH_BATCH_SIZE) * batch_size_in_bytes;
+            uint8_t* batch = batches + GetBatchOffsetInBytes(first_row);
             for (size_t first_column = 0; first_column < code_size_in_bytes;
                  first_column += CLUSTER_SKETCH_TRANSPOSE_COLUMNS) {
                 const size_t num_columns =
@@ -253,8 +258,7 @@ class ClusterSketchQuantizer {
         using computer = DistanceComputer<DistanceMetric::L2SQ, Quantization::F32>;
         for (size_t first_row = 0; first_row < num_rows; first_row += CLUSTER_SKETCH_BATCH_SIZE) {
             const size_t batch_rows = std::min(CLUSTER_SKETCH_BATCH_SIZE, num_rows - first_row);
-            const uint8_t* batch =
-                batches + (first_row / CLUSTER_SKETCH_BATCH_SIZE) * batch_size_in_bytes;
+            const uint8_t* batch = batches + GetBatchOffsetInBytes(first_row);
             uint8_t* rows = sketch_rows + first_row * row_size_in_bytes;
             for (size_t first_column = 0; first_column < code_size_in_bytes;
                  first_column += CLUSTER_SKETCH_TRANSPOSE_COLUMNS) {

@@ -189,7 +189,7 @@ TEST(ClusterSketchMaintenanceTest, SketchesFollowTheirRowsThroughMaintenance) {
                                  PDX::CLUSTER_SKETCH_BATCH_SIZE;
         for (size_t slot = 0; slot < num_lanes; ++slot) {
             quantizer.ReadRowFromBatch(
-                batches + (slot / PDX::CLUSTER_SKETCH_BATCH_SIZE) * quantizer.batch_size_in_bytes,
+                batches + quantizer.GetBatchOffsetInBytes(slot),
                 static_cast<uint32_t>(slot % PDX::CLUSTER_SKETCH_BATCH_SIZE),
                 saved_row.data()
             );

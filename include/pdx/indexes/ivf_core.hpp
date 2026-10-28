@@ -110,6 +110,8 @@ class IVF : public skmeans::AllocatorHolder {
         }
     }
 
+    bool HasSketches() const { return sketch_mean != nullptr; }
+
     ClusterFormat<Q> GetClusterFormat() const {
         if constexpr (Q == Quantization::SAQ) {
             return {
@@ -119,7 +121,7 @@ class IVF : public skmeans::AllocatorHolder {
                 saq_model.HasPDXU8Head()
             };
         } else {
-            return {num_dimensions, sketch_mean ? num_dimensions : 0};
+            return {num_dimensions, HasSketches() ? num_dimensions : 0};
         }
     }
 
@@ -261,8 +263,8 @@ class IVF : public skmeans::AllocatorHolder {
             );
             WriteValue(out, num_embeddings_at_calibration);
         }
-        WriteValue(out, static_cast<uint8_t>(sketch_mean != nullptr));
-        if (sketch_mean) {
+        WriteValue(out, static_cast<uint8_t>(HasSketches()));
+        if (HasSketches()) {
             out.write(
                 reinterpret_cast<const char*>(sketch_mean.get()),
                 static_cast<std::streamsize>(num_dimensions * sizeof(float))
@@ -277,7 +279,7 @@ class IVF : public skmeans::AllocatorHolder {
         }
         // The sketch section follows the cluster data, in the same storage order
         std::unique_ptr<uint64_t[]> cluster_sketch_offsets_to_save;
-        if (sketch_mean) {
+        if (HasSketches()) {
             cluster_sketch_offsets_to_save.reset(new uint64_t[num_clusters]);
             uint64_t cluster_sketch_offset = cluster_data_offset;
             for (size_t position = 0; position < num_clusters; ++position) {
@@ -290,7 +292,7 @@ class IVF : public skmeans::AllocatorHolder {
             WriteValue(out, clusters[i].num_embeddings);
             WriteValue(out, clusters[i].max_capacity);
             WriteValue(out, cluster_data_offsets_to_save[i]);
-            if (sketch_mean) {
+            if (HasSketches()) {
                 WriteValue(out, cluster_sketch_offsets_to_save[i]);
             }
         }
@@ -450,7 +452,7 @@ class IVF : public skmeans::AllocatorHolder {
         in_memory_size_in_bytes += num_clusters * sizeof(size_t); // cluster_offsets
         in_memory_size_in_bytes += cluster_data_offsets.capacity() * sizeof(uint64_t);
         in_memory_size_in_bytes += cluster_sketch_offsets.capacity() * sizeof(uint64_t);
-        if (sketch_mean) {
+        if (HasSketches()) {
             in_memory_size_in_bytes += num_dimensions * sizeof(float);
         }
         if constexpr (Q == Quantization::SAQ) {
