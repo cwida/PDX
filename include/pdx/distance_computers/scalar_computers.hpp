@@ -224,6 +224,59 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
         return dot;
     }
+
+    // One batch of ClusterSketchQuantizer: whether some lane's lower bound (estimate minus its
+    // error) is not above threshold, i.e. whether the batch may hold a row that changes the heap
+    static bool SketchBatchMayHoldNeighbor(
+        const uint8_t* PDX_RESTRICT batch,
+        size_t code_size_in_bytes,
+        const uint8_t* PDX_RESTRICT lookup_table,
+        float lookup_table_step,
+        float lookup_table_base_sum,
+        float centering_correction,
+        float squared_distance_to_mean,
+        float error_scale,
+        float threshold
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        constexpr size_t CODEBOOK_GROUP_SIZE_IN_BYTES = 128;
+        uint32_t sums[CLUSTER_SKETCH_BATCH_SIZE] = {};
+        for (size_t column = 0; column < code_size_in_bytes; ++column) {
+            const uint8_t* codes = batch + column * CLUSTER_SKETCH_BATCH_SIZE;
+            // The upper nibbles of a code byte are codebook 2 * column, the lower ones the next
+            for (size_t half = 0; half < 2; ++half) {
+                const size_t codebook = 2 * column + half;
+                const uint8_t* low_bytes = lookup_table +
+                                           (codebook / 4) * CODEBOOK_GROUP_SIZE_IN_BYTES +
+                                           (codebook % 4) * 16;
+                const uint8_t* high_bytes = low_bytes + 64;
+                for (size_t position = 0; position < HALF_COLUMN; ++position) {
+                    const uint8_t byte = codes[half * HALF_COLUMN + position];
+                    const size_t lane = position / 2 + (position % 2) * 8;
+                    const uint32_t low_nibble = byte & 0x0F;
+                    const uint32_t high_nibble = byte >> 4;
+                    sums[lane] += low_bytes[low_nibble] | (high_bytes[low_nibble] << 8);
+                    sums[lane + HALF_COLUMN] +=
+                        low_bytes[high_nibble] | (high_bytes[high_nibble] << 8);
+                }
+            }
+        }
+        const auto* f_add =
+            reinterpret_cast<const float*>(batch + code_size_in_bytes * CLUSTER_SKETCH_BATCH_SIZE);
+        const float* f_rescale = f_add + CLUSTER_SKETCH_BATCH_SIZE;
+        const float* f_error = f_rescale + CLUSTER_SKETCH_BATCH_SIZE;
+        for (size_t lane = 0; lane < CLUSTER_SKETCH_BATCH_SIZE; ++lane) {
+            const float dot = lookup_table_step * static_cast<float>(sums[lane]) +
+                              lookup_table_base_sum + centering_correction;
+            const float estimate = f_add[lane] + squared_distance_to_mean + f_rescale[lane] * dot;
+            const float lower_bound = estimate - f_error[lane] * error_scale;
+            // A NaN bound counts as not above threshold, so it never prunes a cluster
+            if (!(lower_bound > threshold)) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 template <>

@@ -456,6 +456,117 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         );
     }
 
+    // scalar_computer documents it. The u16 sums of a lane gain at most 2 * 255 per code byte, so
+    // they flush into u32 every 128 code bytes (1024 dimensions, RaBitQ-Library's kSafeChunkDim)
+    static bool SketchBatchMayHoldNeighbor(
+        const uint8_t* PDX_RESTRICT batch,
+        size_t code_size_in_bytes,
+        const uint8_t* PDX_RESTRICT lookup_table,
+        float lookup_table_step,
+        float lookup_table_base_sum,
+        float centering_correction,
+        float squared_distance_to_mean,
+        float error_scale,
+        float threshold
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        constexpr size_t CODEBOOK_GROUP_SIZE_IN_BYTES = 128;
+        constexpr size_t COLUMNS_PER_FLUSH = 128;
+        const uint8x16_t nibble_mask = vdupq_n_u8(0x0F);
+        // [lanes 0-15, lanes 16-31][positions 0-7, positions 8-15][first 4, last 4 positions]
+        uint32x4_t sums[2][2][2];
+        for (auto& lane_half : sums) {
+            for (auto& position_half : lane_half) {
+                position_half[0] = vdupq_n_u32(0);
+                position_half[1] = vdupq_n_u32(0);
+            }
+        }
+        for (size_t first = 0; first < code_size_in_bytes; first += COLUMNS_PER_FLUSH) {
+            const size_t last = std::min(code_size_in_bytes, first + COLUMNS_PER_FLUSH);
+            // [lanes 0-15, lanes 16-31][low-byte table, high-byte table][positions 0-7, 8-15]
+            uint16x8_t partial_sums[2][2][2];
+            for (auto& lane_half : partial_sums) {
+                for (auto& table : lane_half) {
+                    table[0] = vdupq_n_u16(0);
+                    table[1] = vdupq_n_u16(0);
+                }
+            }
+            for (size_t column = first; column < last; ++column) {
+                const uint8_t* codes = batch + column * CLUSTER_SKETCH_BATCH_SIZE;
+                const uint8_t* tables =
+                    lookup_table + (column / 2) * CODEBOOK_GROUP_SIZE_IN_BYTES + (column % 2) * 32;
+                for (size_t half = 0; half < 2; ++half) {
+                    const uint8x16_t code = vld1q_u8(codes + half * HALF_COLUMN);
+                    const uint8x16_t nibbles[2] = {vandq_u8(code, nibble_mask), vshrq_n_u8(code, 4)};
+                    const uint8x16_t table[2] = {
+                        vld1q_u8(tables + half * 16), vld1q_u8(tables + 64 + half * 16)
+                    };
+                    for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
+                        for (size_t byte_table = 0; byte_table < 2; ++byte_table) {
+                            const uint8x16_t looked_up =
+                                vqtbl1q_u8(table[byte_table], nibbles[lane_half]);
+                            uint16x8_t* partial = partial_sums[lane_half][byte_table];
+                            partial[0] = vaddw_u8(partial[0], vget_low_u8(looked_up));
+                            partial[1] = vaddw_high_u8(partial[1], looked_up);
+                        }
+                    }
+                }
+            }
+            for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
+                for (size_t position_half = 0; position_half < 2; ++position_half) {
+                    const uint16x8_t low_bytes = partial_sums[lane_half][0][position_half];
+                    const uint16x8_t high_bytes = partial_sums[lane_half][1][position_half];
+                    uint32x4_t* sum = sums[lane_half][position_half];
+                    sum[0] = vaddq_u32(
+                        sum[0],
+                        vaddq_u32(
+                            vmovl_u16(vget_low_u16(low_bytes)),
+                            vshll_n_u16(vget_low_u16(high_bytes), 8)
+                        )
+                    );
+                    sum[1] = vaddq_u32(
+                        sum[1],
+                        vaddq_u32(vmovl_high_u16(low_bytes), vshll_high_n_u16(high_bytes, 8))
+                    );
+                }
+            }
+        }
+        const auto* f_add =
+            reinterpret_cast<const float*>(batch + code_size_in_bytes * CLUSTER_SKETCH_BATCH_SIZE);
+        const float* f_rescale = f_add + CLUSTER_SKETCH_BATCH_SIZE;
+        const float* f_error = f_rescale + CLUSTER_SKETCH_BATCH_SIZE;
+        const float32x4_t step_vec = vdupq_n_f32(lookup_table_step);
+        const float32x4_t offset_vec = vdupq_n_f32(lookup_table_base_sum + centering_correction);
+        const float32x4_t distance_vec = vdupq_n_f32(squared_distance_to_mean);
+        const float32x4_t error_scale_vec = vdupq_n_f32(error_scale);
+        const float32x4_t threshold_vec = vdupq_n_f32(threshold);
+        for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
+            // Position p holds lane p / 2 + 8 * (p % 2): the even positions are lanes 0-7
+            const uint32x4_t (&position_sums)[2][2] = sums[lane_half];
+            const uint32x4_t lane_sums[4] = {
+                vuzp1q_u32(position_sums[0][0], position_sums[0][1]),
+                vuzp1q_u32(position_sums[1][0], position_sums[1][1]),
+                vuzp2q_u32(position_sums[0][0], position_sums[0][1]),
+                vuzp2q_u32(position_sums[1][0], position_sums[1][1])
+            };
+            for (size_t quarter = 0; quarter < 4; ++quarter) {
+                const size_t lane = lane_half * HALF_COLUMN + quarter * 4;
+                const float32x4_t dot =
+                    vfmaq_f32(offset_vec, vcvtq_f32_u32(lane_sums[quarter]), step_vec);
+                const float32x4_t estimate = vfmaq_f32(
+                    vaddq_f32(vld1q_f32(f_add + lane), distance_vec), vld1q_f32(f_rescale + lane), dot
+                );
+                const float32x4_t lower_bound =
+                    vfmsq_f32(estimate, vld1q_f32(f_error + lane), error_scale_vec);
+                // A NaN bound compares false, so it never prunes a cluster
+                if (vminvq_u32(vcgtq_f32(lower_bound, threshold_vec)) == 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
   private:
     // Without DOTPROD: widens 16 bytes of query and codes to s16, then multiply-accumulates into
     // s32

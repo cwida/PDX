@@ -430,6 +430,121 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         return ReduceAdd(_mm256_add_epi32(dot_vec_0, dot_vec_1));
     }
 
+    // scalar_computer documents it. RaBitQ-Library's accumulate_hacc: the u16 sums of a lane gain at
+    // most 2 * 255 per code byte, so they flush into u32 every 128 code bytes (1024 dimensions)
+    static bool SketchBatchMayHoldNeighbor(
+        const uint8_t* PDX_RESTRICT batch,
+        size_t code_size_in_bytes,
+        const uint8_t* PDX_RESTRICT lookup_table,
+        float lookup_table_step,
+        float lookup_table_base_sum,
+        float centering_correction,
+        float squared_distance_to_mean,
+        float error_scale,
+        float threshold
+    ) {
+        constexpr size_t CODEBOOK_GROUP_SIZE_IN_BYTES = 128;
+        constexpr size_t COLUMNS_PER_FLUSH = 128;
+        const __m256i nibble_mask = _mm256_set1_epi8(0x0F);
+        // Lanes 0-7, 8-15, 16-23, 24-31
+        __m256i sums[4] = {
+            _mm256_setzero_si256(),
+            _mm256_setzero_si256(),
+            _mm256_setzero_si256(),
+            _mm256_setzero_si256()
+        };
+        for (size_t first = 0; first < code_size_in_bytes; first += COLUMNS_PER_FLUSH) {
+            const size_t last = std::min(code_size_in_bytes, first + COLUMNS_PER_FLUSH);
+            // [low-byte table, high-byte table][lanes 0-15: words, words >> 8; lanes 16-31: same]
+            __m256i partial_sums[2][4];
+            for (auto& byte_table : partial_sums) {
+                for (auto& partial : byte_table) {
+                    partial = _mm256_setzero_si256();
+                }
+            }
+            for (size_t column = first; column < last; ++column) {
+                // The 128-bit halves are codebooks 2 * column and 2 * column + 1
+                const __m256i codes = LoadBytes32(batch + column * CLUSTER_SKETCH_BATCH_SIZE);
+                const __m256i low_nibbles = _mm256_and_si256(codes, nibble_mask);
+                const __m256i high_nibbles =
+                    _mm256_and_si256(_mm256_srli_epi16(codes, 4), nibble_mask);
+                const uint8_t* tables =
+                    lookup_table + (column / 2) * CODEBOOK_GROUP_SIZE_IN_BYTES + (column % 2) * 32;
+                for (size_t byte_table = 0; byte_table < 2; ++byte_table) {
+                    const __m256i table = LoadBytes32(tables + byte_table * 64);
+                    const __m256i low_lanes = _mm256_shuffle_epi8(table, low_nibbles);
+                    const __m256i high_lanes = _mm256_shuffle_epi8(table, high_nibbles);
+                    __m256i* partial = partial_sums[byte_table];
+                    partial[0] = _mm256_add_epi16(partial[0], low_lanes);
+                    partial[1] = _mm256_add_epi16(partial[1], _mm256_srli_epi16(low_lanes, 8));
+                    partial[2] = _mm256_add_epi16(partial[2], high_lanes);
+                    partial[3] = _mm256_add_epi16(partial[3], _mm256_srli_epi16(high_lanes, 8));
+                }
+            }
+            // Per byte table: lanes 0-15 and 16-31 as u16, in lane order (RaBitQ-Library's
+            // combine2x2: the even positions are lanes 0-7, the odd ones lanes 8-15)
+            __m256i lane_sums[2][2];
+            for (size_t byte_table = 0; byte_table < 2; ++byte_table) {
+                const __m256i* partial = partial_sums[byte_table];
+                for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
+                    const __m256i odd_positions = partial[2 * lane_half + 1];
+                    const __m256i even_positions = _mm256_sub_epi16(
+                        partial[2 * lane_half], _mm256_slli_epi16(odd_positions, 8)
+                    );
+                    lane_sums[byte_table][lane_half] = _mm256_add_epi16(
+                        _mm256_permute2f128_si256(even_positions, odd_positions, 0x21),
+                        _mm256_blend_epi32(even_positions, odd_positions, 0xF0)
+                    );
+                }
+            }
+            for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
+                const __m256i low_bytes = lane_sums[0][lane_half];
+                const __m256i high_bytes = lane_sums[1][lane_half];
+                for (size_t eighth = 0; eighth < 2; ++eighth) {
+                    const __m128i low_eight =
+                        eighth == 0 ? _mm256_castsi256_si128(low_bytes)
+                                    : _mm256_extracti128_si256(low_bytes, 1);
+                    const __m128i high_eight =
+                        eighth == 0 ? _mm256_castsi256_si128(high_bytes)
+                                    : _mm256_extracti128_si256(high_bytes, 1);
+                    __m256i& sum = sums[2 * lane_half + eighth];
+                    sum = _mm256_add_epi32(
+                        sum,
+                        _mm256_add_epi32(
+                            _mm256_cvtepu16_epi32(low_eight),
+                            _mm256_slli_epi32(_mm256_cvtepu16_epi32(high_eight), 8)
+                        )
+                    );
+                }
+            }
+        }
+        const auto* f_add =
+            reinterpret_cast<const float*>(batch + code_size_in_bytes * CLUSTER_SKETCH_BATCH_SIZE);
+        const float* f_rescale = f_add + CLUSTER_SKETCH_BATCH_SIZE;
+        const float* f_error = f_rescale + CLUSTER_SKETCH_BATCH_SIZE;
+        const __m256 step_vec = _mm256_set1_ps(lookup_table_step);
+        const __m256 offset_vec = _mm256_set1_ps(lookup_table_base_sum + centering_correction);
+        const __m256 distance_vec = _mm256_set1_ps(squared_distance_to_mean);
+        const __m256 error_scale_vec = _mm256_set1_ps(error_scale);
+        const __m256 threshold_vec = _mm256_set1_ps(threshold);
+        for (size_t eighth = 0; eighth < 4; ++eighth) {
+            const size_t lane = eighth * 8;
+            const __m256 dot = _mm256_fmadd_ps(_mm256_cvtepi32_ps(sums[eighth]), step_vec, offset_vec);
+            const __m256 estimate = _mm256_fmadd_ps(
+                _mm256_loadu_ps(f_rescale + lane),
+                dot,
+                _mm256_add_ps(_mm256_loadu_ps(f_add + lane), distance_vec)
+            );
+            const __m256 lower_bound =
+                _mm256_fnmadd_ps(_mm256_loadu_ps(f_error + lane), error_scale_vec, estimate);
+            // A NaN bound compares false (ordered), so it never prunes a cluster
+            if (_mm256_movemask_ps(_mm256_cmp_ps(lower_bound, threshold_vec, _CMP_GT_OQ)) != 0xFF) {
+                return true;
+            }
+        }
+        return false;
+    }
+
   private:
     static float ReduceAdd(const __m256 vec) {
         __m128 halves = _mm_add_ps(_mm256_castps256_ps128(vec), _mm256_extractf128_ps(vec, 1));
