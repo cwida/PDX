@@ -156,7 +156,7 @@ static constexpr float SAQ_LEVEL_ROUNDING_EPSILON = 1e-5f;
 static constexpr float CLUSTER_SKETCH_EPSILON = 1.9f;
 static constexpr size_t CLUSTER_SKETCH_BATCH_SIZE = 32;
 static constexpr uint32_t CLUSTER_SKETCH_DIMENSION_ALIGNMENT = 16;
-static constexpr size_t CLUSTER_SKETCH_MEAN_SAMPLE_SIZE = 122880;
+static constexpr size_t CLUSTER_SKETCH_MEAN_SAMPLE_SIZE = 12288;
 static constexpr size_t CLUSTER_SKETCH_TRANSPOSE_COLUMNS = 16;
 // Position j of a half column holds lane CLUSTER_SKETCH_LANE_AT_POSITION[j] (and that lane + 16)
 alignas(16) static constexpr uint8_t CLUSTER_SKETCH_LANE_AT_POSITION[16] =

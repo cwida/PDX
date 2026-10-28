@@ -128,7 +128,8 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
 `PDXearch<Q>::IterativeSearch<FILTERED>` allows for: i) concurrent queries on one index, ii) resume a search. The API of a resumable search is: `Next(n)`: probes the next n clusters ranked once at `Begin`; `Done()`: the clusters are exhausted. `GetClustersAccessOrder(query)` returns every cluster, nearest first; passing it as `BeginIterativeSearch`'s `clusters_access_order` lets several cursors of one query (e.g. one per batch of passing rows) skip ranking again (Flat returns `{0}`).
 `BeginIterativeSearch*`, `GetDistancesToCentroids` and `GetClustersAccessOrder` take an optional `CentroidRankingQuery`
 last, so a caller that ranks one query on many indexes (DuckIR: one per row group) encodes it once (null: each index
-encodes it). A cursor that ranks every cluster itself (no preset order) computes the distances at `Begin` and orders lazily: `EnsureClustersOrder` partial-sorts the queue as far as `Next` probes, at least doubling the ordered prefix, so it probes in the full sort's order without sorting what it never reaches.
+encodes it); `BeginIterativeSearch*` then take an optional `ClusterSketchQueryTable`, the query's sketch table, for the
+same reason (null: each cursor builds its own at its first sketch check). A cursor that ranks every cluster itself (no preset order) computes the distances at `Begin` and orders lazily: `EnsureClustersOrder` partial-sorts the queue as far as `Next` probes, at least doubling the ordered prefix, so it probes in the full sort's order without sorting what it never reaches.
 
 Cursors may share one `thread_safe` `TopKHeap`. Only merges take its lock (`Start`'s full scan of the first clusters runs unlocked), and each merge ends with `PublishKthDistance(k)`; the pruning thresholds read that atomic `kth_distance` (+inf while fewer than k) without the lock, as a stale value is only looser. Every change to `heap` must be followed by `PublishKthDistance(k)` under the lock, and a heap reused for another query is reset with `Clear()`.
 
@@ -220,10 +221,15 @@ fetching or scanning it (RemoteANN §3.2.1). `PDXIndex` on F32/U8 only: the tree
   depend on the stride, so `Restride` copies whole batches. A lane with `f_add = +inf` never blocks pruning: free slots,
   tombstones (`DeleteEmbedding` clears the lane) and the slots compaction vacates. A cluster learns its sketch size from
   `ClusterFormat::sketch_num_dimensions` (`IVF::GetClusterFormat`: d when the index has a mean, else 0).
-- **Query** (`ClusterSketchQuery`, RaBitQ-Library's `SplitBatchQuery` with the high-accuracy table): built at a cursor's
-  first check; per 4 dimensions the 16 nibble sums of the query as u16, split into low and high bytes, in one layout for
-  every ISA (per group of 4 codebooks, the 64 low bytes, then the 64 high bytes). A row's lower bound is its estimate
-  minus `f_error` · `CLUSTER_SKETCH_EPSILON` (ε₀ 1.9) · |q − mean|; it exceeds the true distance for ~2.8% of rows.
+- **Query** (RaBitQ-Library's `SplitBatchQuery` with the high-accuracy table), in two parts:
+  - `ClusterSketchQueryTable`, from the transformed query alone, as `f_add` carries each row's term of the mean: per 4
+    dimensions the 16 nibble sums of the query as u16, split into low and high bytes, in one layout for every ISA (per
+    group of 4 codebooks, the 64 low bytes, then the 64 high bytes). It costs ~12 ns per dimension (Zen 5), about five
+    cluster checks, so DuckIR builds it once per query and passes it to every row group's `BeginIterativeSearch*`
+    (a table of other dimensions throws); without it, each cursor builds its own.
+  - `ClusterSketchQuery`, per index at the cursor's first check: the table (shared or owned) and |q − mean|².
+  A row's lower bound is its estimate minus `f_error` · `CLUSTER_SKETCH_EPSILON` (ε₀ 1.9) · |q − mean|; it exceeds the
+  true distance for ~2.8% of rows.
 - **Scan** (`SketchBatchMayHoldNeighbor`, `DistanceComputer<L2SQ, F32>`, all four backends): FastScan over one batch,
   the u16 sums flushed into u32 every 1024 dimensions; true when some lane's bound is not above the threshold (a NaN
   bound counts as not above).

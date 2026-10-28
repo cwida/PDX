@@ -95,6 +95,8 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     // query's GetClustersAccessOrder, so that several searches of one query rank the clusters once
     // (nullptr: rank). ranking_query: for DuckIR, the transformed query encoded once for the
     // centroids of every index it ranks (see CentroidRankingQuery; nullptr: encoded here).
+    // sketch_query_table: for DuckIR, the query's cluster sketch table, built once for every index
+    // it searches (see ClusterSketchQueryTable; nullptr: built here; ignored without sketches).
     virtual std::unique_ptr<IIterativeSearch> BeginIterativeSearch(
         const float* query_embedding,
         uint32_t knn,
@@ -102,7 +104,8 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* sketch_query_table = nullptr
     ) const = 0;
     // Builds the evaluator of passing_row_ids once, for the filtered searches of many queries.
     virtual std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
@@ -117,7 +120,8 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* sketch_query_table = nullptr
     ) const = 0;
     // Writes the embeddings of row_ids as the index stores them (normalized and rotated; u8
     // dequantized), row-major into out (row_ids.size() x num_dimensions), in the order of row_ids.
@@ -360,7 +364,8 @@ class PDXIndex : public IPDXIndex {
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* sketch_query_table = nullptr
     ) const override {
         const uint32_t* preset_clusters_access_order =
             clusters_access_order ? clusters_access_order->data() : nullptr;
@@ -372,7 +377,8 @@ class PDXIndex : public IPDXIndex {
                     top_k_heap,
                     is_query_transformed,
                     preset_clusters_access_order,
-                    ranking_query
+                    ranking_query,
+                    sketch_query_table
                 )
             );
         }
@@ -386,7 +392,8 @@ class PDXIndex : public IPDXIndex {
                 top_k_heap,
                 is_query_transformed,
                 preset_clusters_access_order,
-                ranking_query
+                ranking_query,
+                sketch_query_table
             )
         );
     }
@@ -404,7 +411,8 @@ class PDXIndex : public IPDXIndex {
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* sketch_query_table = nullptr
     ) const override {
         return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
             searcher->BeginFilteredIterativeSearch(
@@ -414,7 +422,8 @@ class PDXIndex : public IPDXIndex {
                 top_k_heap,
                 is_query_transformed,
                 clusters_access_order ? clusters_access_order->data() : nullptr,
-                ranking_query
+                ranking_query,
+                sketch_query_table
             )
         );
     }

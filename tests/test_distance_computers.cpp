@@ -423,10 +423,10 @@ TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) 
             return kernel(
                 batches.data() + batch * quantizer.batch_size_in_bytes,
                 quantizer.code_size_in_bytes,
-                sketch_query.lookup_table.get(),
-                sketch_query.lookup_table_step,
-                sketch_query.lookup_table_base_sum,
-                sketch_query.centering_correction,
+                sketch_query.table.lookup_table.get(),
+                sketch_query.table.lookup_table_step,
+                sketch_query.table.lookup_table_base_sum,
+                sketch_query.table.centering_correction,
                 sketch_query.squared_distance_to_mean,
                 sketch_query.error_scale,
                 threshold

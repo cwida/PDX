@@ -189,7 +189,8 @@ class FlatIndex : public IPDXIndex {
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr,
-        const CentroidRankingQuery* /*ranking_query*/ = nullptr
+        const CentroidRankingQuery* /*ranking_query*/ = nullptr,
+        const ClusterSketchQueryTable* /*sketch_query_table*/ = nullptr
     ) const override {
         if (!passing_row_ids) {
             return std::make_unique<FlatSearcher::IterativeSearch>(searcher->BeginIterativeSearch(
@@ -229,7 +230,8 @@ class FlatIndex : public IPDXIndex {
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr,
-        const CentroidRankingQuery* /*ranking_query*/ = nullptr
+        const CentroidRankingQuery* /*ranking_query*/ = nullptr,
+        const ClusterSketchQueryTable* /*sketch_query_table*/ = nullptr
     ) const override {
         auto positions = std::make_unique<std::vector<uint32_t>>();
         positions->reserve(evaluator.total_passing_tuples);

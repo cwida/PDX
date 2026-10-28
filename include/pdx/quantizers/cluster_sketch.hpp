@@ -349,36 +349,34 @@ class ClusterSketchQuantizer {
     const size_t batch_size_in_bytes;
 };
 
-// A query's side of the sketch estimate (RaBitQ-Library's SplitBatchQuery, high-accuracy table).
-// The lookup table holds, per 4 dimensions, the 16 sums of the query values a nibble's bits pick,
-// as u16 split into low and high bytes; per group of 4 such codebooks, the 64 low bytes, then the
-// 64 high bytes.
-class ClusterSketchQuery {
+// The query's side of the sketch estimate that no index's mean enters (RaBitQ-Library's
+// SplitBatchQuery, high-accuracy table): f_add carries each row's term of the mean, so one table
+// serves indexes with different means. The lookup table holds, per 4 dimensions, the 16 sums of the
+// query values a nibble's bits pick, as u16 split into low and high bytes; per group of 4 such
+// codebooks, the 64 low bytes, then the 64 high bytes.
+// For DuckIR, where one query checks the sketches of many indexes (one per row group, sharing the
+// rotation): build it once per query from the transformed query and pass it to every index's
+// BeginIterativeSearch*, so the table is built once instead of once per index.
+class ClusterSketchQueryTable {
   public:
     static constexpr size_t NIBBLE_VALUES = 16;
     static constexpr size_t CODEBOOKS_PER_GROUP = 4;
 
-    // transformed_query and mean: normalized if the index needs it, then rotated
-    ClusterSketchQuery(
-        const float* PDX_RESTRICT transformed_query,
-        const float* PDX_RESTRICT mean,
-        const ClusterSketchQuantizer& quantizer
-    )
-        : num_codebooks(quantizer.padded_num_dimensions / 4),
+    // transformed_query: normalized if the index needs it, then rotated
+    ClusterSketchQueryTable(const float* PDX_RESTRICT transformed_query, uint32_t num_dimensions)
+        : num_dimensions(num_dimensions),
+          num_codebooks(
+              AlignValue<uint32_t, CLUSTER_SKETCH_DIMENSION_ALIGNMENT>(num_dimensions) / 4
+          ),
           lookup_table(new uint8_t[static_cast<size_t>(num_codebooks) * NIBBLE_VALUES * 2]) {
-        const uint32_t num_dimensions = quantizer.num_dimensions;
-        std::unique_ptr<float[]> padded_query(new float[quantizer.padded_num_dimensions]());
+        std::unique_ptr<float[]> padded_query(new float[static_cast<size_t>(num_codebooks) * 4]());
         std::copy_n(transformed_query, num_dimensions, padded_query.get());
         float query_sum = 0.0f;
-        squared_distance_to_mean = 0.0f;
         for (uint32_t i = 0; i < num_dimensions; ++i) {
-            const float difference = transformed_query[i] - mean[i];
-            squared_distance_to_mean += difference * difference;
             query_sum += transformed_query[i];
         }
         // Turns <b, q> into <b - 1/2, q>, b being a row's bits
         centering_correction = -0.5f * query_sum;
-        error_scale = CLUSTER_SKETCH_EPSILON * std::sqrt(squared_distance_to_mean);
 
         const size_t num_entries = static_cast<size_t>(num_codebooks) * NIBBLE_VALUES;
         std::unique_ptr<float[]> entries(new float[num_entries]);
@@ -411,12 +409,44 @@ class ClusterSketchQuery {
         }
     }
 
+    const uint32_t num_dimensions;
     const uint32_t num_codebooks;
     std::unique_ptr<uint8_t[]> lookup_table;
     float lookup_table_step;
     float lookup_table_base_sum;
     float centering_correction;
-    float squared_distance_to_mean;
+};
+
+// A query's side of the sketch estimate for one index: the table, and the query's distance to the
+// index's mean
+class ClusterSketchQuery {
+  public:
+    // transformed_query and mean: normalized if the index needs it, then rotated. shared_table: the
+    // caller's table of this query, of the index's dimensions (nullptr: built here)
+    ClusterSketchQuery(
+        const float* PDX_RESTRICT transformed_query,
+        const float* PDX_RESTRICT mean,
+        const ClusterSketchQuantizer& quantizer,
+        const ClusterSketchQueryTable* shared_table = nullptr
+    )
+        : owned_table(
+              shared_table != nullptr ? nullptr
+                                      : std::make_unique<ClusterSketchQueryTable>(
+                                            transformed_query, quantizer.num_dimensions
+                                        )
+          ),
+          table(shared_table != nullptr ? *shared_table : *owned_table) {
+        assert(table.num_dimensions == quantizer.num_dimensions);
+        for (uint32_t i = 0; i < quantizer.num_dimensions; ++i) {
+            const float difference = transformed_query[i] - mean[i];
+            squared_distance_to_mean += difference * difference;
+        }
+        error_scale = CLUSTER_SKETCH_EPSILON * std::sqrt(squared_distance_to_mean);
+    }
+
+    std::unique_ptr<ClusterSketchQueryTable> owned_table;
+    const ClusterSketchQueryTable& table;
+    float squared_distance_to_mean = 0.0f;
     float error_scale;
 };
 

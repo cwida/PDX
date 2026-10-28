@@ -248,4 +248,78 @@ TYPED_TEST(ClusterSketchTest, StreamsKeepTheSketchesAndPageThem) {
     EXPECT_TRUE(source.acquired_sketches.empty());
 }
 
+// Indexes on one rotation search alike with one table per query as with a table each, and a table of
+// other dimensions is refused
+TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
+    const auto data = TestUtils::LoadTestData(D);
+    auto config = SketchConfig();
+    config.is_data_transformed = true;
+    PDX::ADSamplingPruner pruner(config.num_dimensions, config.seed);
+    const size_t rows_per_index = TestUtils::N_TRAIN / 2;
+    std::vector<float> rows(TestUtils::N_TRAIN * D);
+    pruner.PreprocessEmbeddings(data.train.data(), rows.data(), TestUtils::N_TRAIN);
+    std::vector<float> queries(NUM_QUERIES * D);
+    pruner.PreprocessEmbeddings(data.queries.data(), queries.data(), NUM_QUERIES);
+    std::vector<std::unique_ptr<TypeParam>> indexes;
+    for (size_t part = 0; part < 2; ++part) {
+        config.base_row_id = part * rows_per_index;
+        indexes.push_back(std::make_unique<TypeParam>(config, pruner));
+        std::vector<size_t> row_ids(rows_per_index);
+        std::iota(row_ids.begin(), row_ids.end(), config.base_row_id);
+        indexes.back()->BuildIndex(row_ids.data(), rows.data() + config.base_row_id * D, rows_per_index);
+        indexes.back()->SetClusterSketchCheck(PDX::ClusterSketchCheck::ALWAYS);
+    }
+    const auto search = [&](bool share_table, size_t& vectors_accessed) {
+        std::vector<std::vector<uint32_t>> ids(NUM_QUERIES);
+        size_t accessed_before = 0;
+        for (const auto& index : indexes) {
+            accessed_before += index->GetNumVectorsAccessed();
+        }
+        for (size_t q = 0; q < NUM_QUERIES; ++q) {
+            const float* query = queries.data() + q * D;
+            const PDX::ClusterSketchQueryTable table(query, static_cast<uint32_t>(D));
+            PDX::TopKHeap heap;
+            for (const auto& index : indexes) {
+                index
+                    ->BeginIterativeSearch(
+                        query,
+                        TestUtils::KNN,
+                        heap,
+                        nullptr,
+                        true,
+                        nullptr,
+                        nullptr,
+                        share_table ? &table : nullptr
+                    )
+                    ->Next(N_PROBE);
+            }
+            for (; !heap.heap.empty(); heap.heap.pop()) {
+                ids[q].push_back(heap.heap.top().index);
+            }
+        }
+        vectors_accessed = 0;
+        for (const auto& index : indexes) {
+            vectors_accessed += index->GetNumVectorsAccessed();
+        }
+        vectors_accessed -= accessed_before;
+        return ids;
+    };
+    size_t own_tables_accessed = 0;
+    size_t shared_table_accessed = 0;
+    const auto own_tables_ids = search(false, own_tables_accessed);
+    EXPECT_EQ(search(true, shared_table_accessed), own_tables_ids);
+    EXPECT_EQ(shared_table_accessed, own_tables_accessed);
+
+    const PDX::ClusterSketchQueryTable other_dimensions_table(
+        queries.data(), static_cast<uint32_t>(D - 1)
+    );
+    PDX::TopKHeap heap;
+    EXPECT_THROW(
+        indexes[0]->BeginIterativeSearch(
+            queries.data(), TestUtils::KNN, heap, nullptr, true, nullptr, nullptr, &other_dimensions_table
+        ),
+        std::invalid_argument
+    );
+}
+
 } // namespace
