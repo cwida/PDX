@@ -42,6 +42,7 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     }
     virtual void BuildIndex(const float* embeddings, size_t num_embeddings) = 0;
     virtual void SetNProbe(uint32_t n_probe) = 0;
+    virtual void SetClusterSketchCheck(ClusterSketchCheck /*check*/) {}
     virtual void Save(const std::string& path) = 0;
     virtual void Restore(const std::string& path) = 0;
     // The stream holds no rotation matrix: LoadPDXIndexFromStream loads it into an index on the
@@ -436,6 +437,10 @@ class PDXIndex : public IPDXIndex {
     }
 
     void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }
+
+    void SetClusterSketchCheck(ClusterSketchCheck check) override {
+        searcher->SetClusterSketchCheck(check);
+    }
 
     const PDX::PDXearch<Q>& GetSearcher() const { return *searcher; }
 

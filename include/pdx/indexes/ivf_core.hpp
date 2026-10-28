@@ -19,12 +19,17 @@ namespace PDX {
 
 // Gives searches the bytes of the clusters an index holds no data for (LoadResidentDataFromStream):
 // Acquire returns them as SaveClusterData wrote them, valid until the matching Release. Called
-// concurrently by the searches.
+// concurrently by the searches. AcquireSketch returns a cluster's sketch batches as SaveToStream
+// wrote them (nullptr: none, the search scans the cluster), and IsClusterCached whether Acquire
+// would find the cluster's bytes already in memory (a hint).
 class IClusterSource {
   public:
     virtual ~IClusterSource() = default;
     virtual const char* Acquire(uint32_t cluster_id) = 0;
     virtual void Release(uint32_t cluster_id) = 0;
+    virtual bool IsClusterCached(uint32_t /*cluster_id*/) const { return false; }
+    virtual const char* AcquireSketch(uint32_t /*cluster_id*/) { return nullptr; }
+    virtual void ReleaseSketch(uint32_t /*cluster_id*/) {}
 };
 
 template <Quantization Q>

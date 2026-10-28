@@ -97,6 +97,8 @@ class PDXearch {
 
     size_t GetNProbe() const { return ivf_nprobe; }
 
+    void SetClusterSketchCheck(ClusterSketchCheck check) { cluster_sketch_check = check; }
+
     void SetClusterAccessOrder(const std::vector<uint32_t>& cluster_indexes) {
         cluster_access_order_size = cluster_indexes.size();
         cluster_indices_in_access_order.reset(new uint32_t[cluster_indexes.size()]);
@@ -108,6 +110,7 @@ class PDXearch {
   protected:
     float selectivity_threshold = 0.80;
     size_t ivf_nprobe = 0;
+    ClusterSketchCheck cluster_sketch_check = ClusterSketchCheck::WHEN_CLUSTER_NOT_CACHED;
 
     // Prioritized list of indices of the clusters to probe. E.g., [0, 2, 1].
     std::unique_ptr<uint32_t[]> cluster_indices_in_access_order;
@@ -903,11 +906,66 @@ class PDXearch {
             num_ordered_clusters = target;
         }
 
+        // Whether the cluster's sketch proves that none of its rows can enter the heap (then the
+        // cluster is neither fetched nor scanned), when SetClusterSketchCheck's policy checks it
+        bool SketchProvesClusterCannotChangeHeap(uint32_t cluster_id, const cluster_t& cluster) {
+            PDXearch& s = *searcher;
+            if (!cluster.HasSketches() || s.cluster_sketch_check == ClusterSketchCheck::NEVER) {
+                return false;
+            }
+            const float threshold = top_k_heap->kth_distance.load(std::memory_order_relaxed);
+            if (threshold == TopKHeap::NOT_FULL_KTH_DISTANCE) {
+                return false;
+            }
+            if (s.cluster_sketch_check == ClusterSketchCheck::WHEN_CLUSTER_NOT_CACHED &&
+                (cluster.data || s.cluster_source->IsClusterCached(cluster_id))) {
+                return false;
+            }
+            // A paged index (LoadResidentDataFromStream) keeps no sketches: they are acquired
+            const bool sketch_comes_from_source = !cluster.sketches;
+            const uint8_t* batches =
+                sketch_comes_from_source
+                    ? reinterpret_cast<const uint8_t*>(s.cluster_source->AcquireSketch(cluster_id))
+                    : cluster.sketches.get();
+            if (batches == nullptr) {
+                return false;
+            }
+            const ClusterSketchQuantizer& quantizer = cluster.sketch_quantizer;
+            if (!sketch_query) {
+                sketch_query = std::make_unique<ClusterSketchQuery>(
+                    query.get(), s.pdx_data.sketch_mean.get(), quantizer
+                );
+            }
+            using computer = DistanceComputer<DistanceMetric::L2SQ, F32>;
+            const size_t num_batches = ClusterSketchQuantizer::GetNumBatches(cluster.used_capacity);
+            bool may_hold_neighbor = false;
+            for (size_t batch = 0; batch < num_batches && !may_hold_neighbor; ++batch) {
+                may_hold_neighbor = computer::SketchBatchMayHoldNeighbor(
+                    batches + batch * quantizer.batch_size_in_bytes,
+                    quantizer.code_size_in_bytes,
+                    sketch_query->lookup_table.get(),
+                    sketch_query->lookup_table_step,
+                    sketch_query->lookup_table_base_sum,
+                    sketch_query->centering_correction,
+                    sketch_query->squared_distance_to_mean,
+                    sketch_query->error_scale,
+                    threshold
+                );
+            }
+            if (sketch_comes_from_source) {
+                s.cluster_source->ReleaseSketch(cluster_id);
+            }
+            return !may_hold_neighbor;
+        }
+
         // A cluster without data (LoadResidentDataFromStream) comes from the cluster source: its
         // row ids, then its PDX data with the stride of the embeddings it was saved with.
         void ProbeCluster(uint32_t cluster_id) {
             PDXearch& s = *searcher;
             const cluster_t& cluster = s.pdx_data.clusters[cluster_id];
+            if (SketchProvesClusterCannotChangeHeap(cluster_id, cluster)) {
+                return;
+            }
             if (cluster.data) {
                 ProbeClusterData(
                     cluster_id, cluster.data.get(), cluster.indices.get(), cluster.max_capacity
@@ -1078,6 +1136,7 @@ class PDXearch {
         std::unique_ptr<quantized_embedding_t[]> quantized_query;
         const quantized_embedding_t* prepared_query = nullptr;
         std::unique_ptr<SAQQuery> saq_query;
+        std::unique_ptr<ClusterSketchQuery> sketch_query;
         std::unique_ptr<float[]> saq_chunk_margins;
         std::unique_ptr<float[]> saq_rescales;
         std::unique_ptr<uint32_t[]> queued_clusters;
