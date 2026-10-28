@@ -57,6 +57,7 @@ pdx_add_test(test_transformed_input.out test_transformed_input.cpp)
 pdx_add_test(test_executor.out test_executor.cpp)
 pdx_add_test(test_centroid_quantization.out test_centroid_quantization.cpp)
 pdx_add_test(test_saq.out test_saq.cpp)
+pdx_add_test(test_cluster_sketch.out test_cluster_sketch.cpp)
 
 add_custom_target(tests
     DEPENDS
@@ -72,4 +73,5 @@ add_custom_target(tests
         test_executor.out
         test_centroid_quantization.out
         test_saq.out
+        test_cluster_sketch.out
 )
