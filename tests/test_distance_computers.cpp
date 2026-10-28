@@ -10,6 +10,7 @@
 #include "pdx/common.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/distance_computers/scalar_computers.hpp"
+#include "pdx/quantizers/cluster_sketch.hpp"
 #include "superkmeans/pdx/utils.h"
 
 namespace {
@@ -389,6 +390,89 @@ TEST_F(DistanceComputerTest, F32_Int8Query_SIMD_MatchesScalar) {
             ),
             expected_dot_u4
         );
+    }
+}
+
+const std::vector<size_t> SKETCH_KERNEL_DIMENSIONS = {2, 16, 17, 64, 384, 1000, 1024, 1040, 2064};
+
+// The sketch scan answers like a bound computed from the rows, in scalar and SIMD, and cleared lanes
+// never hold a neighbour.
+TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) {
+    constexpr size_t NUM_ROWS = 40;
+    for (size_t d : SKETCH_KERNEL_DIMENSIONS) {
+        SCOPED_TRACE("d=" + std::to_string(d));
+        const PDX::ClusterSketchQuantizer quantizer(static_cast<uint32_t>(d));
+        const auto rows = skmeans::GenerateRandomVectors(NUM_ROWS, d, -1.0f, 1.0f, 42);
+        const auto mean = skmeans::GenerateRandomVectors(1, d, -0.1f, 0.1f, 7);
+        const auto query = skmeans::GenerateRandomVectors(1, d, -1.0f, 1.0f, 13);
+        const size_t num_batches = PDX::ClusterSketchQuantizer::GetNumBatches(NUM_ROWS);
+        std::vector<uint8_t> sketch_rows(NUM_ROWS * quantizer.row_size_in_bytes);
+        std::vector<uint8_t> batches(num_batches * quantizer.batch_size_in_bytes);
+        quantizer.ClearBatches(batches.data(), num_batches);
+        for (size_t i = 0; i < NUM_ROWS; ++i) {
+            uint8_t* sketch_row = sketch_rows.data() + i * quantizer.row_size_in_bytes;
+            quantizer.EncodeRow(rows.data() + i * d, mean.data(), sketch_row);
+            quantizer.StoreRowInBatch(
+                sketch_row,
+                batches.data() + (i / PDX::CLUSTER_SKETCH_BATCH_SIZE) * quantizer.batch_size_in_bytes,
+                static_cast<uint32_t>(i % PDX::CLUSTER_SKETCH_BATCH_SIZE)
+            );
+        }
+        const PDX::ClusterSketchQuery sketch_query(query.data(), mean.data(), quantizer);
+        auto may_hold_neighbor = [&](auto kernel, size_t batch, float threshold) {
+            return kernel(
+                batches.data() + batch * quantizer.batch_size_in_bytes,
+                quantizer.code_size_in_bytes,
+                sketch_query.lookup_table.get(),
+                sketch_query.lookup_table_step,
+                sketch_query.lookup_table_base_sum,
+                sketch_query.centering_correction,
+                sketch_query.squared_distance_to_mean,
+                sketch_query.error_scale,
+                threshold
+            );
+        };
+        for (size_t batch = 0; batch < num_batches; ++batch) {
+            double lowest_bound = std::numeric_limits<double>::infinity();
+            const size_t end = std::min(NUM_ROWS, (batch + 1) * PDX::CLUSTER_SKETCH_BATCH_SIZE);
+            for (size_t i = batch * PDX::CLUSTER_SKETCH_BATCH_SIZE; i < end; ++i) {
+                const uint8_t* sketch_row = sketch_rows.data() + i * quantizer.row_size_in_bytes;
+                double centered_dot = 0.0;
+                double squared_distance_to_mean = 0.0;
+                for (size_t j = 0; j < d; ++j) {
+                    const int bit = (sketch_row[j / 8] >> (7 - j % 8)) & 1;
+                    centered_dot += (bit - 0.5) * query[j];
+                    squared_distance_to_mean += (query[j] - mean[j]) * (query[j] - mean[j]);
+                }
+                float factors[3];
+                std::memcpy(factors, sketch_row + quantizer.code_size_in_bytes, sizeof(factors));
+                const double estimate =
+                    factors[0] + squared_distance_to_mean + factors[1] * centered_dot;
+                lowest_bound = std::min(
+                    lowest_bound,
+                    estimate - factors[2] * PDX::CLUSTER_SKETCH_EPSILON *
+                                   std::sqrt(squared_distance_to_mean)
+                );
+            }
+            const double margin = 1e-2 * (std::abs(lowest_bound) + 1.0);
+            for (const bool above_lowest_bound : {false, true}) {
+                const auto threshold = static_cast<float>(
+                    above_lowest_bound ? lowest_bound + margin : lowest_bound - margin
+                );
+                EXPECT_EQ(
+                    may_hold_neighbor(ScalarF32Computer::SketchBatchMayHoldNeighbor, batch, threshold),
+                    above_lowest_bound
+                ) << "batch " << batch;
+                EXPECT_EQ(
+                    may_hold_neighbor(F32Computer::SketchBatchMayHoldNeighbor, batch, threshold),
+                    above_lowest_bound
+                ) << "batch " << batch;
+            }
+        }
+        quantizer.ClearBatches(batches.data(), 1);
+        EXPECT_FALSE(may_hold_neighbor(
+            F32Computer::SketchBatchMayHoldNeighbor, 0, std::numeric_limits<float>::max()
+        ));
     }
 }
 
