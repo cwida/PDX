@@ -304,9 +304,7 @@ struct Cluster : skmeans::AllocatorHolder {
     skmeans::AllocatedBuffer<uint8_t> GetSketchRows() const {
         const size_t row_size = sketch_quantizer.row_size_in_bytes;
         auto out = skmeans::AllocateBuffer<uint8_t>(GetAllocator(), num_embeddings * row_size);
-        for (uint32_t i = 0; i < num_embeddings; i++) {
-            ReadSketchRow(i, out.get() + i * row_size);
-        }
+        sketch_quantizer.ReadRowsFromBatches(sketches.get(), num_embeddings, out.get());
         return out;
     }
 
@@ -477,13 +475,7 @@ struct Cluster : skmeans::AllocatorHolder {
     ) {
         if (HasSketches()) {
             assert(sketch_rows != nullptr);
-            // TODO(@lkuffo, mid): Pack whole batches at once (RaBitQ-Library's pack_codes)
-            for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-                StoreSketchRow(
-                    static_cast<uint32_t>(row_idx),
-                    sketch_rows + row_idx * sketch_quantizer.row_size_in_bytes
-                );
-            }
+            sketch_quantizer.StoreRowsInBatches(sketch_rows, num_rows, sketches.get());
         }
         if constexpr (Q == Quantization::SAQ) {
             const auto store_section = [&](size_t row_offset, size_t size) {

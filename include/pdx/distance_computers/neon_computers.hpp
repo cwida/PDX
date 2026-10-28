@@ -567,6 +567,162 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         return false;
     }
 
+    // scalar_computer documents it. Per 32 dimensions, 4 code bytes from the comparison masks:
+    // narrowed to bytes, weighted by 128 to 1 per 8 dimensions and added pairwise; then per 8
+    static void ComputeSketchCodeAndSums(
+        const float* PDX_RESTRICT embedding,
+        const float* PDX_RESTRICT mean,
+        size_t num_dimensions,
+        uint8_t* PDX_RESTRICT code,
+        float& squared_norm,
+        float& absolute_sum,
+        float& mean_sum_by_sign
+    ) {
+        alignas(16) static constexpr uint8_t BIT_WEIGHTS[16] =
+            {128, 64, 32, 16, 8, 4, 2, 1, 128, 64, 32, 16, 8, 4, 2, 1};
+        const uint8x16_t bit_weights = vld1q_u8(BIT_WEIGHTS);
+        const uint32x4_t sign_bit = vdupq_n_u32(0x80000000u);
+        const float32x4_t zero = vdupq_n_f32(0.0f);
+        float32x4_t squared_norm_vec[4] = {zero, zero, zero, zero};
+        float32x4_t absolute_sum_vec[4] = {zero, zero, zero, zero};
+        float32x4_t mean_sum_by_sign_vec[4] = {zero, zero, zero, zero};
+        // Adds the residual of 4 dimensions to the sums; returns its positive lanes
+        const auto accumulate = [&](size_t offset, size_t quarter) {
+            const float32x4_t mean_vec = vld1q_f32(mean + offset);
+            const float32x4_t residual = vsubq_f32(vld1q_f32(embedding + offset), mean_vec);
+            const uint32x4_t positive = vcgtq_f32(residual, zero);
+            squared_norm_vec[quarter] = vfmaq_f32(squared_norm_vec[quarter], residual, residual);
+            absolute_sum_vec[quarter] = vaddq_f32(absolute_sum_vec[quarter], vabsq_f32(residual));
+            mean_sum_by_sign_vec[quarter] = vaddq_f32(
+                mean_sum_by_sign_vec[quarter],
+                vreinterpretq_f32_u32(
+                    veorq_u32(vreinterpretq_u32_f32(mean_vec), vbicq_u32(sign_bit, positive))
+                )
+            );
+            return positive;
+        };
+        size_t i = 0;
+        for (; i + 32 <= num_dimensions; i += 32) {
+            uint8x16_t mask_bytes[2];
+            for (size_t half = 0; half < 2; ++half) {
+                uint32x4_t positive[4];
+                for (size_t quarter = 0; quarter < 4; ++quarter) {
+                    positive[quarter] = accumulate(i + 16 * half + 4 * quarter, quarter);
+                }
+                const uint16x8_t first_masks = vuzp1q_u16(
+                    vreinterpretq_u16_u32(positive[0]), vreinterpretq_u16_u32(positive[1])
+                );
+                const uint16x8_t second_masks = vuzp1q_u16(
+                    vreinterpretq_u16_u32(positive[2]), vreinterpretq_u16_u32(positive[3])
+                );
+                mask_bytes[half] =
+                    vuzp1q_u8(vreinterpretq_u8_u16(first_masks), vreinterpretq_u8_u16(second_masks));
+            }
+            uint8x16_t bytes = vpaddq_u8(
+                vandq_u8(mask_bytes[0], bit_weights), vandq_u8(mask_bytes[1], bit_weights)
+            );
+            bytes = vpaddq_u8(bytes, bytes);
+            bytes = vpaddq_u8(bytes, bytes);
+            const uint32_t four_bytes = vgetq_lane_u32(vreinterpretq_u32_u8(bytes), 0);
+            std::memcpy(code + i / 8, &four_bytes, sizeof(four_bytes));
+        }
+        for (; i + 8 <= num_dimensions; i += 8) {
+            const uint32x4_t first_positive = accumulate(i, 0);
+            const uint32x4_t second_positive = accumulate(i + 4, 1);
+            const uint8x8_t mask_bytes =
+                vmovn_u16(vcombine_u16(vmovn_u32(first_positive), vmovn_u32(second_positive)));
+            code[i / 8] = vaddv_u8(vand_u8(mask_bytes, vget_low_u8(bit_weights)));
+        }
+        squared_norm += vaddvq_f32(vaddq_f32(
+            vaddq_f32(squared_norm_vec[0], squared_norm_vec[1]),
+            vaddq_f32(squared_norm_vec[2], squared_norm_vec[3])
+        ));
+        absolute_sum += vaddvq_f32(vaddq_f32(
+            vaddq_f32(absolute_sum_vec[0], absolute_sum_vec[1]),
+            vaddq_f32(absolute_sum_vec[2], absolute_sum_vec[3])
+        ));
+        mean_sum_by_sign += vaddvq_f32(vaddq_f32(
+            vaddq_f32(mean_sum_by_sign_vec[0], mean_sum_by_sign_vec[1]),
+            vaddq_f32(mean_sum_by_sign_vec[2], mean_sum_by_sign_vec[3])
+        ));
+        scalar_computer::ComputeSketchCodeAndSums(
+            embedding + i,
+            mean + i,
+            num_dimensions - i,
+            code + i / 8,
+            squared_norm,
+            absolute_sum,
+            mean_sum_by_sign
+        );
+    }
+
+    // scalar_computer documents it. Two 16 x 16 byte transposes (lanes 0-15 and 16-31), then a
+    // column at a time
+    static void PackSketchColumns(
+        const uint8_t* PDX_RESTRICT rows,
+        size_t row_stride,
+        size_t first_column,
+        size_t num_columns,
+        uint8_t* PDX_RESTRICT batch
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        uint8x16_t low_lanes[HALF_COLUMN];
+        uint8x16_t high_lanes[HALF_COLUMN];
+        for (size_t lane = 0; lane < HALF_COLUMN; ++lane) {
+            low_lanes[lane] = vld1q_u8(rows + lane * row_stride + first_column);
+            high_lanes[lane] = vld1q_u8(rows + (lane + HALF_COLUMN) * row_stride + first_column);
+        }
+        TransposeBytes16x16(low_lanes);
+        TransposeBytes16x16(high_lanes);
+        for (size_t column = 0; column < num_columns; ++column) {
+            PackSketchColumn(
+                low_lanes[column],
+                high_lanes[column],
+                batch + (first_column + column) * CLUSTER_SKETCH_BATCH_SIZE
+            );
+        }
+    }
+
+    // scalar_computer documents it
+    static void UnpackSketchColumns(
+        const uint8_t* PDX_RESTRICT batch,
+        size_t first_column,
+        size_t num_columns,
+        size_t num_rows,
+        uint8_t* PDX_RESTRICT rows,
+        size_t row_stride
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        uint8x16_t low_lanes[HALF_COLUMN];
+        uint8x16_t high_lanes[HALF_COLUMN];
+        for (size_t column = 0; column < CLUSTER_SKETCH_TRANSPOSE_COLUMNS; ++column) {
+            if (column < num_columns) {
+                UnpackSketchColumn(
+                    batch + (first_column + column) * CLUSTER_SKETCH_BATCH_SIZE,
+                    low_lanes[column],
+                    high_lanes[column]
+                );
+            } else {
+                low_lanes[column] = vdupq_n_u8(0);
+                high_lanes[column] = vdupq_n_u8(0);
+            }
+        }
+        TransposeBytes16x16(low_lanes);
+        TransposeBytes16x16(high_lanes);
+        alignas(16) uint8_t row_bytes[CLUSTER_SKETCH_TRANSPOSE_COLUMNS];
+        for (size_t lane = 0; lane < num_rows; ++lane) {
+            const uint8x16_t lane_bytes =
+                lane < HALF_COLUMN ? low_lanes[lane] : high_lanes[lane - HALF_COLUMN];
+            uint8_t* row = rows + lane * row_stride + first_column;
+            if (num_columns == CLUSTER_SKETCH_TRANSPOSE_COLUMNS) {
+                vst1q_u8(row, lane_bytes);
+            } else {
+                vst1q_u8(row_bytes, lane_bytes);
+                std::memcpy(row, row_bytes, num_columns);
+            }
+        }
+    }
+
   private:
     // Without DOTPROD: widens 16 bytes of query and codes to s16, then multiply-accumulates into
     // s32
@@ -614,6 +770,67 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const uint16x8_t codes_high_u16 =
             vcombine_u16(vqmovun_s32(codes_vec[2]), vqmovun_s32(codes_vec[3]));
         return vcombine_u8(vqmovn_u16(codes_low_u16), vqmovn_u16(codes_high_u16));
+    }
+
+    // One sketch column from its code byte of lanes 0-15 (low_lanes) and 16-31 (high_lanes)
+    static void PackSketchColumn(
+        const uint8x16_t low_lanes,
+        const uint8x16_t high_lanes,
+        uint8_t* PDX_RESTRICT packed
+    ) {
+        const uint8x16_t lane_at_position = vld1q_u8(CLUSTER_SKETCH_LANE_AT_POSITION);
+        const uint8x16_t high_nibble = vdupq_n_u8(0xF0);
+        const uint8x16_t upper_nibbles =
+            vorrq_u8(vshrq_n_u8(low_lanes, 4), vandq_u8(high_lanes, high_nibble));
+        const uint8x16_t lower_nibbles =
+            vorrq_u8(vbicq_u8(low_lanes, high_nibble), vshlq_n_u8(high_lanes, 4));
+        vst1q_u8(packed, vqtbl1q_u8(upper_nibbles, lane_at_position));
+        vst1q_u8(packed + CLUSTER_SKETCH_BATCH_SIZE / 2, vqtbl1q_u8(lower_nibbles, lane_at_position));
+    }
+
+    static void UnpackSketchColumn(
+        const uint8_t* PDX_RESTRICT packed,
+        uint8x16_t& low_lanes,
+        uint8x16_t& high_lanes
+    ) {
+        const uint8x16_t position_of_lane = vld1q_u8(CLUSTER_SKETCH_POSITION_OF_LANE);
+        const uint8x16_t low_nibble = vdupq_n_u8(0x0F);
+        const uint8x16_t upper_nibbles = vqtbl1q_u8(vld1q_u8(packed), position_of_lane);
+        const uint8x16_t lower_nibbles =
+            vqtbl1q_u8(vld1q_u8(packed + CLUSTER_SKETCH_BATCH_SIZE / 2), position_of_lane);
+        low_lanes = vorrq_u8(vshlq_n_u8(upper_nibbles, 4), vandq_u8(lower_nibbles, low_nibble));
+        high_lanes = vorrq_u8(vbicq_u8(upper_nibbles, low_nibble), vshrq_n_u8(lower_nibbles, 4));
+    }
+
+    // In place: byte j of rows[i] becomes byte i of rows[j]
+    static void TransposeBytes16x16(uint8x16_t* rows) {
+        for (size_t i = 0; i < 16; i += 2) {
+            const uint8x16x2_t pair = vtrnq_u8(rows[i], rows[i + 1]);
+            rows[i] = pair.val[0];
+            rows[i + 1] = pair.val[1];
+        }
+        for (size_t base = 0; base < 16; base += 4) {
+            for (size_t i = base; i < base + 2; ++i) {
+                const uint16x8x2_t pair =
+                    vtrnq_u16(vreinterpretq_u16_u8(rows[i]), vreinterpretq_u16_u8(rows[i + 2]));
+                rows[i] = vreinterpretq_u8_u16(pair.val[0]);
+                rows[i + 2] = vreinterpretq_u8_u16(pair.val[1]);
+            }
+        }
+        for (size_t base = 0; base < 16; base += 8) {
+            for (size_t i = base; i < base + 4; ++i) {
+                const uint32x4x2_t pair =
+                    vtrnq_u32(vreinterpretq_u32_u8(rows[i]), vreinterpretq_u32_u8(rows[i + 4]));
+                rows[i] = vreinterpretq_u8_u32(pair.val[0]);
+                rows[i + 4] = vreinterpretq_u8_u32(pair.val[1]);
+            }
+        }
+        for (size_t i = 0; i < 8; ++i) {
+            const uint64x2_t first = vreinterpretq_u64_u8(rows[i]);
+            const uint64x2_t second = vreinterpretq_u64_u8(rows[i + 8]);
+            rows[i] = vreinterpretq_u8_u64(vzip1q_u64(first, second));
+            rows[i + 8] = vreinterpretq_u8_u64(vzip2q_u64(first, second));
+        }
     }
 };
 

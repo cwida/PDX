@@ -208,9 +208,13 @@ fetching or scanning it (RemoteANN §3.2.1). `PDXIndex` on F32/U8 only: the tree
 - **Codec** (`ClusterSketchQuantizer`, RaBitQ-Library's split batches): a row's signs of its residual to the index's mean
   (`IVF::sketch_mean`, d floats in the rotated space, frozen at `BuildIndex`: `ComputeMean` of up to
   `CLUSTER_SKETCH_MEAN_SAMPLE_SIZE` rows), zero-padded to `CLUSTER_SKETCH_DIMENSION_ALIGNMENT` dimensions, and three
-  factors (`f_add`, `f_rescale`, `f_error`; `EncodeRow`, scalar for now). Codes don't depend on the cluster, so splits,
-  steals, merges and reassigns move sketch rows as they are (`sketch_rows` of `ReassignEmbeddings`,
-  `GatherGroupEmbeddings`, `StealNeighborEmbeddings`, `StoreEmbeddings`, `AppendEmbedding(s)`).
+  factors (`f_add`, `f_rescale`, `f_error`). `EncodeRow` gives a row's sketch row (the code, then the factors) through
+  the `ComputeSketchCodeAndSums` kernel. A cluster's rows go into and out of batches a whole batch at a time
+  (`StoreRowsInBatches` for `StoreEmbeddings`, `ReadRowsFromBatches` for `GetSketchRows`): 16 code bytes of 32 rows per
+  transpose (`PackSketchColumns`/`UnpackSketchColumns`), read in place, or through a zero-padded tile for a batch short
+  of rows and for a chunk whose loads would pass a row's end. `Append` stores its lane alone (`StoreRowInBatch`). Codes
+  don't depend on the cluster, so splits, steals, merges and reassigns move sketch rows as they are (`sketch_rows` of
+  `ReassignEmbeddings`, `GatherGroupEmbeddings`, `StealNeighborEmbeddings`, `StoreEmbeddings`, `AppendEmbedding(s)`).
 - **Storage**: `Cluster::sketches`, apart from `data` and from the allocator: `GetNumBatches(max_capacity)` batches of
   `CLUSTER_SKETCH_BATCH_SIZE` lanes, every lane's code in FastScan order, then each factor of every lane. A batch doesn't
   depend on the stride, so `Restride` copies whole batches. A lane with `f_add = +inf` never blocks pruning: free slots,
@@ -295,8 +299,11 @@ Performance-critical — weigh every copy/allocation.
   `HorizontalDotInt8WithU8`/`U4` (int8 query · codes: VPDPBUSD on AVX-512, and on AVX2 under `__AVXVNNI__`, else a
   widening `madd_epi16`; on NEON `vdotq_s32` under DOTPROD, LVQ8 on its codes XOR 0x80 plus 128·Σq (no i8mm: `-march=native`
 can claim it on CPUs that lack it), else a widening `vmlal_s16`),
-  `MinMax`, `QuantizeToU8`/`U4`, `DequantizeFromU4`, `QuantizeToInt8` and the cluster sketch scan
-  `SketchBatchMayHoldNeighbor`. The SIMD backends hand their scalar
+  `MinMax`, `QuantizeToU8`/`U4`, `DequantizeFromU4`, `QuantizeToInt8`, the cluster sketch scan
+  `SketchBatchMayHoldNeighbor` and its codec: `ComputeSketchCodeAndSums` (32 dimensions per step, then 8; a code byte
+  from a comparison mask, bit-reversed through `CLUSTER_SKETCH_REVERSED_BITS_TABLE` on x86, weighted and added
+  pairwise on NEON) and `PackSketchColumns`/`UnpackSketchColumns` (a 16 x 16 byte transpose per half batch, `vtrn` on
+  NEON, four rounds of byte unpacks on AVX2 and AVX-512, then a nibble shuffle per column). The SIMD backends hand their scalar
   remainders to `ScalarComputer` (`scalar_computer`). `DistanceComputer<L2SQ, SAQ>` holds SAQ's kernels on every backend:
   `ScanHead`, `ScanHeadPruning` (the head over given positions, gathered), `ScanTail<W>` (per-chunk table
   `GetScanTail(w)`), the no-pruning pair `ComputeHeadEstimates` /

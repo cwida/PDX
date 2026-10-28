@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pdx/common.hpp"
+#include "pdx/distance_computers/base_computers.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -65,15 +66,15 @@ class ClusterSketchQuantizer {
         float squared_norm = 0.0f;
         float absolute_sum = 0.0f;
         float mean_sum_by_sign = 0.0f;
-        // TODO(@lkuffo, high): SIMDize this loop per ISA
-        for (uint32_t i = 0; i < num_dimensions; ++i) {
-            const float residual = embedding[i] - mean[i];
-            const bool positive = residual > 0.0f;
-            sketch_row[i / 8] |= static_cast<uint8_t>(static_cast<uint8_t>(positive) << (7 - i % 8));
-            squared_norm += residual * residual;
-            absolute_sum += std::abs(residual);
-            mean_sum_by_sign += positive ? mean[i] : -mean[i];
-        }
+        DistanceComputer<DistanceMetric::L2SQ, Quantization::F32>::ComputeSketchCodeAndSums(
+            embedding,
+            mean,
+            num_dimensions,
+            sketch_row,
+            squared_norm,
+            absolute_sum,
+            mean_sum_by_sign
+        );
         // <r, b - 1/2> and <mean, b - 1/2>, b being the row's bits; a row equal to the mean gets
         // zero factors, so its estimate is exactly |q - mean|^2 (RaBitQ-Library's corner case)
         float residual_dot_code = 0.5f * absolute_sum;
@@ -133,6 +134,68 @@ class ClusterSketchQuantizer {
         }
     }
 
+    // EncodeRow's rows into batches from lane 0: every CLUSTER_SKETCH_TRANSPOSE_COLUMNS code bytes of
+    // a batch's rows in one transpose, read in place. A batch short of rows, and a chunk whose loads
+    // would pass the end of a row, go through a zero-padded tile
+    void StoreRowsInBatches(
+        const uint8_t* PDX_RESTRICT sketch_rows,
+        size_t num_rows,
+        uint8_t* PDX_RESTRICT batches
+    ) const {
+        using computer = DistanceComputer<DistanceMetric::L2SQ, Quantization::F32>;
+        alignas(16) uint8_t tile[CLUSTER_SKETCH_BATCH_SIZE * CLUSTER_SKETCH_TRANSPOSE_COLUMNS];
+        for (size_t first_row = 0; first_row < num_rows; first_row += CLUSTER_SKETCH_BATCH_SIZE) {
+            const size_t batch_rows = std::min(CLUSTER_SKETCH_BATCH_SIZE, num_rows - first_row);
+            const uint8_t* rows = sketch_rows + first_row * row_size_in_bytes;
+            uint8_t* batch = batches + (first_row / CLUSTER_SKETCH_BATCH_SIZE) * batch_size_in_bytes;
+            for (size_t first_column = 0; first_column < code_size_in_bytes;
+                 first_column += CLUSTER_SKETCH_TRANSPOSE_COLUMNS) {
+                const size_t num_columns =
+                    std::min(CLUSTER_SKETCH_TRANSPOSE_COLUMNS, code_size_in_bytes - first_column);
+                if (batch_rows == CLUSTER_SKETCH_BATCH_SIZE &&
+                    first_column + CLUSTER_SKETCH_TRANSPOSE_COLUMNS <= row_size_in_bytes) {
+                    computer::PackSketchColumns(
+                        rows, row_size_in_bytes, first_column, num_columns, batch
+                    );
+                    continue;
+                }
+                std::memset(tile, 0, sizeof(tile));
+                for (size_t row = 0; row < batch_rows; ++row) {
+                    std::memcpy(
+                        tile + row * CLUSTER_SKETCH_TRANSPOSE_COLUMNS,
+                        rows + row * row_size_in_bytes + first_column,
+                        num_columns
+                    );
+                }
+                // The tile holds this chunk's columns only
+                computer::PackSketchColumns(
+                    tile,
+                    CLUSTER_SKETCH_TRANSPOSE_COLUMNS,
+                    0,
+                    num_columns,
+                    batch + first_column * CLUSTER_SKETCH_BATCH_SIZE
+                );
+            }
+            float* f_add = reinterpret_cast<float*>(
+                batch + static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE
+            );
+            float* f_rescale = f_add + CLUSTER_SKETCH_BATCH_SIZE;
+            float* f_error = f_rescale + CLUSTER_SKETCH_BATCH_SIZE;
+            for (size_t lane = 0; lane < batch_rows; ++lane) {
+                float factors[3];
+                std::memcpy(
+                    factors, rows + lane * row_size_in_bytes + code_size_in_bytes, sizeof(factors)
+                );
+                f_add[lane] = factors[0];
+                f_rescale[lane] = factors[1];
+                f_error[lane] = factors[2];
+            }
+            for (size_t lane = batch_rows; lane < CLUSTER_SKETCH_BATCH_SIZE; ++lane) {
+                ClearLaneInBatch(batch, static_cast<uint32_t>(lane));
+            }
+        }
+    }
+
     void ReadRowFromBatch(
         const uint8_t* PDX_RESTRICT batch,
         uint32_t lane,
@@ -155,6 +218,43 @@ class ClusterSketchQuantizer {
                 factors + (factor * CLUSTER_SKETCH_BATCH_SIZE + lane) * sizeof(float),
                 sizeof(float)
             );
+        }
+    }
+
+    // The inverse of StoreRowsInBatches: num_rows rows from lane 0
+    void ReadRowsFromBatches(
+        const uint8_t* PDX_RESTRICT batches,
+        size_t num_rows,
+        uint8_t* PDX_RESTRICT sketch_rows
+    ) const {
+        using computer = DistanceComputer<DistanceMetric::L2SQ, Quantization::F32>;
+        for (size_t first_row = 0; first_row < num_rows; first_row += CLUSTER_SKETCH_BATCH_SIZE) {
+            const size_t batch_rows = std::min(CLUSTER_SKETCH_BATCH_SIZE, num_rows - first_row);
+            const uint8_t* batch =
+                batches + (first_row / CLUSTER_SKETCH_BATCH_SIZE) * batch_size_in_bytes;
+            uint8_t* rows = sketch_rows + first_row * row_size_in_bytes;
+            for (size_t first_column = 0; first_column < code_size_in_bytes;
+                 first_column += CLUSTER_SKETCH_TRANSPOSE_COLUMNS) {
+                computer::UnpackSketchColumns(
+                    batch,
+                    first_column,
+                    std::min(CLUSTER_SKETCH_TRANSPOSE_COLUMNS, code_size_in_bytes - first_column),
+                    batch_rows,
+                    rows,
+                    row_size_in_bytes
+                );
+            }
+            const auto* f_add = reinterpret_cast<const float*>(
+                batch + static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE
+            );
+            const float* f_rescale = f_add + CLUSTER_SKETCH_BATCH_SIZE;
+            const float* f_error = f_rescale + CLUSTER_SKETCH_BATCH_SIZE;
+            for (size_t lane = 0; lane < batch_rows; ++lane) {
+                const float factors[3] = {f_add[lane], f_rescale[lane], f_error[lane]};
+                std::memcpy(
+                    rows + lane * row_size_in_bytes + code_size_in_bytes, factors, sizeof(factors)
+                );
+            }
         }
     }
 

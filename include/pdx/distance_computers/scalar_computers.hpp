@@ -277,6 +277,73 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
         return false;
     }
+
+    // The signs of embedding - mean as the bits of code (zeroed; bit 7 of byte i is dimension 8i),
+    // adding the residual's squares, its absolute values and the mean signed by the bits to the sums
+    static void ComputeSketchCodeAndSums(
+        const float* PDX_RESTRICT embedding,
+        const float* PDX_RESTRICT mean,
+        size_t num_dimensions,
+        uint8_t* PDX_RESTRICT code,
+        float& squared_norm,
+        float& absolute_sum,
+        float& mean_sum_by_sign
+    ) {
+        for (size_t i = 0; i < num_dimensions; ++i) {
+            const float residual = embedding[i] - mean[i];
+            const bool positive = residual > 0.0f;
+            code[i / 8] |= static_cast<uint8_t>(static_cast<uint8_t>(positive) << (7 - i % 8));
+            squared_norm += residual * residual;
+            absolute_sum += std::abs(residual);
+            mean_sum_by_sign += positive ? mean[i] : -mean[i];
+        }
+    }
+
+    // Code bytes first_column to first_column + num_columns (at most CLUSTER_SKETCH_TRANSPOSE_COLUMNS)
+    // of 32 rows (row r at rows + r * row_stride) into those columns of a batch, in FastScan order.
+    // The SIMD backends read CLUSTER_SKETCH_TRANSPOSE_COLUMNS bytes of every row
+    static void PackSketchColumns(
+        const uint8_t* PDX_RESTRICT rows,
+        size_t row_stride,
+        size_t first_column,
+        size_t num_columns,
+        uint8_t* PDX_RESTRICT batch
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        for (size_t column = first_column; column < first_column + num_columns; ++column) {
+            uint8_t* packed = batch + column * CLUSTER_SKETCH_BATCH_SIZE;
+            for (size_t position = 0; position < HALF_COLUMN; ++position) {
+                const size_t lane = CLUSTER_SKETCH_LANE_AT_POSITION[position];
+                const uint8_t low_lane = rows[lane * row_stride + column];
+                const uint8_t high_lane = rows[(lane + HALF_COLUMN) * row_stride + column];
+                packed[position] = static_cast<uint8_t>((low_lane >> 4) | (high_lane & 0xF0));
+                packed[HALF_COLUMN + position] =
+                    static_cast<uint8_t>((low_lane & 0x0F) | (high_lane << 4));
+            }
+        }
+    }
+
+    // The inverse of PackSketchColumns, into the first num_rows rows
+    static void UnpackSketchColumns(
+        const uint8_t* PDX_RESTRICT batch,
+        size_t first_column,
+        size_t num_columns,
+        size_t num_rows,
+        uint8_t* PDX_RESTRICT rows,
+        size_t row_stride
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        for (size_t column = first_column; column < first_column + num_columns; ++column) {
+            const uint8_t* packed = batch + column * CLUSTER_SKETCH_BATCH_SIZE;
+            for (size_t lane = 0; lane < num_rows; ++lane) {
+                const size_t position = CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN];
+                const uint32_t shift = lane < HALF_COLUMN ? 0 : 4;
+                const uint32_t upper = (packed[position] >> shift) & 0x0F;
+                const uint32_t lower = (packed[HALF_COLUMN + position] >> shift) & 0x0F;
+                rows[lane * row_stride + column] = static_cast<uint8_t>((upper << 4) | lower);
+            }
+        }
+    }
 };
 
 template <>

@@ -476,6 +476,143 @@ TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) 
     }
 }
 
+// The SIMD row pass gives the scalar code and sums
+TEST_F(DistanceComputerTest, F32_ComputeSketchCodeAndSums_SIMD_MatchesScalar) {
+    constexpr size_t NUM_ROWS = 20;
+    for (size_t d : SKETCH_KERNEL_DIMENSIONS) {
+        SCOPED_TRACE("d=" + std::to_string(d));
+        const auto rows = skmeans::GenerateRandomVectors(NUM_ROWS, d, -1.0f, 1.0f, 42);
+        const auto mean = skmeans::GenerateRandomVectors(1, d, -0.1f, 0.1f, 7);
+        for (size_t i = 0; i < NUM_ROWS; ++i) {
+            std::vector<uint8_t> scalar_code((d + 7) / 8, 0);
+            std::vector<uint8_t> simd_code((d + 7) / 8, 0);
+            float scalar_sums[3] = {};
+            float simd_sums[3] = {};
+            ScalarF32Computer::ComputeSketchCodeAndSums(
+                rows.data() + i * d,
+                mean.data(),
+                d,
+                scalar_code.data(),
+                scalar_sums[0],
+                scalar_sums[1],
+                scalar_sums[2]
+            );
+            F32Computer::ComputeSketchCodeAndSums(
+                rows.data() + i * d,
+                mean.data(),
+                d,
+                simd_code.data(),
+                simd_sums[0],
+                simd_sums[1],
+                simd_sums[2]
+            );
+            EXPECT_EQ(simd_code, scalar_code) << "row " << i;
+            for (size_t sum = 0; sum < 3; ++sum) {
+                EXPECT_NEAR(
+                    simd_sums[sum], scalar_sums[sum], 1e-4f * (std::abs(scalar_sums[sum]) + 1.0f)
+                ) << "row "
+                  << i << ", sum " << sum;
+            }
+        }
+    }
+}
+
+// The SIMD pack writes the scalar columns, and both unpacks write back those columns of the rows
+// and nothing else
+TEST_F(DistanceComputerTest, F32_PackSketchColumns_SIMD_MatchesScalar) {
+    constexpr size_t ROW_STRIDE = 40;
+    constexpr size_t BATCH_SIZE = PDX::CLUSTER_SKETCH_BATCH_SIZE;
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<int> byte_distribution(0, 255);
+    std::vector<uint8_t> rows(BATCH_SIZE * ROW_STRIDE);
+    for (auto& byte : rows) {
+        byte = static_cast<uint8_t>(byte_distribution(rng));
+    }
+    for (size_t first_column : {size_t{0}, PDX::CLUSTER_SKETCH_TRANSPOSE_COLUMNS}) {
+        for (size_t num_columns = 1; num_columns <= PDX::CLUSTER_SKETCH_TRANSPOSE_COLUMNS;
+             ++num_columns) {
+            SCOPED_TRACE(
+                "first_column=" + std::to_string(first_column) +
+                " num_columns=" + std::to_string(num_columns)
+            );
+            const size_t batch_size = (first_column + num_columns) * BATCH_SIZE;
+            std::vector<uint8_t> scalar_batch(batch_size, 0);
+            std::vector<uint8_t> simd_batch(batch_size, 0);
+            ScalarF32Computer::PackSketchColumns(
+                rows.data(), ROW_STRIDE, first_column, num_columns, scalar_batch.data()
+            );
+            F32Computer::PackSketchColumns(
+                rows.data(), ROW_STRIDE, first_column, num_columns, simd_batch.data()
+            );
+            EXPECT_EQ(simd_batch, scalar_batch);
+            for (size_t num_rows : {size_t{1}, size_t{17}, BATCH_SIZE}) {
+                std::vector<uint8_t> scalar_rows(rows.size(), 0xAA);
+                std::vector<uint8_t> simd_rows(rows.size(), 0xAA);
+                ScalarF32Computer::UnpackSketchColumns(
+                    scalar_batch.data(),
+                    first_column,
+                    num_columns,
+                    num_rows,
+                    scalar_rows.data(),
+                    ROW_STRIDE
+                );
+                F32Computer::UnpackSketchColumns(
+                    scalar_batch.data(),
+                    first_column,
+                    num_columns,
+                    num_rows,
+                    simd_rows.data(),
+                    ROW_STRIDE
+                );
+                EXPECT_EQ(simd_rows, scalar_rows) << "num_rows " << num_rows;
+                for (size_t row = 0; row < num_rows; ++row) {
+                    for (size_t column = first_column; column < first_column + num_columns;
+                         ++column) {
+                        ASSERT_EQ(
+                            scalar_rows[row * ROW_STRIDE + column], rows[row * ROW_STRIDE + column]
+                        ) << "row "
+                          << row << ", column " << column;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Storing whole batches writes the bytes of storing lane by lane, and reading them gives the rows
+// back, also for a batch short of rows
+TEST_F(DistanceComputerTest, F32_StoreRowsInBatches_MatchesStoreRowInBatch) {
+    for (size_t d : SKETCH_KERNEL_DIMENSIONS) {
+        const PDX::ClusterSketchQuantizer quantizer(static_cast<uint32_t>(d));
+        for (size_t num_rows : {size_t{1}, PDX::CLUSTER_SKETCH_BATCH_SIZE, size_t{40}}) {
+            SCOPED_TRACE("d=" + std::to_string(d) + " num_rows=" + std::to_string(num_rows));
+            const auto rows = skmeans::GenerateRandomVectors(num_rows, d, -1.0f, 1.0f, 42);
+            const auto mean = skmeans::GenerateRandomVectors(1, d, -0.1f, 0.1f, 7);
+            const size_t num_batches = PDX::ClusterSketchQuantizer::GetNumBatches(num_rows);
+            std::vector<uint8_t> sketch_rows(num_rows * quantizer.row_size_in_bytes);
+            std::vector<uint8_t> lane_by_lane(num_batches * quantizer.batch_size_in_bytes);
+            quantizer.ClearBatches(lane_by_lane.data(), num_batches);
+            for (size_t i = 0; i < num_rows; ++i) {
+                uint8_t* sketch_row = sketch_rows.data() + i * quantizer.row_size_in_bytes;
+                quantizer.EncodeRow(rows.data() + i * d, mean.data(), sketch_row);
+                quantizer.StoreRowInBatch(
+                    sketch_row,
+                    lane_by_lane.data() +
+                        (i / PDX::CLUSTER_SKETCH_BATCH_SIZE) * quantizer.batch_size_in_bytes,
+                    static_cast<uint32_t>(i % PDX::CLUSTER_SKETCH_BATCH_SIZE)
+                );
+            }
+            std::vector<uint8_t> whole_batches(lane_by_lane.size());
+            quantizer.ClearBatches(whole_batches.data(), num_batches);
+            quantizer.StoreRowsInBatches(sketch_rows.data(), num_rows, whole_batches.data());
+            EXPECT_EQ(whole_batches, lane_by_lane);
+            std::vector<uint8_t> read_rows(sketch_rows.size());
+            quantizer.ReadRowsFromBatches(whole_batches.data(), num_rows, read_rows.data());
+            EXPECT_EQ(read_rows, sketch_rows);
+        }
+    }
+}
+
 std::vector<uint16_t> RandomHalves(size_t n, float low, float high, std::mt19937& rng) {
     std::uniform_real_distribution<float> distribution(low, high);
     std::vector<uint16_t> halves(n + 16);
