@@ -45,6 +45,7 @@ class IVF : public skmeans::AllocatorHolder {
     std::vector<uint64_t> cluster_data_offsets;
     bool is_normalized{};
     Centroids centroids;
+    std::unique_ptr<float[]> sketch_mean;
 
     // U8-specific quantization parameters
     float quantization_scale = 1.0f;
@@ -112,7 +113,7 @@ class IVF : public skmeans::AllocatorHolder {
                 saq_model.HasPDXU8Head()
             };
         } else {
-            return num_dimensions;
+            return {num_dimensions, sketch_mean ? num_dimensions : 0};
         }
     }
 
@@ -376,6 +377,9 @@ class IVF : public skmeans::AllocatorHolder {
         in_memory_size_in_bytes += centroids.GetAllocatedSizeInBytes();
         in_memory_size_in_bytes += num_clusters * sizeof(size_t); // cluster_offsets
         in_memory_size_in_bytes += cluster_data_offsets.capacity() * sizeof(uint64_t);
+        if (sketch_mean) {
+            in_memory_size_in_bytes += num_dimensions * sizeof(float);
+        }
         if constexpr (Q == Quantization::SAQ) {
             // The model's sizeof is already in the IVF's
             in_memory_size_in_bytes += saq_model.GetInMemorySizeInBytes() - sizeof(saq_model) +

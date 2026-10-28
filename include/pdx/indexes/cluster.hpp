@@ -2,6 +2,7 @@
 
 #include "pdx/common.hpp"
 #include "pdx/profiler.hpp"
+#include "pdx/quantizers/cluster_sketch.hpp"
 #include "pdx/utils.hpp"
 #include <atomic>
 #include <cassert>
@@ -19,10 +20,14 @@ template <Quantization Q>
 struct ClusterFormat {
     ClusterFormat(uint32_t num_dimensions) : num_dimensions(num_dimensions) {}
 
+    ClusterFormat(uint32_t num_dimensions, uint32_t sketch_num_dimensions)
+        : num_dimensions(num_dimensions), sketch_num_dimensions(sketch_num_dimensions) {}
+
     // In data_t values
     uint32_t GetValuesPerEmbedding() const { return num_dimensions; }
 
     uint32_t num_dimensions;
+    uint32_t sketch_num_dimensions = 0;
 };
 
 template <>
@@ -63,6 +68,7 @@ struct ClusterFormat<SAQ> {
     bool has_pdx_u8_head;
     // Where each chunk's record starts in an encoded embedding; the last entry is the records' size
     std::unique_ptr<size_t[]> chunk_record_offsets;
+    uint32_t sketch_num_dimensions = 0;
 };
 
 template <Quantization Q>
@@ -102,13 +108,21 @@ struct Cluster : skmeans::AllocatorHolder {
     )
         : num_embeddings(num_embeddings), used_capacity(num_embeddings), max_capacity(max_capacity),
           min_capacity(static_cast<uint32_t>(num_embeddings * MIN_CAPACITY_THRESHOLD)),
-          num_dimensions(format.GetValuesPerEmbedding()), format(format) {
+          num_dimensions(format.GetValuesPerEmbedding()), format(format),
+          sketch_quantizer(format.sketch_num_dimensions) {
         SetAllocator(allocator);
         if (allocate_data) {
             indices = skmeans::AllocateBuffer<uint32_t>(GetAllocator(), max_capacity);
             data = skmeans::AllocateBuffer<data_t>(
                 GetAllocator(), static_cast<uint64_t>(max_capacity) * num_dimensions
             );
+            if (HasSketches()) {
+                const size_t num_batches = ClusterSketchQuantizer::GetNumBatches(max_capacity);
+                sketches = skmeans::AllocateBuffer<uint8_t>(
+                    GetAllocator(), num_batches * sketch_quantizer.batch_size_in_bytes
+                );
+                sketch_quantizer.ClearBatches(sketches.get(), num_batches);
+            }
         }
     }
 
@@ -116,10 +130,11 @@ struct Cluster : skmeans::AllocatorHolder {
         : skmeans::AllocatorHolder(other), num_embeddings(other.num_embeddings),
           used_capacity(other.used_capacity), max_capacity(other.max_capacity),
           min_capacity(other.min_capacity), num_dimensions(other.num_dimensions),
-          format(other.format), n_accessed(other.n_accessed.load()), n_inserted(other.n_inserted),
+          format(other.format), sketch_quantizer(other.sketch_quantizer),
+          n_accessed(other.n_accessed.load()), n_inserted(other.n_inserted),
           n_deleted(other.n_deleted), id(other.id), mesocluster_id(other.mesocluster_id),
           indices(std::move(other.indices)), data(std::move(other.data)),
-          tombstones(std::move(other.tombstones)) {}
+          sketches(std::move(other.sketches)), tombstones(std::move(other.tombstones)) {}
 
     Cluster(const Cluster&) = delete;
     Cluster& operator=(const Cluster&) = delete;
@@ -129,6 +144,7 @@ struct Cluster : skmeans::AllocatorHolder {
     Cluster& operator=(Cluster&& other) noexcept {
         if (this != &other) {
             assert(num_dimensions == other.num_dimensions);
+            assert(sketch_quantizer.num_dimensions == other.sketch_quantizer.num_dimensions);
             skmeans::AllocatorHolder::operator=(other);
             num_embeddings = other.num_embeddings;
             used_capacity = other.used_capacity;
@@ -143,6 +159,7 @@ struct Cluster : skmeans::AllocatorHolder {
             mesocluster_id = other.mesocluster_id;
             indices = std::move(other.indices);
             data = std::move(other.data);
+            sketches = std::move(other.sketches);
             tombstones = std::move(other.tombstones);
         }
         return *this;
@@ -156,6 +173,7 @@ struct Cluster : skmeans::AllocatorHolder {
     uint32_t min_capacity{};
     const uint32_t num_dimensions{}; // format.GetValuesPerEmbedding() (SAQ: bytes per embedding)
     const ClusterFormat<Q> format;
+    const ClusterSketchQuantizer sketch_quantizer;
     std::mutex cluster_mutex;
     std::atomic<size_t> n_accessed{0};
     size_t n_inserted = 0;
@@ -165,7 +183,10 @@ struct Cluster : skmeans::AllocatorHolder {
 
     skmeans::AllocatedBuffer<uint32_t> indices; // !These are row_ids
     skmeans::AllocatedBuffer<data_t> data;
+    skmeans::AllocatedBuffer<uint8_t> sketches;
     tombstones_t tombstones; // ! Need to have indexes, not row_ids
+
+    bool HasSketches() const { return sketch_quantizer.num_dimensions > 0; }
 
     void AddTombstone(uint32_t index) { tombstones.insert(index); }
 
@@ -181,30 +202,67 @@ struct Cluster : skmeans::AllocatorHolder {
     void RemoveTombstone(uint32_t index) { tombstones.erase(index); }
 
     // Returns the index in cluster of the newly appended embedding
-    uint32_t AppendEmbedding(uint32_t row_id, const data_t* PDX_RESTRICT embedding) {
+    uint32_t AppendEmbedding(
+        uint32_t row_id,
+        const data_t* PDX_RESTRICT embedding,
+        const uint8_t* PDX_RESTRICT sketch_row = nullptr
+    ) {
         PDX_PROFILE_SCOPE("LeafAppend");
         std::lock_guard<std::mutex> lock(cluster_mutex);
-        return AppendEmbeddingUnderLock(row_id, embedding);
+        return AppendEmbeddingUnderLock(row_id, embedding, sketch_row);
     }
 
     void AppendEmbeddings(
         const data_t* embeddings,
         const uint32_t* row_ids,
         uint32_t num_rows,
-        uint32_t* out_positions
+        uint32_t* out_positions,
+        const uint8_t* sketch_rows = nullptr
     ) {
         std::lock_guard<std::mutex> lock(cluster_mutex);
         for (uint32_t i = 0; i < num_rows; i++) {
             out_positions[i] = AppendEmbeddingUnderLock(
-                row_ids[i], embeddings + static_cast<size_t>(i) * num_dimensions
+                row_ids[i],
+                embeddings + static_cast<size_t>(i) * num_dimensions,
+                sketch_rows != nullptr ? sketch_rows + i * sketch_quantizer.row_size_in_bytes
+                                       : nullptr
             );
         }
+    }
+
+    void StoreSketchRow(uint32_t index_in_cluster, const uint8_t* PDX_RESTRICT sketch_row) {
+        sketch_quantizer.StoreRowInBatch(
+            sketch_row,
+            sketches.get() + (index_in_cluster / CLUSTER_SKETCH_BATCH_SIZE) *
+                                 sketch_quantizer.batch_size_in_bytes,
+            index_in_cluster % CLUSTER_SKETCH_BATCH_SIZE
+        );
+    }
+
+    void ClearSketchLane(uint32_t index_in_cluster) {
+        sketch_quantizer.ClearLaneInBatch(
+            sketches.get() + (index_in_cluster / CLUSTER_SKETCH_BATCH_SIZE) *
+                                 sketch_quantizer.batch_size_in_bytes,
+            index_in_cluster % CLUSTER_SKETCH_BATCH_SIZE
+        );
+    }
+
+    void ReadSketchRow(uint32_t index_in_cluster, uint8_t* PDX_RESTRICT sketch_row) const {
+        sketch_quantizer.ReadRowFromBatch(
+            sketches.get() + (index_in_cluster / CLUSTER_SKETCH_BATCH_SIZE) *
+                                 sketch_quantizer.batch_size_in_bytes,
+            index_in_cluster % CLUSTER_SKETCH_BATCH_SIZE,
+            sketch_row
+        );
     }
 
     void DeleteEmbedding(uint32_t index_in_cluster) {
         PDX_PROFILE_SCOPE("LeafDelete");
         std::lock_guard<std::mutex> lock(cluster_mutex);
         AddTombstone(index_in_cluster);
+        if (sketches) {
+            ClearSketchLane(index_in_cluster);
+        }
         num_embeddings--;
         n_deleted++;
     }
@@ -212,7 +270,8 @@ struct Cluster : skmeans::AllocatorHolder {
     size_t GetAllocatedSizeInBytes() const {
         const size_t data_size = data ? data.get_deleter().Size() * sizeof(data_t) : 0;
         const size_t indices_size = indices ? indices.get_deleter().Size() * sizeof(uint32_t) : 0;
-        return data_size + indices_size;
+        const size_t sketches_size = sketches ? sketches.get_deleter().Size() : 0;
+        return data_size + indices_size + sketches_size;
     }
 
     size_t GetInMemorySizeInBytes() const {
@@ -236,6 +295,17 @@ struct Cluster : skmeans::AllocatorHolder {
         );
         for (uint32_t i = 0; i < num_embeddings; i++) {
             ReadEmbeddingFromPDXBuffer(i, out.get() + static_cast<size_t>(i) * num_dimensions);
+        }
+        return out;
+    }
+
+    // The rows' sketches, row-major (ClusterSketchQuantizer::EncodeRow's rows). Assumes no
+    // tombstones (call CompactCluster first).
+    skmeans::AllocatedBuffer<uint8_t> GetSketchRows() const {
+        const size_t row_size = sketch_quantizer.row_size_in_bytes;
+        auto out = skmeans::AllocateBuffer<uint8_t>(GetAllocator(), num_embeddings * row_size);
+        for (uint32_t i = 0; i < num_embeddings; i++) {
+            ReadSketchRow(i, out.get() + i * row_size);
         }
         return out;
     }
@@ -320,6 +390,24 @@ struct Cluster : skmeans::AllocatorHolder {
         }
     }
 
+    size_t GetSavedSketchesSizeInBytes() const {
+        return ClusterSketchQuantizer::GetNumBatches(num_embeddings) *
+               sketch_quantizer.batch_size_in_bytes;
+    }
+
+    // Assumes no tombstones (call CompactCluster first)
+    void SaveSketches(std::ostream& out) const {
+        out.write(
+            reinterpret_cast<const char*>(sketches.get()),
+            static_cast<std::streamsize>(GetSavedSketchesSizeInBytes())
+        );
+    }
+
+    template <class Reader>
+    void LoadSketches(Reader& reader) {
+        reader.Read(sketches.get(), GetSavedSketchesSizeInBytes());
+    }
+
     // Reads compact PDX data (as SavePDXData writes it) and places it into the strided buffer.
     template <class Reader>
     void LoadPDXData(Reader& reader) {
@@ -382,7 +470,21 @@ struct Cluster : skmeans::AllocatorHolder {
     // Store row-major embeddings into this cluster's preallocated buffers in the transposed PDX
     // layout, from slot 0. See the README of the following for a description of the PDX layout:
     // https://github.com/cwida/pdx
-    void StoreEmbeddings(const data_t* embeddings, const size_t num_rows) {
+    void StoreEmbeddings(
+        const data_t* embeddings,
+        const size_t num_rows,
+        const uint8_t* sketch_rows = nullptr
+    ) {
+        if (HasSketches()) {
+            assert(sketch_rows != nullptr);
+            // TODO(@lkuffo, mid): Pack whole batches at once (RaBitQ-Library's pack_codes)
+            for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+                StoreSketchRow(
+                    static_cast<uint32_t>(row_idx),
+                    sketch_rows + row_idx * sketch_quantizer.row_size_in_bytes
+                );
+            }
+        }
         if constexpr (Q == Quantization::SAQ) {
             const auto store_section = [&](size_t row_offset, size_t size) {
                 uint8_t* section = data.get() + max_capacity * row_offset;
@@ -492,6 +594,9 @@ struct Cluster : skmeans::AllocatorHolder {
             uint32_t tombstone_idx = PopTombstone();
             uint32_t last_idx = used_capacity - 1;
             CopyEmbeddingInPDXLayout(last_idx, tombstone_idx);
+            if (HasSketches()) {
+                ClearSketchLane(last_idx);
+            }
             indices[tombstone_idx] = indices[last_idx];
             moves.emplace_back(indices[tombstone_idx], tombstone_idx);
             indices[last_idx] = 0;
@@ -614,7 +719,11 @@ struct Cluster : skmeans::AllocatorHolder {
     }
 
   private:
-    uint32_t AppendEmbeddingUnderLock(uint32_t row_id, const data_t* PDX_RESTRICT embedding) {
+    uint32_t AppendEmbeddingUnderLock(
+        uint32_t row_id,
+        const data_t* PDX_RESTRICT embedding,
+        const uint8_t* PDX_RESTRICT sketch_row
+    ) {
         uint32_t next_free_idx = used_capacity;
         bool replaced_tombstone = false;
         if (!tombstones.empty()) {
@@ -629,6 +738,10 @@ struct Cluster : skmeans::AllocatorHolder {
             );
         }
         InsertEmbedding(next_free_idx, row_id, embedding);
+        if (HasSketches()) {
+            assert(sketch_row != nullptr);
+            StoreSketchRow(next_free_idx, sketch_row);
+        }
         num_embeddings++;
         if (!replaced_tombstone) {
             used_capacity++;
@@ -697,6 +810,19 @@ struct Cluster : skmeans::AllocatorHolder {
             for (; d < num_dimensions; d += H_DIM_SIZE) {
                 restride_block(d, H_DIM_SIZE);
             }
+        }
+        if (HasSketches()) {
+            const size_t batch_size = sketch_quantizer.batch_size_in_bytes;
+            const size_t new_num_batches = ClusterSketchQuantizer::GetNumBatches(new_max_capacity);
+            const size_t used_num_batches = ClusterSketchQuantizer::GetNumBatches(used_capacity);
+            auto new_sketches =
+                skmeans::AllocateBuffer<uint8_t>(GetAllocator(), new_num_batches * batch_size);
+            std::memcpy(new_sketches.get(), sketches.get(), used_num_batches * batch_size);
+            sketch_quantizer.ClearBatches(
+                new_sketches.get() + used_num_batches * batch_size,
+                new_num_batches - used_num_batches
+            );
+            sketches = std::move(new_sketches);
         }
         indices = std::move(new_indices);
         data = std::move(new_data);
@@ -787,6 +913,15 @@ struct Cluster : skmeans::AllocatorHolder {
     // Copies an embedding within the PDX buffer from one position to another.
     // This function assumes thread safety (caller must hold cluster_mutex).
     void CopyEmbeddingInPDXLayout(uint32_t src_idx, uint32_t dst_idx) {
+        if (HasSketches()) {
+            const size_t batch_size = sketch_quantizer.batch_size_in_bytes;
+            sketch_quantizer.CopyLaneBetweenBatches(
+                sketches.get() + (src_idx / CLUSTER_SKETCH_BATCH_SIZE) * batch_size,
+                src_idx % CLUSTER_SKETCH_BATCH_SIZE,
+                sketches.get() + (dst_idx / CLUSTER_SKETCH_BATCH_SIZE) * batch_size,
+                dst_idx % CLUSTER_SKETCH_BATCH_SIZE
+            );
+        }
         if constexpr (Q == Quantization::SAQ) {
             const auto copy_section = [&](size_t row_offset, size_t size) {
                 uint8_t* section = data.get() + max_capacity * row_offset;

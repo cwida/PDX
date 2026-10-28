@@ -135,6 +135,40 @@ class ClusterSketchQuantizer {
         }
     }
 
+    // The two lanes may share a batch
+    // TODO(@lkuffo, mid): Benchmark this nibble-by-nibble copy (compactions and splits call it)
+    void CopyLaneBetweenBatches(
+        const uint8_t* source_batch,
+        uint32_t source_lane,
+        uint8_t* target_batch,
+        uint32_t target_lane
+    ) const {
+        constexpr uint32_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        const uint32_t source_position = 2 * (source_lane % 8) + (source_lane % HALF_COLUMN) / 8;
+        const uint32_t source_shift = source_lane < HALF_COLUMN ? 0 : 4;
+        const uint32_t target_position = 2 * (target_lane % 8) + (target_lane % HALF_COLUMN) / 8;
+        const uint32_t target_shift = target_lane < HALF_COLUMN ? 0 : 4;
+        const auto kept_nibble = static_cast<uint8_t>(target_lane < HALF_COLUMN ? 0xF0 : 0x0F);
+        for (uint32_t i = 0; i < code_size_in_bytes; ++i) {
+            const size_t column = static_cast<size_t>(i) * CLUSTER_SKETCH_BATCH_SIZE;
+            for (uint32_t half = 0; half < 2; ++half) {
+                const uint32_t nibble =
+                    (source_batch[column + half * HALF_COLUMN + source_position] >> source_shift) &
+                    0x0F;
+                uint8_t& target = target_batch[column + half * HALF_COLUMN + target_position];
+                target = static_cast<uint8_t>((target & kept_nibble) | (nibble << target_shift));
+            }
+        }
+        const size_t factors = static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE;
+        for (uint32_t factor = 0; factor < 3; ++factor) {
+            std::memcpy(
+                target_batch + factors + (factor * CLUSTER_SKETCH_BATCH_SIZE + target_lane) * sizeof(float),
+                source_batch + factors + (factor * CLUSTER_SKETCH_BATCH_SIZE + source_lane) * sizeof(float),
+                sizeof(float)
+            );
+        }
+    }
+
     void ClearLaneInBatch(uint8_t* batch, uint32_t lane) const {
         float* lane_factors = reinterpret_cast<float*>(
                                   batch + static_cast<size_t>(code_size_in_bytes) *
