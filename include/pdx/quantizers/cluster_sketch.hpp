@@ -12,10 +12,33 @@
 namespace PDX {
 
 // 1-bit RaBitQ sketches of a cluster's rows (RaBitQ-Library's split batches): each row's signs of
-// its residual to the index's mean, and three estimator factors. A cluster keeps its rows in
-// batches of CLUSTER_SKETCH_BATCH_SIZE lanes: every lane's code in FastScan order, then the f_add,
-// the f_rescale and the f_error of every lane. A lane with f_add = +inf (a free slot or a
-// tombstone) never stops its cluster from being pruned.
+// its residual to the index's mean, and three estimator factors. At d = 64, a row's sketch row
+// (EncodeRow's output, which splits and merges move between clusters) is 20 bytes, bit 7 of code
+// byte i being dimension 8i:
+//
+//            [ dims 0-7 ][ dims 8-15 ] ... [ dims 56-63 ][ f_add ][ f_rescale ][ f_error ]
+//   byte      0           1                 7             8        12           16        20
+//
+// A cluster stores its slots in batches of CLUSTER_SKETCH_BATCH_SIZE lanes, which the scan reads
+// together: slot s is lane s % 32 of batch s / 32. A batch holds one 32-byte column per code byte
+// (code byte i of every lane), then each factor of every lane, as floats in lane order:
+//
+//            [ col 0 ][ col 1 ] ... [ col 7 ][ 32 f_add ][ 32 f_rescale ][ 32 f_error ]
+//   offset    0        32            224      256         384             512          640
+//
+// In column i, the first 16 bytes hold the upper nibbles of the lanes' code byte i (dimensions 8i
+// to 8i + 3) and the last 16 bytes its lower nibbles. Each byte holds two lanes, "a,b" meaning
+// lane a in the low nibble and lane b in the high one:
+//
+//   byte     0     1     2     3          14    15     16    17         31
+//   lanes    0,16  8,24  1,17  9,25  ...  7,23  15,31  0,16  8,24  ...  15,31
+//            \___ upper nibbles ____________________/  \__ lower nibbles ___/
+//
+// Byte j of a half holds lane CLUSTER_SKETCH_LANE_AT_POSITION[j]. The scan looks up 16 lanes'
+// nibbles in the query's table with one 16-byte shuffle; this order makes the even bytes lanes 0-7
+// and the odd bytes lanes 8-15, which the scan separates when it adds the bytes as u16 words
+// (RaBitQ-Library's FastScan order). A lane with f_add = +inf (a free slot or a tombstone) never
+// stops its cluster from being pruned.
 class ClusterSketchQuantizer {
   public:
     explicit ClusterSketchQuantizer(uint32_t num_dimensions)
