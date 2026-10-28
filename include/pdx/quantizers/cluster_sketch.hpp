@@ -174,7 +174,7 @@ class ClusterSketchQuantizer {
         const auto kept_nibble = static_cast<uint8_t>(target_lane < HALF_COLUMN ? 0xF0 : 0x0F);
         for (uint32_t i = 0; i < code_size_in_bytes; ++i) {
             const size_t column = static_cast<size_t>(i) * CLUSTER_SKETCH_BATCH_SIZE;
-            for (uint32_t half = 0; half < 2; ++half) {
+            for (size_t half = 0; half < 2; ++half) {
                 const uint32_t nibble =
                     (source_batch[column + half * HALF_COLUMN + source_position] >> source_shift) &
                     0x0F;
@@ -228,8 +228,8 @@ class ClusterSketchQuantizer {
 // 64 high bytes.
 class ClusterSketchQuery {
   public:
-    static constexpr uint32_t NIBBLE_VALUES = 16;
-    static constexpr uint32_t CODEBOOKS_PER_GROUP = 4;
+    static constexpr size_t NIBBLE_VALUES = 16;
+    static constexpr size_t CODEBOOKS_PER_GROUP = 4;
 
     // transformed_query and mean: normalized if the index needs it, then rotated
     ClusterSketchQuery(

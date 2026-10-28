@@ -1,6 +1,8 @@
 #undef HAS_FFTW
 
+#include <cstring>
 #include <gtest/gtest.h>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <string>
@@ -135,15 +137,25 @@ TYPED_TEST(ClusterSketchTest, SkipsClustersAndKeepsTheTopK) {
     ExpectSketchCheckSkipsWithoutChangingResults(index, data.queries.data());
 }
 
-// The sketches follow their rows through appends that split clusters and deletes that merge them
-TYPED_TEST(ClusterSketchTest, SketchesFollowTheirRowsThroughMaintenance) {
+// After appends that split clusters and deletes that merge them, every saved sketch is the encoding
+// of the row in its slot, and the free lanes are cleared (F32 stores the rows it encoded)
+TEST(ClusterSketchMaintenanceTest, SketchesFollowTheirRowsThroughMaintenance) {
     constexpr size_t NUM_BUILT = 3000;
     constexpr size_t NUM_BULK_APPENDED = 1000;
     const auto data = TestUtils::LoadTestData(D);
     auto config = SketchConfig();
     config.max_cluster_size = 64;
-    TypeParam index(config);
+    PDX::ADSamplingPruner pruner(config.num_dimensions, config.seed);
+    PDX::PDXIndexF32 index(config, pruner);
     index.BuildIndex(data.train.data(), NUM_BUILT);
+    std::vector<size_t> built_row_ids(NUM_BUILT);
+    std::iota(built_row_ids.begin(), built_row_ids.end(), 0);
+    std::vector<float> built_rows(NUM_BUILT * D);
+    index.GetEmbeddingsFromIndexByRowIds(built_row_ids, built_rows.data());
+    const auto mean = PDX::ClusterSketchQuantizer::ComputeMean(
+        built_rows.data(), NUM_BUILT, static_cast<uint32_t>(D)
+    );
+
     std::vector<size_t> bulk_row_ids(NUM_BULK_APPENDED);
     std::iota(bulk_row_ids.begin(), bulk_row_ids.end(), NUM_BUILT);
     index.BulkAppend(bulk_row_ids.data(), data.train.data() + NUM_BUILT * D, NUM_BULK_APPENDED);
@@ -153,8 +165,49 @@ TYPED_TEST(ClusterSketchTest, SketchesFollowTheirRowsThroughMaintenance) {
     for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; row_id += 3) {
         index.Delete(row_id);
     }
-    index.SetNProbe(N_PROBE);
-    ExpectSketchCheckSkipsWithoutChangingResults(index, data.queries.data());
+    std::stringstream stream;
+    index.SaveToStream(stream);
+    SavedStreamClusterAndSketchSource source(stream.str());
+    auto paged = PDX::LoadPDXIndexFromStream(stream, pruner, &source);
+    source.Attach(*paged, static_cast<size_t>(stream.tellg()));
+
+    const PDX::ClusterSketchQuantizer quantizer(static_cast<uint32_t>(D));
+    std::vector<uint8_t> saved_row(quantizer.row_size_in_bytes);
+    std::vector<uint8_t> encoded_row(quantizer.row_size_in_bytes);
+    size_t num_rows_checked = 0;
+    size_t num_mismatched_rows = 0;
+    size_t num_uncleared_free_lanes = 0;
+    for (uint32_t cluster_id = 0; cluster_id < index.GetNumClusters(); ++cluster_id) {
+        const auto cluster_row_ids = index.GetClusterRowIds(cluster_id);
+        const std::vector<size_t> row_ids(cluster_row_ids.begin(), cluster_row_ids.end());
+        std::vector<float> rows(row_ids.size() * D);
+        index.GetEmbeddingsFromIndexByRowIds(row_ids, rows.data());
+        const auto* batches = reinterpret_cast<const uint8_t*>(source.AcquireSketch(cluster_id));
+        const size_t num_lanes = PDX::ClusterSketchQuantizer::GetNumBatches(
+                                     static_cast<uint32_t>(row_ids.size())
+                                 ) *
+                                 PDX::CLUSTER_SKETCH_BATCH_SIZE;
+        for (size_t slot = 0; slot < num_lanes; ++slot) {
+            quantizer.ReadRowFromBatch(
+                batches + (slot / PDX::CLUSTER_SKETCH_BATCH_SIZE) * quantizer.batch_size_in_bytes,
+                static_cast<uint32_t>(slot % PDX::CLUSTER_SKETCH_BATCH_SIZE),
+                saved_row.data()
+            );
+            if (slot < row_ids.size()) {
+                quantizer.EncodeRow(rows.data() + slot * D, mean.get(), encoded_row.data());
+                num_mismatched_rows += saved_row != encoded_row;
+                num_rows_checked++;
+            } else {
+                float f_add;
+                std::memcpy(&f_add, saved_row.data() + quantizer.code_size_in_bytes, sizeof(float));
+                num_uncleared_free_lanes += f_add != std::numeric_limits<float>::infinity();
+            }
+        }
+        source.ReleaseSketch(cluster_id);
+    }
+    EXPECT_EQ(num_rows_checked, TestUtils::N_TRAIN - (TestUtils::N_TRAIN + 2) / 3);
+    EXPECT_EQ(num_mismatched_rows, 0u);
+    EXPECT_EQ(num_uncleared_free_lanes, 0u);
 }
 
 // A full load of a stream prunes as the saved index did, and a paged load reads the sketches through
