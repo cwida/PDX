@@ -123,6 +123,39 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
+    // scalar_computer documents it. One pass applies the scale and the strides 1, 2, 4 and 8 inside
+    // each register (a lane swap, then a multiply-add by the butterfly's signs); from stride 16 on,
+    // registers pair up
+    static void FastHadamardTransform(float* PDX_RESTRICT values, size_t n) {
+        const __m512 stride_1_signs =
+            _mm512_setr_ps(1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1);
+        const __m512 stride_2_signs =
+            _mm512_setr_ps(1, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1);
+        const __m512 stride_4_signs =
+            _mm512_setr_ps(1, 1, 1, 1, -1, -1, -1, -1, 1, 1, 1, 1, -1, -1, -1, -1);
+        const __m512 stride_8_signs =
+            _mm512_setr_ps(1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1);
+        const __m512 scale = _mm512_set1_ps(1.0f / std::sqrt(static_cast<float>(n)));
+        for (size_t i = 0; i < n; i += 16) {
+            __m512 v = _mm512_mul_ps(_mm512_loadu_ps(values + i), scale);
+            v = _mm512_fmadd_ps(v, stride_1_signs, _mm512_permute_ps(v, 0xB1));
+            v = _mm512_fmadd_ps(v, stride_2_signs, _mm512_permute_ps(v, 0x4E));
+            v = _mm512_fmadd_ps(v, stride_4_signs, _mm512_shuffle_f32x4(v, v, 0xB1));
+            v = _mm512_fmadd_ps(v, stride_8_signs, _mm512_shuffle_f32x4(v, v, 0x4E));
+            _mm512_storeu_ps(values + i, v);
+        }
+        for (size_t stride = 16; stride < n; stride *= 2) {
+            for (size_t first = 0; first < n; first += 2 * stride) {
+                for (size_t i = first; i < first + stride; i += 16) {
+                    const __m512 a = _mm512_loadu_ps(values + i);
+                    const __m512 b = _mm512_loadu_ps(values + i + stride);
+                    _mm512_storeu_ps(values + i, _mm512_add_ps(a, b));
+                    _mm512_storeu_ps(values + i + stride, _mm512_sub_ps(a, b));
+                }
+            }
+        }
+    }
+
     static float HorizontalDotWithU8(
         const query_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,

@@ -67,6 +67,41 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
+    // The orthonormal Walsh-Hadamard transform of n values in place (n a power of 2): one pass of
+    // butterflies per stride 1, 2, 4, ..., the 1/sqrt(n) scale applied up front
+    static void FastHadamardTransform(float* PDX_RESTRICT values, size_t n) {
+        const float scale = 1.0f / std::sqrt(static_cast<float>(n));
+        PDX_VECTORIZE_LOOP
+        for (size_t i = 0; i < n; ++i) {
+            values[i] *= scale;
+        }
+        for (size_t stride = 1; stride < n; stride *= 2) {
+            for (size_t first = 0; first < n; first += 2 * stride) {
+                PDX_VECTORIZE_LOOP
+                for (size_t i = first; i < first + stride; ++i) {
+                    const float a = values[i];
+                    const float b = values[i + stride];
+                    values[i] = a + b;
+                    values[i + stride] = a - b;
+                }
+            }
+        }
+    }
+
+    // RaBitQ-Library's Kac's walk, normalized: (x_i, x_i+n/2) becomes (x_i + x_i+n/2, x_i - x_i+n/2)
+    // / sqrt(2), mixing the two halves of n values (n even); every backend uses this one
+    static void KacWalk(float* PDX_RESTRICT values, size_t n) {
+        const size_t half = n / 2;
+        const float scale = 1.0f / std::sqrt(2.0f);
+        PDX_VECTORIZE_LOOP
+        for (size_t i = 0; i < half; ++i) {
+            const float a = values[i];
+            const float b = values[i + half];
+            values[i] = (a + b) * scale;
+            values[i + half] = (a - b) * scale;
+        }
+    }
+
     static float HorizontalDotWithU8(
         const query_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,

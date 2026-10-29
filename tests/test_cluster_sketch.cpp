@@ -359,4 +359,56 @@ TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
     );
 }
 
+// The sketch rotation keeps dot products, with or without padding and Kac's walk, and its seed alone
+// decides it
+TEST(ClusterSketchRotationTest, IsOrthogonalAndSeeded) {
+    constexpr size_t NUM_VECTORS = 8;
+    constexpr uint32_t PADDED_D = 100;
+    constexpr uint32_t WALKED_D = 384;
+    constexpr uint32_t POWER_OF_TWO_D = 512;
+    const auto dot = [](const float* a, const float* b, size_t n) {
+        double sum = 0.0;
+        for (size_t j = 0; j < n; ++j) {
+            sum += static_cast<double>(a[j]) * static_cast<double>(b[j]);
+        }
+        return sum;
+    };
+    std::mt19937 generator(TestUtils::SEED);
+    std::normal_distribution<float> normal;
+    for (const uint32_t d : {PADDED_D, WALKED_D, POWER_OF_TWO_D}) {
+        SCOPED_TRACE("d=" + std::to_string(d));
+        const PDX::ClusterSketchRotation rotation(d, TestUtils::SEED);
+        const PDX::ClusterSketchRotation same_seed_rotation(d, TestUtils::SEED);
+        const PDX::ClusterSketchRotation other_seed_rotation(d, TestUtils::SEED + 1);
+        const size_t padded_d = rotation.padded_num_dimensions;
+        std::vector<float> vectors(NUM_VECTORS * d);
+        for (float& value : vectors) {
+            value = normal(generator);
+        }
+        std::vector<float> rotated(NUM_VECTORS * padded_d);
+        std::vector<float> same_seed_rotated(padded_d);
+        std::vector<float> other_seed_rotated(padded_d);
+        for (size_t i = 0; i < NUM_VECTORS; ++i) {
+            const auto rotated_begin = rotated.begin() + static_cast<std::ptrdiff_t>(i * padded_d);
+            rotation.Rotate(vectors.data() + i * d, &*rotated_begin);
+            same_seed_rotation.Rotate(vectors.data() + i * d, same_seed_rotated.data());
+            other_seed_rotation.Rotate(vectors.data() + i * d, other_seed_rotated.data());
+            EXPECT_TRUE(std::equal(same_seed_rotated.begin(), same_seed_rotated.end(), rotated_begin));
+            EXPECT_FALSE(
+                std::equal(other_seed_rotated.begin(), other_seed_rotated.end(), rotated_begin)
+            );
+        }
+        for (size_t i = 0; i < NUM_VECTORS; ++i) {
+            for (size_t j = i; j < NUM_VECTORS; ++j) {
+                EXPECT_NEAR(
+                    dot(rotated.data() + i * padded_d, rotated.data() + j * padded_d, padded_d),
+                    dot(vectors.data() + i * d, vectors.data() + j * d, d),
+                    1e-4 * d
+                ) << "vectors "
+                  << i << ", " << j;
+            }
+        }
+    }
+}
+
 } // namespace

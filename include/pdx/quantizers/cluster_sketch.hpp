@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <random>
 
 namespace PDX {
 
@@ -321,6 +322,64 @@ class ClusterSketchQuantizer {
     const uint32_t code_size_in_bytes;
     const size_t row_size_in_bytes;
     const size_t batch_size_in_bytes;
+};
+
+// The sketch domain of an index whose own rotation isn't random (SAQ's starts with a PCA, so a few
+// dimensions hold most of the energy, and the 1-bit bound fails): RaBitQ-Library's FhtKacRotator. A
+// vector is zero-padded to padded_num_dimensions; then each round flips random signs, applies the
+// Hadamard transform to the first (even rounds) or last (odd rounds) power-of-two block, and Kac's
+// walk if the block isn't the whole vector. Orthogonal. The signs are raw std::mt19937 bits, so a
+// seed gives the same rotation on every platform.
+class ClusterSketchRotation {
+  public:
+    ClusterSketchRotation(uint32_t num_dimensions, uint32_t seed)
+        : num_dimensions(num_dimensions),
+          padded_num_dimensions(
+              AlignValue<uint32_t, CLUSTER_SKETCH_DIMENSION_ALIGNMENT>(num_dimensions)
+          ),
+          block_size(LargestPowerOfTwoAtMost(padded_num_dimensions)),
+          sign_masks(new uint32_t[CLUSTER_SKETCH_ROTATION_ROUNDS * padded_num_dimensions]) {
+        std::mt19937 generator(seed);
+        for (size_t i = 0; i < CLUSTER_SKETCH_ROTATION_ROUNDS * padded_num_dimensions; ++i) {
+            sign_masks[i] = static_cast<uint32_t>(generator() & 1u) << 31;
+        }
+    }
+
+    // vector: num_dimensions floats. out: padded_num_dimensions floats
+    void Rotate(const float* PDX_RESTRICT vector, float* PDX_RESTRICT out) const {
+        using computer = DistanceComputer<DistanceMetric::L2SQ, Quantization::F32>;
+        std::copy_n(vector, num_dimensions, out);
+        std::fill(out + num_dimensions, out + padded_num_dimensions, 0.0f);
+        for (size_t round = 0; round < CLUSTER_SKETCH_ROTATION_ROUNDS; ++round) {
+            computer::FlipSign(
+                out, out, sign_masks.get() + round * padded_num_dimensions, padded_num_dimensions
+            );
+            float* block = round % 2 == 0 ? out : out + padded_num_dimensions - block_size;
+            computer::FastHadamardTransform(block, block_size);
+            if (block_size < padded_num_dimensions) {
+                computer::KacWalk(out, padded_num_dimensions);
+            }
+        }
+    }
+
+    [[nodiscard]] size_t GetInMemorySizeInBytes() const {
+        return CLUSTER_SKETCH_ROTATION_ROUNDS * padded_num_dimensions * sizeof(uint32_t);
+    }
+
+    const uint32_t num_dimensions;
+    const uint32_t padded_num_dimensions;
+
+  private:
+    static uint32_t LargestPowerOfTwoAtMost(uint32_t value) {
+        uint32_t power = 1;
+        while (power * 2 <= value) {
+            power *= 2;
+        }
+        return power;
+    }
+
+    const uint32_t block_size;
+    std::unique_ptr<uint32_t[]> sign_masks;
 };
 
 // The query's side of the sketch estimate that no index's mean enters (RaBitQ-Library's

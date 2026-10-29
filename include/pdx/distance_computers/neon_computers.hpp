@@ -94,6 +94,33 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
+    // scalar_computer documents it. One pass applies the scale and the strides 1 and 2 inside each
+    // register (a lane swap, then a multiply-add by the butterfly's signs); from stride 4 on,
+    // registers pair up
+    static void FastHadamardTransform(float* PDX_RESTRICT values, size_t n) {
+        alignas(16) static constexpr float STRIDE_1_SIGNS[4] = {1.0f, -1.0f, 1.0f, -1.0f};
+        alignas(16) static constexpr float STRIDE_2_SIGNS[4] = {1.0f, 1.0f, -1.0f, -1.0f};
+        const float32x4_t stride_1_signs = vld1q_f32(STRIDE_1_SIGNS);
+        const float32x4_t stride_2_signs = vld1q_f32(STRIDE_2_SIGNS);
+        const float32x4_t scale = vdupq_n_f32(1.0f / std::sqrt(static_cast<float>(n)));
+        for (size_t i = 0; i < n; i += 4) {
+            float32x4_t v = vmulq_f32(vld1q_f32(values + i), scale);
+            v = vfmaq_f32(vrev64q_f32(v), v, stride_1_signs);
+            v = vfmaq_f32(vextq_f32(v, v, 2), v, stride_2_signs);
+            vst1q_f32(values + i, v);
+        }
+        for (size_t stride = 4; stride < n; stride *= 2) {
+            for (size_t first = 0; first < n; first += 2 * stride) {
+                for (size_t i = first; i < first + stride; i += 4) {
+                    const float32x4_t a = vld1q_f32(values + i);
+                    const float32x4_t b = vld1q_f32(values + i + stride);
+                    vst1q_f32(values + i, vaddq_f32(a, b));
+                    vst1q_f32(values + i + stride, vsubq_f32(a, b));
+                }
+            }
+        }
+    }
+
     static float HorizontalDotWithU8(
         const query_t* PDX_RESTRICT query,
         const uint8_t* PDX_RESTRICT codes,

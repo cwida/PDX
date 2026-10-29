@@ -40,6 +40,8 @@ class DistanceComputer<DistanceMetric::L2SQ, Quantization::F32> {
 
     constexpr static auto Horizontal = computer::Horizontal;
     constexpr static auto FlipSign = computer::FlipSign;
+    constexpr static auto FastHadamardTransform = computer::FastHadamardTransform;
+    constexpr static auto KacWalk = ScalarComputer<DistanceMetric::L2SQ, F32>::KacWalk;
     constexpr static auto HorizontalDotWithU8 = computer::HorizontalDotWithU8;
     constexpr static auto HorizontalDotWithU4 = computer::HorizontalDotWithU4;
     constexpr static auto MinMax = computer::MinMax;

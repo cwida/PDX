@@ -750,6 +750,30 @@ void ExpectSameSurvivors(
     }
 }
 
+// Scalar and SIMD match the orthonormal Walsh-Hadamard matrix: (-1)^popcount(i & j) / sqrt(n).
+TEST_F(DistanceComputerTest, F32_FastHadamardTransform_SIMD_MatchesScalar) {
+    for (size_t n = 16; n <= 2048; n *= 2) {
+        SCOPED_TRACE("n=" + std::to_string(n));
+        const auto values = skmeans::GenerateRandomVectors(1, n, -10.0f, 10.0f, 42);
+        std::vector<float> expected(n, 0.0f);
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                const bool negative = PDX_POPCOUNT(static_cast<uint32_t>(i & j)) % 2 == 1;
+                expected[i] += negative ? -values[j] : values[j];
+            }
+            expected[i] /= std::sqrt(static_cast<float>(n));
+        }
+        std::vector<float> scalar_out(values.begin(), values.end());
+        std::vector<float> simd_out(values.begin(), values.end());
+        ScalarF32Computer::FastHadamardTransform(scalar_out.data(), n);
+        F32Computer::FastHadamardTransform(simd_out.data(), n);
+        for (size_t i = 0; i < n; ++i) {
+            EXPECT_NEAR(scalar_out[i], expected[i], 1e-3f) << "idx " << i;
+            EXPECT_NEAR(simd_out[i], expected[i], 1e-3f) << "idx " << i;
+        }
+    }
+}
+
 TEST_F(DistanceComputerTest, SAQ_ScanHead_SIMD_MatchesScalar) {
     using scalar_computer = PDX::ScalarComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
     using computer = PDX::DistanceComputer<PDX::DistanceMetric::L2SQ, PDX::SAQ>;
