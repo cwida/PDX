@@ -309,7 +309,12 @@ can claim it on CPUs that lack it), else a widening `vmlal_s16`),
   `SketchBatchMayHoldNeighbor` and its codec: `ComputeSketchCodeAndSums` (32 dimensions per step, then 8; a code byte
   from a comparison mask, bit-reversed through `CLUSTER_SKETCH_REVERSED_BITS_TABLE` on x86, weighted and added
   pairwise on NEON) and `PackSketchColumns`/`UnpackSketchColumns` (a 16 x 16 byte transpose per half batch, `vtrn` on
-  NEON, four rounds of byte unpacks on AVX2 and AVX-512, then a nibble shuffle per column). The SIMD backends hand their scalar
+  NEON, four rounds of byte unpacks on AVX2 and AVX-512, then a nibble shuffle per column), and one lane's
+  `StoreSketchLane` / `ReadSketchLane` / `CopySketchLane` (a whole-column read-modify-write under the lane's nibble
+  mask, the row's nibbles broadcast by a byte shuffle; reads slide the lane's byte into an accumulator with
+  `vpalignr`). NEON reads and copies with the scalar loops: clang vectorizes them with lane loads, which beat
+  `vextq_u8` chains, but only while it can see the lane's position is below 16 (computed, not from
+  `CLUSTER_SKETCH_POSITION_OF_LANE`: 4x slower). The SIMD backends hand their scalar
   remainders to `ScalarComputer` (`scalar_computer`). `DistanceComputer<L2SQ, SAQ>` holds SAQ's kernels on every backend:
   `ScanHead`, `ScanHeadPruning` (the head over given positions, gathered), `ScanTail<W>` (per-chunk table
   `GetScanTail(w)`), the no-pruning pair `ComputeHeadEstimates` /
