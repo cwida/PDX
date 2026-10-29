@@ -622,6 +622,7 @@ class PDXIndex : public IPDXIndex {
         }
         index.SetAllocator(&GetAllocator());
         if (config.build_cluster_sketches) {
+            // NOLINTNEXTLINE(bugprone-branch-clone)
             if constexpr (Q == PDX::SAQ) {
                 index.sketch_mean = CopyArray(index.saq_model.rotated_mean, num_dimensions);
                 index.SetSketchRotation(

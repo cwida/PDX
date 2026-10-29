@@ -149,6 +149,7 @@ class IVF : public skmeans::AllocatorHolder {
     }
 
     const float* GetSketchDomainMean() const {
+        // NOLINTNEXTLINE(bugprone-branch-clone)
         if constexpr (Q == Quantization::SAQ) {
             return rotated_sketch_mean.get();
         } else {
