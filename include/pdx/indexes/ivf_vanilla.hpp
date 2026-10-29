@@ -624,7 +624,9 @@ class PDXIndex : public IPDXIndex {
         if (config.build_cluster_sketches) {
             // NOLINTNEXTLINE(bugprone-branch-clone)
             if constexpr (Q == PDX::SAQ) {
+                // index.sketch_mean is in the T-space
                 index.sketch_mean = CopyArray(index.saq_model.rotated_mean, num_dimensions);
+                // This sets index.rotated_sketch_mean in the S-space
                 index.SetSketchRotation(
                     std::make_unique<ClusterSketchRotation>(num_dimensions, config.seed)
                 );
