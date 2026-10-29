@@ -225,8 +225,10 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         return dot;
     }
 
-    // One batch of ClusterSketchQuantizer: whether some lane's lower bound (estimate minus its
-    // error) is not above threshold, i.e. whether the batch may hold a row that changes the heap
+    // One batch of ClusterSketchQuantizer: whether some lane has a lower bound (estimate minus its
+    // error) not above threshold, i.e. whether the batch may hold a row that changes the heap. With
+    // MASKED only the lanes of lane_mask count (bit i is lane i; under a filter, the passing lanes)
+    template <bool MASKED>
     static bool SketchBatchMayHoldNeighbor(
         const uint8_t* PDX_RESTRICT batch,
         size_t code_size_in_bytes,
@@ -236,7 +238,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         float centering_correction,
         float squared_distance_to_mean,
         float error_scale,
-        float threshold
+        float threshold,
+        uint32_t lane_mask
     ) {
         constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
         constexpr size_t CODEBOOK_GROUP_SIZE_IN_BYTES = 128;
@@ -266,6 +269,11 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const float* f_rescale = f_add + CLUSTER_SKETCH_BATCH_SIZE;
         const float* f_error = f_rescale + CLUSTER_SKETCH_BATCH_SIZE;
         for (size_t lane = 0; lane < CLUSTER_SKETCH_BATCH_SIZE; ++lane) {
+            if constexpr (MASKED) {
+                if (((lane_mask >> lane) & 1u) == 0) {
+                    continue;
+                }
+            }
             const float dot = lookup_table_step * static_cast<float>(sums[lane]) +
                               lookup_table_base_sum + centering_correction;
             const float estimate = f_add[lane] + squared_distance_to_mean + f_rescale[lane] * dot;

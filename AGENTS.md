@@ -231,15 +231,18 @@ fetching or scanning it (RemoteANN §3.2.1). `PDXIndex` on F32/U8 only: the tree
   A row's lower bound is its estimate minus `f_error` · `CLUSTER_SKETCH_EPSILON` (ε₀ 1.9) · |q − mean|; it exceeds the
   true distance for ~2.8% of rows.
 - **Scan** (`SketchBatchMayHoldNeighbor`, `DistanceComputer<L2SQ, F32>`, all four backends): FastScan over one batch,
-  the u16 sums flushed into u32 every 1024 dimensions; true when some lane's bound is not above the threshold (a NaN
-  bound counts as not above).
+  the u16 sums flushed into u32 every 1024 dimensions; true when some lane has a bound not above the threshold (a NaN
+  bound counts as not above). `SketchBatchMayHoldNeighborMasked` (`<MASKED>` = true, the filtered check) counts only
+  the lanes of `lane_mask` (bit i is lane i); the unmasked one ignores it, so unfiltered checks keep the measured code.
 - **Check** (`IterativeSearch::SketchProvesClusterCannotChangeHeap`, first thing in `ProbeCluster`): once the heap holds
   k, by the searcher's `ClusterSketchCheck` (`IPDXIndex::SetClusterSketchCheck`; not serialized, and builds and loads
   reset it, like n_probe): `NEVER`, `WHEN_CLUSTER_NOT_CACHED` (default: only a paged cluster whose source says
   `!IsClusterCached`, so a resident index never checks) or `ALWAYS`. Measured: where the cluster must be fetched it saves
   28–97% of the time a query spends on probed clusters; in memory it changes that time by −55% to +47%, by dataset. A
-  skipped cluster counts as probed for `Next(n)`, not in `n_accessed`.
-- **Tests** (`test_cluster_sketch`): `ALWAYS` against `NEVER` (same top-k, fewer vectors accessed), every saved lane
+  skipped cluster counts as probed for `Next(n)`, not in `n_accessed`. Filtered, only the passing lanes count (the
+  mask from the cluster's selection vector) and a batch without one is not scanned: on mxbai at 1% passing it skips
+  91% of the checked clusters, against 37% with every lane.
+- **Tests** (`test_cluster_sketch`): `ALWAYS` against `NEVER` (same top-k, fewer vectors accessed; also filtered), every saved lane
   against a fresh encode of its row after maintenance (F32), and full and paged stream loads.
 
 ## Verification gate (definition of done)

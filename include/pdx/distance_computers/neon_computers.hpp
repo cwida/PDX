@@ -458,6 +458,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
 
     // scalar_computer documents it. The u16 sums of a lane gain at most 2 * 255 per code byte, so
     // they flush into u32 every 128 code bytes (1024 dimensions, RaBitQ-Library's kSafeChunkDim)
+    template <bool MASKED>
     static bool SketchBatchMayHoldNeighbor(
         const uint8_t* PDX_RESTRICT batch,
         size_t code_size_in_bytes,
@@ -467,7 +468,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         float centering_correction,
         float squared_distance_to_mean,
         float error_scale,
-        float threshold
+        float threshold,
+        uint32_t lane_mask
     ) {
         constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
         constexpr size_t CODEBOOK_GROUP_SIZE_IN_BYTES = 128;
@@ -542,6 +544,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const float32x4_t distance_vec = vdupq_n_f32(squared_distance_to_mean);
         const float32x4_t error_scale_vec = vdupq_n_f32(error_scale);
         const float32x4_t threshold_vec = vdupq_n_f32(threshold);
+        alignas(16) static constexpr uint32_t LANE_BITS[4] = {1, 2, 4, 8};
+        const uint32x4_t lane_bits = vld1q_u32(LANE_BITS);
         for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
             // Position p holds lane p / 2 + 8 * (p % 2): the even positions are lanes 0-7
             const uint32x4_t(&position_sums)[2][2] = sums[lane_half];
@@ -563,7 +567,14 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                 const float32x4_t lower_bound =
                     vfmsq_f32(estimate, vld1q_f32(f_error + lane), error_scale_vec);
                 // A NaN bound compares false, so it never prunes a cluster
-                if (vminvq_u32(vcgtq_f32(lower_bound, threshold_vec)) == 0) {
+                const uint32x4_t above = vcgtq_f32(lower_bound, threshold_vec);
+                if constexpr (MASKED) {
+                    const uint32x4_t in_mask =
+                        vtstq_u32(vdupq_n_u32(static_cast<uint32_t>(lane_mask >> lane)), lane_bits);
+                    if (vmaxvq_u32(vbicq_u32(in_mask, above)) != 0) {
+                        return true;
+                    }
+                } else if (vminvq_u32(above) == 0) {
                     return true;
                 }
             }

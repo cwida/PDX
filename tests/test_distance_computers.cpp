@@ -419,7 +419,8 @@ TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) 
             );
         }
         const PDX::ClusterSketchQuery sketch_query(query.data(), mean.data(), quantizer);
-        auto may_hold_neighbor = [&](auto kernel, size_t batch, float threshold) {
+        auto may_hold_neighbor = [&](auto kernel, size_t batch, float threshold, uint32_t lane_mask
+                                 ) {
             return kernel(
                 batches.data() + batch * quantizer.batch_size_in_bytes,
                 quantizer.code_size_in_bytes,
@@ -429,11 +430,14 @@ TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) 
                 sketch_query.table.centering_correction,
                 sketch_query.squared_distance_to_mean,
                 sketch_query.error_scale,
-                threshold
+                threshold,
+                lane_mask
             );
         };
         for (size_t batch = 0; batch < num_batches; ++batch) {
-            double lowest_bound = std::numeric_limits<double>::infinity();
+            std::vector<double> lane_bounds(
+                PDX::CLUSTER_SKETCH_BATCH_SIZE, std::numeric_limits<double>::infinity()
+            );
             const size_t end = std::min(NUM_ROWS, (batch + 1) * PDX::CLUSTER_SKETCH_BATCH_SIZE);
             for (size_t i = batch * PDX::CLUSTER_SKETCH_BATCH_SIZE; i < end; ++i) {
                 const uint8_t* sketch_row = sketch_rows.data() + i * quantizer.row_size_in_bytes;
@@ -448,34 +452,49 @@ TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) 
                 std::memcpy(factors, sketch_row + quantizer.code_size_in_bytes, sizeof(factors));
                 const double estimate =
                     factors[0] + squared_distance_to_mean + factors[1] * centered_dot;
-                lowest_bound = std::min(
-                    lowest_bound,
-                    estimate - factors[2] * PDX::CLUSTER_SKETCH_EPSILON *
-                                   std::sqrt(squared_distance_to_mean)
-                );
+                lane_bounds[i % PDX::CLUSTER_SKETCH_BATCH_SIZE] =
+                    estimate -
+                    factors[2] * PDX::CLUSTER_SKETCH_EPSILON * std::sqrt(squared_distance_to_mean);
             }
-            const double margin = 1e-2 * (std::abs(lowest_bound) + 1.0);
-            for (const bool above_lowest_bound : {false, true}) {
-                const auto threshold = static_cast<float>(
-                    above_lowest_bound ? lowest_bound + margin : lowest_bound - margin
-                );
-                EXPECT_EQ(
-                    may_hold_neighbor(
-                        ScalarF32Computer::SketchBatchMayHoldNeighbor, batch, threshold
-                    ),
-                    above_lowest_bound
-                ) << "batch "
-                  << batch;
-                EXPECT_EQ(
-                    may_hold_neighbor(F32Computer::SketchBatchMayHoldNeighbor, batch, threshold),
-                    above_lowest_bound
-                ) << "batch "
-                  << batch;
+            for (const uint32_t lane_mask :
+                 {PDX::CLUSTER_SKETCH_ALL_LANES, 0x55555555u, 0xAAAAAAAAu, 1u << 3}) {
+                double lowest_bound = std::numeric_limits<double>::infinity();
+                for (size_t lane = 0; lane < PDX::CLUSTER_SKETCH_BATCH_SIZE; ++lane) {
+                    if ((lane_mask >> lane) & 1u) {
+                        lowest_bound = std::min(lowest_bound, lane_bounds[lane]);
+                    }
+                }
+                const double margin = 1e-2 * (std::abs(lowest_bound) + 1.0);
+                for (const bool above_lowest_bound : {false, true}) {
+                    const auto threshold = static_cast<float>(
+                        above_lowest_bound ? lowest_bound + margin : lowest_bound - margin
+                    );
+                    const auto expect_answer = [&](auto kernel, const char* kernel_name) {
+                        EXPECT_EQ(
+                            may_hold_neighbor(kernel, batch, threshold, lane_mask),
+                            above_lowest_bound
+                        ) << kernel_name
+                          << ", batch " << batch << ", lane mask " << lane_mask;
+                    };
+                    expect_answer(
+                        ScalarF32Computer::SketchBatchMayHoldNeighbor<true>, "scalar masked"
+                    );
+                    expect_answer(F32Computer::SketchBatchMayHoldNeighborMasked, "masked");
+                    if (lane_mask == PDX::CLUSTER_SKETCH_ALL_LANES) {
+                        expect_answer(
+                            ScalarF32Computer::SketchBatchMayHoldNeighbor<false>, "scalar"
+                        );
+                        expect_answer(F32Computer::SketchBatchMayHoldNeighbor, "unmasked");
+                    }
+                }
             }
         }
         quantizer.ClearBatches(batches.data(), 1);
         EXPECT_FALSE(may_hold_neighbor(
-            F32Computer::SketchBatchMayHoldNeighbor, 0, std::numeric_limits<float>::max()
+            F32Computer::SketchBatchMayHoldNeighbor,
+            0,
+            std::numeric_limits<float>::max(),
+            PDX::CLUSTER_SKETCH_ALL_LANES
         ));
     }
 }

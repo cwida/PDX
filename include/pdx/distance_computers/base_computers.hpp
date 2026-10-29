@@ -49,7 +49,9 @@ class DistanceComputer<DistanceMetric::L2SQ, Quantization::F32> {
     constexpr static auto QuantizeToInt8 = computer::QuantizeToInt8;
     constexpr static auto HorizontalDotInt8WithU8 = computer::HorizontalDotInt8WithU8;
     constexpr static auto HorizontalDotInt8WithU4 = computer::HorizontalDotInt8WithU4;
-    constexpr static auto SketchBatchMayHoldNeighbor = computer::SketchBatchMayHoldNeighbor;
+    constexpr static auto SketchBatchMayHoldNeighborMasked =
+        computer::SketchBatchMayHoldNeighbor<true>;
+    constexpr static auto SketchBatchMayHoldNeighbor = computer::SketchBatchMayHoldNeighbor<false>;
     constexpr static auto ComputeSketchCodeAndSums = computer::ComputeSketchCodeAndSums;
     constexpr static auto PackSketchColumns = computer::PackSketchColumns;
     constexpr static auto UnpackSketchColumns = computer::UnpackSketchColumns;

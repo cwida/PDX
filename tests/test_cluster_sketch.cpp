@@ -39,11 +39,16 @@ PDX::PDXIndexConfig SketchConfig() {
 
 std::vector<std::vector<uint32_t>> SearchTopKIds(
     const PDX::IPDXIndex& index,
-    const float* queries
+    const float* queries,
+    const std::vector<size_t>* passing_row_ids = nullptr
 ) {
     std::vector<std::vector<uint32_t>> ids(NUM_QUERIES);
     for (size_t q = 0; q < NUM_QUERIES; ++q) {
-        for (const auto& candidate : index.Search(queries + q * D, TestUtils::KNN)) {
+        const float* query = queries + q * D;
+        const auto candidates = passing_row_ids
+                                    ? index.FilteredSearch(query, TestUtils::KNN, *passing_row_ids)
+                                    : index.Search(query, TestUtils::KNN);
+        for (const auto& candidate : candidates) {
             ids[q].push_back(candidate.index);
         }
     }
@@ -116,15 +121,19 @@ class SavedStreamClusterAndSketchSource : public PDX::IClusterSource {
 };
 
 template <class Index>
-void ExpectSketchCheckSkipsWithoutChangingResults(Index& index, const float* queries) {
+void ExpectSketchCheckSkipsWithoutChangingResults(
+    Index& index,
+    const float* queries,
+    const std::vector<size_t>* passing_row_ids = nullptr
+) {
     index.SetClusterSketchCheck(PDX::ClusterSketchCheck::NEVER);
     size_t accessed_before = index.GetNumVectorsAccessed();
-    const auto unchecked_ids = SearchTopKIds(index, queries);
+    const auto unchecked_ids = SearchTopKIds(index, queries, passing_row_ids);
     const size_t unchecked_accessed = index.GetNumVectorsAccessed() - accessed_before;
 
     index.SetClusterSketchCheck(PDX::ClusterSketchCheck::ALWAYS);
     accessed_before = index.GetNumVectorsAccessed();
-    const auto checked_ids = SearchTopKIds(index, queries);
+    const auto checked_ids = SearchTopKIds(index, queries, passing_row_ids);
     const size_t checked_accessed = index.GetNumVectorsAccessed() - accessed_before;
 
     EXPECT_GE(TopKOverlap(unchecked_ids, checked_ids), MIN_TOP_K_OVERLAP);
@@ -138,6 +147,21 @@ TYPED_TEST(ClusterSketchTest, SkipsClustersAndKeepsTheTopK) {
     index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
     index.SetNProbe(N_PROBE);
     ExpectSketchCheckSkipsWithoutChangingResults(index, data.queries.data());
+}
+
+// Under a filter, where the check bounds only the passing rows, it skips clusters and keeps the
+// filtered top-k
+TYPED_TEST(ClusterSketchTest, FilteredSearchesSkipClustersAndKeepTheTopK) {
+    constexpr size_t PASSING_ROW_ID_STRIDE = 20;
+    const auto data = TestUtils::LoadTestData(D);
+    TypeParam index(SketchConfig());
+    index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    index.SetNProbe(N_PROBE);
+    std::vector<size_t> passing_row_ids;
+    for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; row_id += PASSING_ROW_ID_STRIDE) {
+        passing_row_ids.push_back(row_id);
+    }
+    ExpectSketchCheckSkipsWithoutChangingResults(index, data.queries.data(), &passing_row_ids);
 }
 
 // After appends that split clusters and deletes that merge them, every saved sketch is the encoding

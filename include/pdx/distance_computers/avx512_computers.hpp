@@ -401,6 +401,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     // scalar_computer documents it. RaBitQ-Library's accumulate_hacc: 64 code bytes are one group
     // of 4 codebooks of the lookup table; the u16 sums of a lane gain at most 2 * 255 per code
     // byte, so they flush into u32 every 128 code bytes (1024 dimensions)
+    template <bool MASKED>
     static bool SketchBatchMayHoldNeighbor(
         const uint8_t* PDX_RESTRICT batch,
         size_t code_size_in_bytes,
@@ -410,7 +411,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         float centering_correction,
         float squared_distance_to_mean,
         float error_scale,
-        float threshold
+        float threshold,
+        uint32_t lane_mask
     ) {
         constexpr size_t CODEBOOK_GROUP_SIZE_IN_BYTES = 128;
         constexpr size_t COLUMNS_PER_FLUSH = 128;
@@ -501,7 +503,13 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             const __m512 lower_bound =
                 _mm512_fnmadd_ps(_mm512_loadu_ps(f_error + lane), error_scale_vec, estimate);
             // A NaN bound compares false (ordered), so it never prunes a cluster
-            if (_mm512_cmp_ps_mask(lower_bound, threshold_vec, _CMP_GT_OQ) != 0xFFFF) {
+            const auto above =
+                static_cast<uint32_t>(_mm512_cmp_ps_mask(lower_bound, threshold_vec, _CMP_GT_OQ));
+            if constexpr (MASKED) {
+                if ((~above & (lane_mask >> lane) & 0xFFFFu) != 0) {
+                    return true;
+                }
+            } else if (above != 0xFFFFu) {
                 return true;
             }
         }

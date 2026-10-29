@@ -939,9 +939,34 @@ class PDXearch {
             const ClusterSketchQueryTable& table = sketch_query->table;
             using computer = DistanceComputer<DistanceMetric::L2SQ, F32>;
             const size_t num_batches = ClusterSketchQuantizer::GetNumBatches(cluster.used_capacity);
+            // Under a filter only the passing lanes count, and a batch without one is not checked
+            const uint8_t* selection_vector = nullptr;
+            if constexpr (FILTERED) {
+                selection_vector =
+                    evaluator
+                        ->GetSelectionVector(cluster_id, s.pdx_data.cluster_offsets[cluster_id])
+                        .first;
+            }
+            constexpr auto batch_may_hold_neighbor =
+                FILTERED ? computer::SketchBatchMayHoldNeighborMasked
+                         : computer::SketchBatchMayHoldNeighbor;
             bool may_hold_neighbor = false;
             for (size_t batch = 0; batch < num_batches && !may_hold_neighbor; ++batch) {
-                may_hold_neighbor = computer::SketchBatchMayHoldNeighbor(
+                uint32_t lane_mask = CLUSTER_SKETCH_ALL_LANES;
+                if constexpr (FILTERED) {
+                    const size_t first_slot = batch * CLUSTER_SKETCH_BATCH_SIZE;
+                    const size_t num_lanes =
+                        std::min(CLUSTER_SKETCH_BATCH_SIZE, cluster.used_capacity - first_slot);
+                    lane_mask = 0;
+                    for (size_t lane = 0; lane < num_lanes; ++lane) {
+                        lane_mask |= static_cast<uint32_t>(selection_vector[first_slot + lane] != 0)
+                                     << lane;
+                    }
+                    if (lane_mask == 0) {
+                        continue;
+                    }
+                }
+                may_hold_neighbor = batch_may_hold_neighbor(
                     batches + batch * quantizer.batch_size_in_bytes,
                     quantizer.code_size_in_bytes,
                     table.lookup_table.get(),
@@ -950,7 +975,8 @@ class PDXearch {
                     table.centering_correction,
                     sketch_query->squared_distance_to_mean,
                     sketch_query->error_scale,
-                    threshold
+                    threshold,
+                    lane_mask
                 );
             }
             if (sketch_comes_from_source) {
