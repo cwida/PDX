@@ -418,7 +418,10 @@ TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) 
                 static_cast<uint32_t>(i % PDX::CLUSTER_SKETCH_BATCH_SIZE)
             );
         }
-        const PDX::ClusterSketchQuery sketch_query(query.data(), mean.data(), quantizer);
+        const PDX::ClusterSketchQueryTable table(query.data(), static_cast<uint32_t>(d));
+        const PDX::ClusterSketchQuery sketch_query(
+            query.data(), mean.data(), static_cast<uint32_t>(d), table
+        );
         auto may_hold_neighbor = [&](auto kernel, size_t batch, float threshold, uint32_t lane_mask
                                  ) {
             return kernel(

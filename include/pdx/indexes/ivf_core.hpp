@@ -63,6 +63,8 @@ class IVF : public skmeans::AllocatorHolder {
     SAQModel saq_model;
     std::unique_ptr<float[]> saq_chunk_epsilons;
     uint64_t num_embeddings_at_calibration = 0;
+    std::unique_ptr<ClusterSketchRotation> sketch_rotation;
+    std::unique_ptr<float[]> rotated_sketch_mean;
 
     IVF() = default;
     ~IVF() = default;
@@ -112,17 +114,63 @@ class IVF : public skmeans::AllocatorHolder {
 
     bool HasSketches() const { return sketch_mean != nullptr; }
 
+    uint32_t GetSketchNumDimensions() const {
+        if (!HasSketches()) {
+            return 0;
+        }
+        if constexpr (Q == Quantization::SAQ) {
+            return AlignValue<uint32_t, CLUSTER_SKETCH_DIMENSION_ALIGNMENT>(num_dimensions);
+        } else {
+            return num_dimensions;
+        }
+    }
+
     ClusterFormat<Q> GetClusterFormat() const {
         if constexpr (Q == Quantization::SAQ) {
             return {
                 saq_model.chunk_record_offsets.get(),
                 saq_model.num_chunks,
                 saq_model.num_segments,
-                saq_model.HasPDXU8Head()
+                saq_model.HasPDXU8Head(),
+                GetSketchNumDimensions()
             };
         } else {
-            return {num_dimensions, HasSketches() ? num_dimensions : 0};
+            return {num_dimensions, GetSketchNumDimensions()};
         }
+    }
+
+    const float* ToSketchDomain(const float* vector, float* scratch) const {
+        if constexpr (Q == Quantization::SAQ) {
+            sketch_rotation->Rotate(vector, scratch);
+            return scratch;
+        } else {
+            return vector;
+        }
+    }
+
+    const float* GetSketchDomainMean() const {
+        if constexpr (Q == Quantization::SAQ) {
+            return rotated_sketch_mean.get();
+        } else {
+            return sketch_mean.get();
+        }
+    }
+
+    std::unique_ptr<ClusterSketchQueryTable> CreateClusterSketchQueryTable(
+        const float* transformed_query
+    ) const {
+        std::unique_ptr<float[]> scratch(
+            Q == Quantization::SAQ ? new float[GetSketchNumDimensions()] : nullptr
+        );
+        return std::make_unique<ClusterSketchQueryTable>(
+            ToSketchDomain(transformed_query, scratch.get()), GetSketchNumDimensions()
+        );
+    }
+
+    void SetSketchRotation(std::unique_ptr<ClusterSketchRotation> rotation) {
+        sketch_rotation = std::move(rotation);
+        rotated_sketch_mean.reset(new float[sketch_rotation->padded_num_dimensions]);
+        sketch_rotation->Rotate(sketch_mean.get(), rotated_sketch_mean.get());
     }
 
     // Compute cluster_offsets, total_capacity, and max_cluster_capacity from current clusters.
@@ -269,6 +317,9 @@ class IVF : public skmeans::AllocatorHolder {
                 reinterpret_cast<const char*>(sketch_mean.get()),
                 static_cast<std::streamsize>(num_dimensions * sizeof(float))
             );
+            if constexpr (Q == Quantization::SAQ) {
+                sketch_rotation->Save(out);
+            }
         }
         std::unique_ptr<uint64_t[]> cluster_data_offsets_to_save(new uint64_t[num_clusters]);
         uint64_t cluster_data_offset = 0;
@@ -343,6 +394,9 @@ class IVF : public skmeans::AllocatorHolder {
         if (has_sketches) {
             sketch_mean.reset(new float[num_dimensions]);
             reader.Read(sketch_mean.get(), num_dimensions * sizeof(float));
+            if constexpr (Q == Quantization::SAQ) {
+                SetSketchRotation(ClusterSketchRotation::Load(reader, num_dimensions));
+            }
             cluster_sketch_offsets.resize(num_clusters);
         }
         clusters.reserve(num_clusters);
@@ -454,6 +508,11 @@ class IVF : public skmeans::AllocatorHolder {
         in_memory_size_in_bytes += cluster_sketch_offsets.capacity() * sizeof(uint64_t);
         if (HasSketches()) {
             in_memory_size_in_bytes += num_dimensions * sizeof(float);
+        }
+        if (sketch_rotation != nullptr) {
+            in_memory_size_in_bytes += sizeof(*sketch_rotation) +
+                                       sketch_rotation->GetInMemorySizeInBytes() +
+                                       sketch_rotation->padded_num_dimensions * sizeof(float);
         }
         if constexpr (Q == Quantization::SAQ) {
             // The model's sizeof is already in the IVF's

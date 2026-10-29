@@ -88,8 +88,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
-    // RaBitQ-Library's Kac's walk, normalized: (x_i, x_i+n/2) becomes (x_i + x_i+n/2, x_i - x_i+n/2)
-    // / sqrt(2), mixing the two halves of n values (n even); every backend uses this one
+    // RaBitQ-Library's Kac's walk, normalized: (x_i, x_i+n/2) becomes (x_i + x_i+n/2, x_i -
+    // x_i+n/2) / sqrt(2), mixing the two halves of n values (n even); every backend uses this one
     static void KacWalk(float* PDX_RESTRICT values, size_t n) {
         const size_t half = n / 2;
         const float scale = 1.0f / std::sqrt(2.0f);

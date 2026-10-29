@@ -98,8 +98,8 @@ Serialization / benchmark ids follow `PDXIndexType` in `common.hpp` (`pdx_f32`, 
   `IVF::SaveResidentData` (cluster sizes and capacities, each cluster's offset in the cluster data, the centroids),
   then the row-id mapping (`RowIdClusterMapping::Save`), then `IVF::SaveClusterData` (per cluster: row ids, then
   compact PDX data). `LoadClusterData` reads by offset and skips gaps and empty clusters (which hold no bytes and share the next cluster's offset), so the writer may reorder or pad clusters.
-  With cluster sketches, the resident data also holds the sketch mean (before the cluster records, a `u8` flag first)
-  and each cluster's offset in a sketch section that follows the cluster data (`IVF::SaveSketchData`: every cluster's
+  With cluster sketches, the resident data also holds the sketch mean (before the cluster records, a `u8` flag first;
+  SAQ adds its sketch rotation's signs after it, `ClusterSketchRotation::Save`) and each cluster's offset in a sketch section that follows the cluster data (`IVF::SaveSketchData`: every cluster's
   batches in the same storage order; `LoadSketchData` reads them by offset, from where `LoadClusterData` stopped).
   `IVFTree` and `FlatIndex` stream the file format's payload.
 - Cluster storage order: `SaveResidentData`/`SaveClusterData` lay the clusters out in the order
@@ -198,6 +198,7 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
 - **Maintenance**: codes don't depend on the cluster (global mean, frozen model), so splits, steals, merges and
   `ReassignEmbeddings` move encoded rows as they are; decoded floats only drive the 2-means and the assignments.
   `GetEmbeddingsFromIndexByRowIds` returns decoded rows in T-space.
+- **Cluster sketches**: in a sketch domain rotated further (see Cluster sketches); the codes and splits are unchanged.
 - **Tests** run SAQ at each suite's dimensions: mostly 128 (one segment) and 384 (the DP, free head). The PDX U8 head
   needs 640 dimensions, past the test data, so `test_saq` covers it on synthetic rows: it checks the plan in all three
   regimes and the cluster layout for both heads.
@@ -205,7 +206,7 @@ Every index implements `Append(row_id, embedding)` / `Delete(row_id)` `PDXTreeIn
 ## Cluster sketches (`PDXIndexConfig::build_cluster_sketches`, `quantizers/cluster_sketch.hpp`)
 
 A 1-bit RaBitQ sketch of every row lets a search skip a probed cluster whose rows provably can't enter the heap, before
-fetching or scanning it (RemoteANN §3.2.1). `PDXIndex` on F32/U8 only: the tree, Flat and SAQ throw.
+fetching or scanning it (RemoteANN §3.2.1). `PDXIndex` (F32, U8 and SAQ): the tree and Flat throw.
 - **Codec** (`ClusterSketchQuantizer`, RaBitQ-Library's split batches): a row's signs of its residual to the index's mean
   (`IVF::sketch_mean`, d floats in the rotated space, frozen at `BuildIndex`: `ComputeMean` of up to
   `CLUSTER_SKETCH_MEAN_SAMPLE_SIZE` rows), zero-padded to `CLUSTER_SKETCH_DIMENSION_ALIGNMENT` dimensions, and three
@@ -216,18 +217,33 @@ fetching or scanning it (RemoteANN §3.2.1). `PDXIndex` on F32/U8 only: the tree
   of rows and for a chunk whose loads would pass a row's end. `Append` stores its lane alone (`StoreRowInBatch`). Codes
   don't depend on the cluster, so splits, steals, merges and reassigns move sketch rows as they are (`sketch_rows` of
   `ReassignEmbeddings`, `GatherGroupEmbeddings`, `StealNeighborEmbeddings`, `StoreEmbeddings`, `AppendEmbedding(s)`).
+- **SAQ's sketch domain**: SAQ's T starts with a PCA, so its first dimensions hold most of the residual energy (42–76%
+  in the first 64) and the 1-bit bound fails there (it overshoots the exact distance for 21–83% of the true top-10).
+  Its sketches live in S(T): `ClusterSketchRotation`, RaBitQ-Library's FhtKacRotator over P = d rounded up to
+  `CLUSTER_SKETCH_DIMENSION_ALIGNMENT` (zero-padded): `CLUSTER_SKETCH_ROTATION_ROUNDS` (4) rounds of random sign flips
+  (`FlipSign`), `FastHadamardTransform` on the first (even rounds) or last (odd rounds) power-of-two block, and
+  `KacWalk` if that block isn't all of P. S is drawn from the config's seed at `BuildIndex` and saved after the sketch
+  mean (P/2 bytes of signs); loads read it, never redraw it. `sketch_mean` is the model's `rotated_mean`, and the IVF
+  keeps S's image of it (derived, not saved). `IVF::GetSketchNumDimensions()` (P for SAQ, d otherwise),
+  `ToSketchDomain`, `GetSketchDomainMean` and `CreateClusterSketchQueryTable` keep the domain out of the encode sites
+  and the cursor: S runs on rows only where a code is made (build, `Append`, `BulkAppend`), and once per query table;
+  splits, merges and reassigns move sketch rows as they are. In S the bound behaves as on F32: 83–92% of checked probes
+  prunable on clip, mxbai and openai.
 - **Storage**: `Cluster::sketches`, apart from `data` and from the allocator: `GetNumBatches(max_capacity)` batches of
   `CLUSTER_SKETCH_BATCH_SIZE` lanes, every lane's code in FastScan order, then each factor of every lane. A batch doesn't
   depend on the stride, so `Restride` copies whole batches. A lane with `f_add = +inf` never blocks pruning: free slots,
   tombstones (`DeleteEmbedding` clears the lane) and the slots compaction vacates. A cluster learns its sketch size from
-  `ClusterFormat::sketch_num_dimensions` (`IVF::GetClusterFormat`: d when the index has a mean, else 0).
+  `ClusterFormat::sketch_num_dimensions` (`IVF::GetClusterFormat`: `GetSketchNumDimensions()`, 0 without a mean).
 - **Query** (RaBitQ-Library's `SplitBatchQuery` with the high-accuracy table), in two parts:
   - `ClusterSketchQueryTable`, from the transformed query alone, as `f_add` carries each row's term of the mean: per 4
     dimensions the 16 nibble sums of the query as u16, split into low and high bytes, in one layout for every ISA (per
     group of 4 codebooks, the 64 low bytes, then the 64 high bytes). It costs ~12 ns per dimension (Zen 5), about five
-    cluster checks, so DuckIR builds it once per query and passes it to every row group's `BeginIterativeSearch*`
-    (a table of other dimensions throws); without it, each cursor builds its own.
-  - `ClusterSketchQuery`, per index at the cursor's first check: the table (shared or owned) and |q − mean|².
+    cluster checks, so DuckIR builds it once per query with `IPDXIndex::CreateClusterSketchQueryTable` (which
+    transforms the query and, for SAQ, applies S; nullptr without sketches, and on the tree and Flat) and passes it to
+    every row group's `BeginIterativeSearch*`. An index with sketches refuses a table of other than
+    `GetSketchNumDimensions()` dimensions, one without ignores it. Without a shared table, each cursor builds its own.
+  - `ClusterSketchQuery`, per index at the cursor's first check: a reference to the table (shared, or the cursor's own
+    `owned_sketch_query_table`) and |q − mean|², taken over d in the index's space (S keeps it).
   A row's lower bound is its estimate minus `f_error` · `CLUSTER_SKETCH_EPSILON` (ε₀ 1.9) · |q − mean|; it exceeds the
   true distance for ~2.8% of rows.
 - **Scan** (`SketchBatchMayHoldNeighbor`, `DistanceComputer<L2SQ, F32>`, all four backends): FastScan over one batch,
@@ -242,8 +258,10 @@ fetching or scanning it (RemoteANN §3.2.1). `PDXIndex` on F32/U8 only: the tree
   skipped cluster counts as probed for `Next(n)`, not in `n_accessed`. Filtered, only the passing lanes count (the
   mask from the cluster's selection vector) and a batch without one is not scanned: on mxbai at 1% passing it skips
   91% of the checked clusters, against 37% with every lane.
-- **Tests** (`test_cluster_sketch`): `ALWAYS` against `NEVER` (same top-k, fewer vectors accessed; also filtered), every saved lane
-  against a fresh encode of its row after maintenance (F32), and full and paged stream loads.
+- **Tests** (`test_cluster_sketch`): `ALWAYS` against `NEVER` (same top-k, fewer vectors accessed; also filtered) on
+  F32, U8 and SAQ; every saved lane against a fresh encode of its row after maintenance (F32; SAQ through S); full and
+  paged stream loads; one `CreateClusterSketchQueryTable` shared by two indexes on one rotation (SAQ: one fit); the
+  rotation (orthogonal, seeded, Save/Load).
 
 ## Verification gate (definition of done)
 
@@ -303,8 +321,9 @@ Performance-critical — weigh every copy/allocation.
   dispatched at compile time (`base_computers.hpp`, on `__ARM_NEON`/`__AVX2__`/`__AVX512F__`) and
   tagged by `Quantization` (`F32`/`U8`; `F16`/`BF` exist in the enum but have no kernels). Kernels are
   only specialized for `DistanceMetric::L2SQ` — `IP`/`COSINE` are served by normalizing the data
-  (`DistanceMetricRequiresNormalization`) and running L2SQ. The F32 computers also hold `FlipSign` and
-  the LVQ centroid kernels: `HorizontalDotWithU8`/`U4` (float query · 8-bit or packed 4-bit codes),
+  (`DistanceMetricRequiresNormalization`) and running L2SQ. The F32 computers also hold `FlipSign`, the sketch
+  rotation's `FastHadamardTransform` (orthonormal, in place, power-of-two n ≥ 16: the strides below the register width
+  inside registers, then register pairs) and `KacWalk` (one scalar loop for every backend), and the LVQ centroid kernels: `HorizontalDotWithU8`/`U4` (float query · 8-bit or packed 4-bit codes),
   `HorizontalDotInt8WithU8`/`U4` (int8 query · codes: VPDPBUSD on AVX-512, and on AVX2 under `__AVXVNNI__`, else a
   widening `madd_epi16`; on NEON `vdotq_s32` under DOTPROD, LVQ8 on its codes XOR 0x80 plus 128·Σq (no i8mm: `-march=native`
 can claim it on CPUs that lack it), else a widening `vmlal_s16`),

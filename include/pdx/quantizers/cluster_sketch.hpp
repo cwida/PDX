@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <ostream>
 #include <random>
 
 namespace PDX {
@@ -328,19 +329,14 @@ class ClusterSketchQuantizer {
 // dimensions hold most of the energy, and the 1-bit bound fails): RaBitQ-Library's FhtKacRotator. A
 // vector is zero-padded to padded_num_dimensions; then each round flips random signs, applies the
 // Hadamard transform to the first (even rounds) or last (odd rounds) power-of-two block, and Kac's
-// walk if the block isn't the whole vector. Orthogonal. The signs are raw std::mt19937 bits, so a
-// seed gives the same rotation on every platform.
+// walk if the block isn't the whole vector. Orthogonal. The signs are drawn from a seed once and
+// saved with the index (Save/Load).
 class ClusterSketchRotation {
   public:
     ClusterSketchRotation(uint32_t num_dimensions, uint32_t seed)
-        : num_dimensions(num_dimensions),
-          padded_num_dimensions(
-              AlignValue<uint32_t, CLUSTER_SKETCH_DIMENSION_ALIGNMENT>(num_dimensions)
-          ),
-          block_size(LargestPowerOfTwoAtMost(padded_num_dimensions)),
-          sign_masks(new uint32_t[CLUSTER_SKETCH_ROTATION_ROUNDS * padded_num_dimensions]) {
+        : ClusterSketchRotation(num_dimensions) {
         std::mt19937 generator(seed);
-        for (size_t i = 0; i < CLUSTER_SKETCH_ROTATION_ROUNDS * padded_num_dimensions; ++i) {
+        for (size_t i = 0; i < GetNumSigns(); ++i) {
             sign_masks[i] = static_cast<uint32_t>(generator() & 1u) << 31;
         }
     }
@@ -362,6 +358,31 @@ class ClusterSketchRotation {
         }
     }
 
+    void Save(std::ostream& out) const {
+        std::unique_ptr<uint8_t[]> sign_bits(new uint8_t[GetNumSigns() / 8]());
+        for (size_t i = 0; i < GetNumSigns(); ++i) {
+            sign_bits[i / 8] |=
+                static_cast<uint8_t>(static_cast<uint32_t>(sign_masks[i] != 0) << (i % 8));
+        }
+        out.write(
+            reinterpret_cast<const char*>(sign_bits.get()),
+            static_cast<std::streamsize>(GetNumSigns() / 8)
+        );
+    }
+
+    template <class Reader>
+    static std::unique_ptr<ClusterSketchRotation> Load(Reader& reader, uint32_t num_dimensions) {
+        std::unique_ptr<ClusterSketchRotation> rotation(new ClusterSketchRotation(num_dimensions));
+        const size_t num_signs = rotation->GetNumSigns();
+        std::unique_ptr<uint8_t[]> sign_bits(new uint8_t[num_signs / 8]);
+        reader.Read(sign_bits.get(), num_signs / 8);
+        for (size_t i = 0; i < num_signs; ++i) {
+            rotation->sign_masks[i] = static_cast<uint32_t>((sign_bits[i / 8] >> (i % 8)) & 1u)
+                                      << 31;
+        }
+        return rotation;
+    }
+
     [[nodiscard]] size_t GetInMemorySizeInBytes() const {
         return CLUSTER_SKETCH_ROTATION_ROUNDS * padded_num_dimensions * sizeof(uint32_t);
     }
@@ -370,6 +391,18 @@ class ClusterSketchRotation {
     const uint32_t padded_num_dimensions;
 
   private:
+    explicit ClusterSketchRotation(uint32_t num_dimensions)
+        : num_dimensions(num_dimensions),
+          padded_num_dimensions(
+              AlignValue<uint32_t, CLUSTER_SKETCH_DIMENSION_ALIGNMENT>(num_dimensions)
+          ),
+          block_size(LargestPowerOfTwoAtMost(padded_num_dimensions)),
+          sign_masks(new uint32_t[GetNumSigns()]) {}
+
+    [[nodiscard]] size_t GetNumSigns() const {
+        return CLUSTER_SKETCH_ROTATION_ROUNDS * padded_num_dimensions;
+    }
+
     static uint32_t LargestPowerOfTwoAtMost(uint32_t value) {
         uint32_t power = 1;
         while (power * 2 <= value) {
@@ -455,31 +488,22 @@ class ClusterSketchQueryTable {
 // index's mean
 class ClusterSketchQuery {
   public:
-    // transformed_query and mean: normalized if the index needs it, then rotated. shared_table: the
-    // caller's table of this query, of the index's dimensions (nullptr: built here)
+    // transformed_query and mean: normalized if the index needs it, then rotated (a sketch domain
+    // that rotates them further keeps their distance). table: the query's, in the sketch domain
     ClusterSketchQuery(
         const float* PDX_RESTRICT transformed_query,
         const float* PDX_RESTRICT mean,
-        const ClusterSketchQuantizer& quantizer,
-        const ClusterSketchQueryTable* shared_table = nullptr
+        uint32_t num_dimensions,
+        const ClusterSketchQueryTable& table
     )
-        : owned_table(
-              shared_table != nullptr ? nullptr
-                                      : std::make_unique<ClusterSketchQueryTable>(
-                                            transformed_query,
-                                            quantizer.num_dimensions
-                                        )
-          ),
-          table(shared_table != nullptr ? *shared_table : *owned_table) {
-        assert(table.num_dimensions == quantizer.num_dimensions);
-        for (uint32_t i = 0; i < quantizer.num_dimensions; ++i) {
+        : table(table) {
+        for (uint32_t i = 0; i < num_dimensions; ++i) {
             const float difference = transformed_query[i] - mean[i];
             squared_distance_to_mean += difference * difference;
         }
         error_scale = CLUSTER_SKETCH_EPSILON * std::sqrt(squared_distance_to_mean);
     }
 
-    std::unique_ptr<ClusterSketchQueryTable> owned_table;
     const ClusterSketchQueryTable& table;
     float squared_distance_to_mean = 0.0f;
     float error_scale;

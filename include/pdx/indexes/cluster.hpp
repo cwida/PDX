@@ -36,10 +36,12 @@ struct ClusterFormat<SAQ> {
         const size_t* chunk_record_offsets,
         uint32_t num_chunks,
         uint32_t num_segments,
-        bool has_pdx_u8_head
+        bool has_pdx_u8_head,
+        uint32_t sketch_num_dimensions = 0
     )
         : num_chunks(num_chunks), num_segments(num_segments), has_pdx_u8_head(has_pdx_u8_head),
-          chunk_record_offsets(new size_t[num_chunks + 1]) {
+          chunk_record_offsets(new size_t[num_chunks + 1]),
+          sketch_num_dimensions(sketch_num_dimensions) {
         std::copy(
             chunk_record_offsets,
             chunk_record_offsets + num_chunks + 1,
@@ -50,7 +52,8 @@ struct ClusterFormat<SAQ> {
     ClusterFormat(const ClusterFormat& other)
         : num_chunks(other.num_chunks), num_segments(other.num_segments),
           has_pdx_u8_head(other.has_pdx_u8_head),
-          chunk_record_offsets(CopyArray(other.chunk_record_offsets, other.num_chunks + 1)) {}
+          chunk_record_offsets(CopyArray(other.chunk_record_offsets, other.num_chunks + 1)),
+          sketch_num_dimensions(other.sketch_num_dimensions) {}
 
     ClusterFormat(ClusterFormat&&) = default;
 

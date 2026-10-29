@@ -143,6 +143,14 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
         bool is_query_transformed = false,
         const CentroidRankingQuery* ranking_query = nullptr
     ) const = 0;
+    // For DuckIR: the sketch_query_table of BeginIterativeSearch*, built once per query for every
+    // index that shares this one's rotation and seed (nullptr: the index has no sketches).
+    virtual std::unique_ptr<ClusterSketchQueryTable> CreateClusterSketchQueryTable(
+        const float* /*query_embedding*/,
+        bool /*is_query_transformed*/ = false
+    ) const {
+        return nullptr;
+    }
 
   protected:
     void ValidateBulkAppendRowIds(
@@ -211,11 +219,6 @@ class PDXIndex : public IPDXIndex {
 
     explicit PDXIndex(PDXIndexConfig config) : config(config) {
         config.Validate();
-        if constexpr (Q == SAQ) {
-            if (config.build_cluster_sketches) {
-                throw std::invalid_argument("PDXIndex: SAQ indexes have no cluster sketches");
-            }
-        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
@@ -231,11 +234,6 @@ class PDXIndex : public IPDXIndex {
     PDXIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
         : config(config), pruner(&external_pruner) {
         config.Validate();
-        if constexpr (Q == SAQ) {
-            if (config.build_cluster_sketches) {
-                throw std::invalid_argument("PDXIndex: SAQ indexes have no cluster sketches");
-            }
-        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
@@ -461,6 +459,13 @@ class PDXIndex : public IPDXIndex {
         );
     }
 
+    std::unique_ptr<ClusterSketchQueryTable> CreateClusterSketchQueryTable(
+        const float* query_embedding,
+        bool is_query_transformed = false
+    ) const override {
+        return searcher->CreateClusterSketchQueryTable(query_embedding, is_query_transformed);
+    }
+
     void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }
 
     void SetClusterSketchCheck(ClusterSketchCheck check) override {
@@ -617,8 +622,16 @@ class PDXIndex : public IPDXIndex {
         }
         index.SetAllocator(&GetAllocator());
         if (config.build_cluster_sketches) {
-            index.sketch_mean =
-                ClusterSketchQuantizer::ComputeMean(preprocessed, num_embeddings, num_dimensions);
+            if constexpr (Q == PDX::SAQ) {
+                index.sketch_mean = CopyArray(index.saq_model.rotated_mean, num_dimensions);
+                index.SetSketchRotation(
+                    std::make_unique<ClusterSketchRotation>(num_dimensions, config.seed)
+                );
+            } else {
+                index.sketch_mean = ClusterSketchQuantizer::ComputeMean(
+                    preprocessed, num_embeddings, num_dimensions
+                );
+            }
         }
 
         KMeansResult kmeans_result = ivf_utils.ComputeKMeans(

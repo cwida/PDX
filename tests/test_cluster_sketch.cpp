@@ -1,6 +1,7 @@
 #undef HAS_FFTW
 
 #include <cstring>
+#include <functional>
 #include <gtest/gtest.h>
 #include <limits>
 #include <numeric>
@@ -24,7 +25,7 @@ static constexpr float MIN_TOP_K_OVERLAP = 0.99f;
 template <class Index>
 class ClusterSketchTest : public ::testing::Test {};
 
-using SketchIndexTypes = ::testing::Types<PDX::PDXIndexF32, PDX::PDXIndexU8>;
+using SketchIndexTypes = ::testing::Types<PDX::PDXIndexF32, PDX::PDXIndexU8, PDX::PDXIndexSAQ>;
 TYPED_TEST_SUITE(ClusterSketchTest, SketchIndexTypes);
 
 PDX::PDXIndexConfig SketchConfig() {
@@ -36,6 +37,43 @@ PDX::PDXIndexConfig SketchConfig() {
         .build_cluster_sketches = true,
     };
 }
+
+// The rotation that indexes of one type share, and an index on it. SAQ's is a fit of the rows.
+template <class Index>
+struct SharedRotation {
+    explicit SharedRotation(const float* /*rows*/, size_t /*num_rows*/)
+        : pruner(static_cast<uint32_t>(D), TestUtils::SEED) {}
+
+    std::unique_ptr<Index> MakeIndex(const PDX::PDXIndexConfig& config) {
+        return std::make_unique<Index>(config, pruner);
+    }
+
+    PDX::ADSamplingPruner pruner;
+};
+
+template <>
+struct SharedRotation<PDX::PDXIndexSAQ> {
+    SharedRotation(const float* rows, size_t num_rows)
+        : fit(PDX::SAQQuantizer::Fit(
+              rows,
+              num_rows,
+              static_cast<uint32_t>(D),
+              SketchConfig().saq_bits_per_dimension,
+              TestUtils::SEED,
+              *executor,
+              allocator
+          )),
+          pruner(static_cast<uint32_t>(D), fit.rotation.get(), static_cast<uint32_t>(D)) {}
+
+    std::unique_ptr<PDX::PDXIndexSAQ> MakeIndex(const PDX::PDXIndexConfig& config) {
+        return std::make_unique<PDX::PDXIndexSAQ>(config, pruner, fit.model);
+    }
+
+    std::unique_ptr<skmeans::ParallelExecutor> executor = skmeans::MakeDefaultExecutor(0);
+    skmeans::VanillaAllocator allocator;
+    PDX::SAQFit fit;
+    PDX::ADSamplingPruner pruner;
+};
 
 std::vector<std::vector<uint32_t>> SearchTopKIds(
     const PDX::IPDXIndex& index,
@@ -164,6 +202,55 @@ TYPED_TEST(ClusterSketchTest, FilteredSearchesSkipClustersAndKeepTheTopK) {
     ExpectSketchCheckSkipsWithoutChangingResults(index, data.queries.data(), &passing_row_ids);
 }
 
+// Every saved sketch lane is expected_sketch_row of the row in its slot, and the free lanes are
+// cleared. The index holds every row but those with an id divisible by 3.
+void ExpectSketchesFollowTheirRows(
+    PDX::IPDXIndex& index,
+    PDX::ADSamplingPruner& pruner,
+    uint32_t sketch_num_dimensions,
+    const std::function<void(size_t row_id, uint8_t* sketch_row)>& expected_sketch_row
+) {
+    std::stringstream stream;
+    index.SaveToStream(stream);
+    SavedStreamClusterAndSketchSource source(stream.str());
+    auto paged = PDX::LoadPDXIndexFromStream(stream, pruner, &source);
+    source.Attach(*paged, static_cast<size_t>(stream.tellg()));
+
+    const PDX::ClusterSketchQuantizer quantizer(sketch_num_dimensions);
+    std::vector<uint8_t> saved_row(quantizer.row_size_in_bytes);
+    std::vector<uint8_t> encoded_row(quantizer.row_size_in_bytes);
+    size_t num_rows_checked = 0;
+    size_t num_mismatched_rows = 0;
+    size_t num_uncleared_free_lanes = 0;
+    for (uint32_t cluster_id = 0; cluster_id < index.GetNumClusters(); ++cluster_id) {
+        const auto row_ids = index.GetClusterRowIds(cluster_id);
+        const auto* batches = reinterpret_cast<const uint8_t*>(source.AcquireSketch(cluster_id));
+        const size_t num_lanes =
+            PDX::ClusterSketchQuantizer::GetNumBatches(static_cast<uint32_t>(row_ids.size())) *
+            PDX::CLUSTER_SKETCH_BATCH_SIZE;
+        for (size_t slot = 0; slot < num_lanes; ++slot) {
+            quantizer.ReadRowFromBatch(
+                batches + quantizer.GetBatchOffsetInBytes(slot),
+                static_cast<uint32_t>(slot % PDX::CLUSTER_SKETCH_BATCH_SIZE),
+                saved_row.data()
+            );
+            if (slot < row_ids.size()) {
+                expected_sketch_row(row_ids[slot], encoded_row.data());
+                num_mismatched_rows += saved_row != encoded_row;
+                num_rows_checked++;
+            } else {
+                float f_add;
+                std::memcpy(&f_add, saved_row.data() + quantizer.code_size_in_bytes, sizeof(float));
+                num_uncleared_free_lanes += f_add != std::numeric_limits<float>::infinity();
+            }
+        }
+        source.ReleaseSketch(cluster_id);
+    }
+    EXPECT_EQ(num_rows_checked, TestUtils::N_TRAIN - (TestUtils::N_TRAIN + 2) / 3);
+    EXPECT_EQ(num_mismatched_rows, 0u);
+    EXPECT_EQ(num_uncleared_free_lanes, 0u);
+}
+
 // After appends that split clusters and deletes that merge them, every saved sketch is the encoding
 // of the row in its slot, and the free lanes are cleared (F32 stores the rows it encoded)
 TEST(ClusterSketchMaintenanceTest, SketchesFollowTheirRowsThroughMaintenance) {
@@ -192,48 +279,56 @@ TEST(ClusterSketchMaintenanceTest, SketchesFollowTheirRowsThroughMaintenance) {
     for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; row_id += 3) {
         index.Delete(row_id);
     }
-    std::stringstream stream;
-    index.SaveToStream(stream);
-    SavedStreamClusterAndSketchSource source(stream.str());
-    auto paged = PDX::LoadPDXIndexFromStream(stream, pruner, &source);
-    source.Attach(*paged, static_cast<size_t>(stream.tellg()));
-
     const PDX::ClusterSketchQuantizer quantizer(static_cast<uint32_t>(D));
-    std::vector<uint8_t> saved_row(quantizer.row_size_in_bytes);
-    std::vector<uint8_t> encoded_row(quantizer.row_size_in_bytes);
-    size_t num_rows_checked = 0;
-    size_t num_mismatched_rows = 0;
-    size_t num_uncleared_free_lanes = 0;
-    for (uint32_t cluster_id = 0; cluster_id < index.GetNumClusters(); ++cluster_id) {
-        const auto cluster_row_ids = index.GetClusterRowIds(cluster_id);
-        const std::vector<size_t> row_ids(cluster_row_ids.begin(), cluster_row_ids.end());
-        std::vector<float> rows(row_ids.size() * D);
-        index.GetEmbeddingsFromIndexByRowIds(row_ids, rows.data());
-        const auto* batches = reinterpret_cast<const uint8_t*>(source.AcquireSketch(cluster_id));
-        const size_t num_lanes =
-            PDX::ClusterSketchQuantizer::GetNumBatches(static_cast<uint32_t>(row_ids.size())) *
-            PDX::CLUSTER_SKETCH_BATCH_SIZE;
-        for (size_t slot = 0; slot < num_lanes; ++slot) {
-            quantizer.ReadRowFromBatch(
-                batches + quantizer.GetBatchOffsetInBytes(slot),
-                static_cast<uint32_t>(slot % PDX::CLUSTER_SKETCH_BATCH_SIZE),
-                saved_row.data()
-            );
-            if (slot < row_ids.size()) {
-                quantizer.EncodeRow(rows.data() + slot * D, mean.get(), encoded_row.data());
-                num_mismatched_rows += saved_row != encoded_row;
-                num_rows_checked++;
-            } else {
-                float f_add;
-                std::memcpy(&f_add, saved_row.data() + quantizer.code_size_in_bytes, sizeof(float));
-                num_uncleared_free_lanes += f_add != std::numeric_limits<float>::infinity();
-            }
+    std::vector<float> row(D);
+    ExpectSketchesFollowTheirRows(
+        index,
+        pruner,
+        static_cast<uint32_t>(D),
+        [&](size_t row_id, uint8_t* sketch_row) {
+            index.GetEmbeddingsFromIndexByRowIds({row_id}, row.data());
+            quantizer.EncodeRow(row.data(), mean.get(), sketch_row);
         }
-        source.ReleaseSketch(cluster_id);
+    );
+}
+
+// The same for SAQ, whose sketches encode its rows rotated into the sketch domain, against the
+// fit's mean rotated alike
+TEST(ClusterSketchMaintenanceTest, SAQSketchesFollowTheirRowsThroughMaintenance) {
+    constexpr size_t NUM_BUILT = 3000;
+    constexpr size_t NUM_BULK_APPENDED = 1000;
+    const auto data = TestUtils::LoadTestData(D);
+    auto config = SketchConfig();
+    config.max_cluster_size = 64;
+    config.is_data_transformed = true;
+    SharedRotation<PDX::PDXIndexSAQ> shared(data.train.data(), NUM_BUILT);
+    std::vector<float> rows(TestUtils::N_TRAIN * D);
+    shared.pruner.PreprocessEmbeddings(data.train.data(), rows.data(), TestUtils::N_TRAIN);
+    std::vector<size_t> row_ids(TestUtils::N_TRAIN);
+    std::iota(row_ids.begin(), row_ids.end(), 0);
+    const auto index = shared.MakeIndex(config);
+    index->BuildIndex(row_ids.data(), rows.data(), NUM_BUILT);
+    index->BulkAppend(row_ids.data() + NUM_BUILT, rows.data() + NUM_BUILT * D, NUM_BULK_APPENDED);
+    for (size_t row_id = NUM_BUILT + NUM_BULK_APPENDED; row_id < TestUtils::N_TRAIN; ++row_id) {
+        index->Append(row_id, rows.data() + row_id * D);
     }
-    EXPECT_EQ(num_rows_checked, TestUtils::N_TRAIN - (TestUtils::N_TRAIN + 2) / 3);
-    EXPECT_EQ(num_mismatched_rows, 0u);
-    EXPECT_EQ(num_uncleared_free_lanes, 0u);
+    for (size_t row_id = 0; row_id < TestUtils::N_TRAIN; row_id += 3) {
+        index->Delete(row_id);
+    }
+    const PDX::ClusterSketchRotation rotation(static_cast<uint32_t>(D), config.seed);
+    std::vector<float> rotated_mean(rotation.padded_num_dimensions);
+    rotation.Rotate(shared.fit.model.rotated_mean.get(), rotated_mean.data());
+    const PDX::ClusterSketchQuantizer quantizer(rotation.padded_num_dimensions);
+    std::vector<float> rotated_row(rotation.padded_num_dimensions);
+    ExpectSketchesFollowTheirRows(
+        *index,
+        shared.pruner,
+        rotation.padded_num_dimensions,
+        [&](size_t row_id, uint8_t* sketch_row) {
+            rotation.Rotate(rows.data() + row_id * D, rotated_row.data());
+            quantizer.EncodeRow(rotated_row.data(), rotated_mean.data(), sketch_row);
+        }
+    );
 }
 
 // A full load of a stream prunes as the saved index did, and a paged load reads the sketches
@@ -241,8 +336,10 @@ TEST(ClusterSketchMaintenanceTest, SketchesFollowTheirRowsThroughMaintenance) {
 TYPED_TEST(ClusterSketchTest, StreamsKeepTheSketchesAndPageThem) {
     const auto data = TestUtils::LoadTestData(D);
     const auto config = SketchConfig();
-    PDX::ADSamplingPruner pruner(config.num_dimensions, config.seed);
-    TypeParam index(config, pruner);
+    SharedRotation<TypeParam> shared(data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = shared.pruner;
+    const auto owned_index = shared.MakeIndex(config);
+    TypeParam& index = *owned_index;
     index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
     index.SetNProbe(N_PROBE);
     std::stringstream stream;
@@ -282,7 +379,8 @@ TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
     const auto data = TestUtils::LoadTestData(D);
     auto config = SketchConfig();
     config.is_data_transformed = true;
-    PDX::ADSamplingPruner pruner(config.num_dimensions, config.seed);
+    SharedRotation<TypeParam> shared(data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = shared.pruner;
     const size_t rows_per_index = TestUtils::N_TRAIN / 2;
     std::vector<float> rows(TestUtils::N_TRAIN * D);
     pruner.PreprocessEmbeddings(data.train.data(), rows.data(), TestUtils::N_TRAIN);
@@ -291,7 +389,7 @@ TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
     std::vector<std::unique_ptr<TypeParam>> indexes;
     for (size_t part = 0; part < 2; ++part) {
         config.base_row_id = part * rows_per_index;
-        indexes.push_back(std::make_unique<TypeParam>(config, pruner));
+        indexes.push_back(shared.MakeIndex(config));
         std::vector<size_t> row_ids(rows_per_index);
         std::iota(row_ids.begin(), row_ids.end(), config.base_row_id);
         indexes.back()->BuildIndex(
@@ -307,7 +405,7 @@ TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
         }
         for (size_t q = 0; q < NUM_QUERIES; ++q) {
             const float* query = queries.data() + q * D;
-            const PDX::ClusterSketchQueryTable table(query, static_cast<uint32_t>(D));
+            const auto table = indexes[0]->CreateClusterSketchQueryTable(query, true);
             PDX::TopKHeap heap;
             for (const auto& index : indexes) {
                 index
@@ -319,7 +417,7 @@ TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
                         true,
                         nullptr,
                         nullptr,
-                        share_table ? &table : nullptr
+                        share_table ? table.get() : nullptr
                     )
                     ->Next(N_PROBE);
             }
@@ -359,9 +457,9 @@ TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
     );
 }
 
-// The sketch rotation keeps dot products, with or without padding and Kac's walk, and its seed alone
-// decides it
-TEST(ClusterSketchRotationTest, IsOrthogonalAndSeeded) {
+// The sketch rotation keeps dot products, with or without padding and Kac's walk; its seed alone
+// decides it, and Save/Load keeps it
+TEST(ClusterSketchRotationTest, IsOrthogonalSeededAndSaved) {
     constexpr size_t NUM_VECTORS = 8;
     constexpr uint32_t PADDED_D = 100;
     constexpr uint32_t WALKED_D = 384;
@@ -380,6 +478,10 @@ TEST(ClusterSketchRotationTest, IsOrthogonalAndSeeded) {
         const PDX::ClusterSketchRotation rotation(d, TestUtils::SEED);
         const PDX::ClusterSketchRotation same_seed_rotation(d, TestUtils::SEED);
         const PDX::ClusterSketchRotation other_seed_rotation(d, TestUtils::SEED + 1);
+        std::stringstream saved_rotation;
+        rotation.Save(saved_rotation);
+        PDX::StreamReader reader{saved_rotation};
+        const auto loaded_rotation = PDX::ClusterSketchRotation::Load(reader, d);
         const size_t padded_d = rotation.padded_num_dimensions;
         std::vector<float> vectors(NUM_VECTORS * d);
         for (float& value : vectors) {
@@ -388,15 +490,20 @@ TEST(ClusterSketchRotationTest, IsOrthogonalAndSeeded) {
         std::vector<float> rotated(NUM_VECTORS * padded_d);
         std::vector<float> same_seed_rotated(padded_d);
         std::vector<float> other_seed_rotated(padded_d);
+        std::vector<float> loaded_rotated(padded_d);
         for (size_t i = 0; i < NUM_VECTORS; ++i) {
             const auto rotated_begin = rotated.begin() + static_cast<std::ptrdiff_t>(i * padded_d);
             rotation.Rotate(vectors.data() + i * d, &*rotated_begin);
             same_seed_rotation.Rotate(vectors.data() + i * d, same_seed_rotated.data());
             other_seed_rotation.Rotate(vectors.data() + i * d, other_seed_rotated.data());
-            EXPECT_TRUE(std::equal(same_seed_rotated.begin(), same_seed_rotated.end(), rotated_begin));
+            loaded_rotation->Rotate(vectors.data() + i * d, loaded_rotated.data());
+            EXPECT_TRUE(
+                std::equal(same_seed_rotated.begin(), same_seed_rotated.end(), rotated_begin)
+            );
             EXPECT_FALSE(
                 std::equal(other_seed_rotated.begin(), other_seed_rotated.end(), rotated_begin)
             );
+            EXPECT_TRUE(std::equal(loaded_rotated.begin(), loaded_rotated.end(), rotated_begin));
         }
         for (size_t i = 0; i < NUM_VECTORS; ++i) {
             for (size_t j = i; j < NUM_VECTORS; ++j) {

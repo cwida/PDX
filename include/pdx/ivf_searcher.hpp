@@ -932,8 +932,16 @@ class PDXearch {
             }
             const ClusterSketchQuantizer& quantizer = cluster.sketch_quantizer;
             if (!sketch_query) {
+                if (shared_sketch_query_table == nullptr) {
+                    owned_sketch_query_table =
+                        s.pdx_data.CreateClusterSketchQueryTable(query.get());
+                }
                 sketch_query = std::make_unique<ClusterSketchQuery>(
-                    query.get(), s.pdx_data.sketch_mean.get(), quantizer, shared_sketch_query_table
+                    query.get(),
+                    s.pdx_data.sketch_mean.get(),
+                    s.pdx_data.num_dimensions,
+                    shared_sketch_query_table != nullptr ? *shared_sketch_query_table
+                                                         : *owned_sketch_query_table
                 );
             }
             const ClusterSketchQueryTable& table = sketch_query->table;
@@ -1164,6 +1172,7 @@ class PDXearch {
         const quantized_embedding_t* prepared_query = nullptr;
         std::unique_ptr<SAQQuery> saq_query;
         const ClusterSketchQueryTable* shared_sketch_query_table = nullptr;
+        std::unique_ptr<ClusterSketchQueryTable> owned_sketch_query_table;
         std::unique_ptr<ClusterSketchQuery> sketch_query;
         std::unique_ptr<float[]> saq_chunk_margins;
         std::unique_ptr<float[]> saq_rescales;
@@ -1270,6 +1279,18 @@ class PDXearch {
         return clusters_access_order;
     }
 
+    [[nodiscard]] std::unique_ptr<ClusterSketchQueryTable> CreateClusterSketchQueryTable(
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed
+    ) {
+        if (!pdx_data.HasSketches()) {
+            return nullptr;
+        }
+        std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
+        TransformQuery(raw_query, is_query_transformed, query.get());
+        return pdx_data.CreateClusterSketchQueryTable(query.get());
+    }
+
     // The query's distance to every centroid, unsorted (out holds num_clusters floats): to rank
     // the clusters of several indexes together.
     void GetDistancesToCentroids(
@@ -1314,11 +1335,13 @@ class PDXearch {
         const ClusterSketchQueryTable* sketch_query_table = nullptr
     ) {
         const size_t d = pdx_data.num_dimensions;
-        if (sketch_query_table != nullptr && sketch_query_table->num_dimensions != d) {
+        if (sketch_query_table != nullptr && pdx_data.HasSketches() &&
+            sketch_query_table->num_dimensions != pdx_data.GetSketchNumDimensions()) {
             throw std::invalid_argument(
                 "ClusterSketchQueryTable built for " +
-                std::to_string(sketch_query_table->num_dimensions) + " dimensions, the index has " +
-                std::to_string(d)
+                std::to_string(sketch_query_table->num_dimensions) +
+                " dimensions, the index's sketches have " +
+                std::to_string(pdx_data.GetSketchNumDimensions())
             );
         }
         search_cursor.shared_sketch_query_table = sketch_query_table;

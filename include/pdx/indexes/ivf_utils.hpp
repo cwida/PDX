@@ -618,8 +618,12 @@ class IVFUtils : public skmeans::AllocatorHolder {
             uint8_t* sketch_rows = sketch_buffers[worker].get();
             const SAQQuantizer saq_quantizer(num_dimensions);
             std::unique_ptr<SAQEncodingScratch> saq_scratch;
+            std::unique_ptr<float[]> sketch_domain_row;
             if constexpr (Q == SAQ) {
                 saq_scratch = std::make_unique<SAQEncodingScratch>(num_dimensions);
+                if (sketch_rows != nullptr) {
+                    sketch_domain_row.reset(new float[sketch_quantizer.num_dimensions]);
+                }
             }
             for (size_t cluster_idx = begin; cluster_idx < end; cluster_idx++) {
                 const auto cluster_size = kmeans_result.assignments[cluster_idx].size();
@@ -630,8 +634,10 @@ class IVFUtils : public skmeans::AllocatorHolder {
                     cluster.indices[pos] = row_ids[emb_idx];
                     if (sketch_rows != nullptr) {
                         sketch_quantizer.EncodeRow(
-                            source_data + (emb_idx * num_dimensions),
-                            ivf.sketch_mean.get(),
+                            ivf.ToSketchDomain(
+                                source_data + (emb_idx * num_dimensions), sketch_domain_row.get()
+                            ),
+                            ivf.GetSketchDomainMean(),
                             sketch_rows + pos * sketch_quantizer.row_size_in_bytes
                         );
                     }
@@ -974,7 +980,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
             skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_workers * largest_range);
         auto positions_buffer =
             skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_workers * largest_range);
-        const ClusterSketchQuantizer sketch_quantizer(ivf.HasSketches() ? ivf.num_dimensions : 0);
+        const ClusterSketchQuantizer sketch_quantizer(ivf.GetSketchNumDimensions());
         skmeans::AllocatedBuffer<uint8_t> sketches_buffer;
         if (ivf.HasSketches()) {
             sketches_buffer = skmeans::AllocateBuffer<uint8_t>(
@@ -992,8 +998,12 @@ class IVFUtils : public skmeans::AllocatorHolder {
             ScalarQuantizer<Q> quantizer(d);
             const SAQQuantizer saq_quantizer(d);
             std::unique_ptr<SAQEncodingScratch> saq_scratch;
+            std::unique_ptr<float[]> sketch_domain_row;
             if constexpr (Q == SAQ) {
                 saq_scratch = std::make_unique<SAQEncodingScratch>(d);
+                if (sketch_rows != nullptr) {
+                    sketch_domain_row.reset(new float[sketch_quantizer.num_dimensions]);
+                }
             }
             for (size_t r = begin; r < end; r++) {
                 const ClusterAppendRange& range = ranges[r];
@@ -1002,8 +1012,8 @@ class IVFUtils : public skmeans::AllocatorHolder {
                     ids[j] = row_ids[row];
                     if (sketch_rows != nullptr) {
                         sketch_quantizer.EncodeRow(
-                            embeddings + row * d,
-                            ivf.sketch_mean.get(),
+                            ivf.ToSketchDomain(embeddings + row * d, sketch_domain_row.get()),
+                            ivf.GetSketchDomainMean(),
                             sketch_rows + j * sketch_quantizer.row_size_in_bytes
                         );
                     }
@@ -1274,9 +1284,16 @@ inline uint32_t QuantizeAndAppend(
 ) {
     std::unique_ptr<uint8_t[]> sketch_row;
     if (index.HasSketches()) {
-        const ClusterSketchQuantizer sketch_quantizer(index.num_dimensions);
+        const ClusterSketchQuantizer sketch_quantizer(index.GetSketchNumDimensions());
         sketch_row.reset(new uint8_t[sketch_quantizer.row_size_in_bytes]);
-        sketch_quantizer.EncodeRow(embedding, index.sketch_mean.get(), sketch_row.get());
+        std::unique_ptr<float[]> sketch_domain_embedding(
+            Q == SAQ ? new float[sketch_quantizer.num_dimensions] : nullptr
+        );
+        sketch_quantizer.EncodeRow(
+            index.ToSketchDomain(embedding, sketch_domain_embedding.get()),
+            index.GetSketchDomainMean(),
+            sketch_row.get()
+        );
     }
     if constexpr (Q == SAQ) {
         std::unique_ptr<uint8_t[]> encoded(new uint8_t[index.GetValuesPerEmbedding()]);
