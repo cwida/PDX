@@ -359,14 +359,15 @@ class ClusterSketchRotation {
     }
 
     void Save(std::ostream& out) const {
-        std::unique_ptr<uint8_t[]> sign_bits(new uint8_t[GetNumSigns() / 8]());
+        const size_t num_sign_bytes = (GetNumSigns() + 7) / 8;
+        std::unique_ptr<uint8_t[]> sign_bits(new uint8_t[num_sign_bytes]());
         for (size_t i = 0; i < GetNumSigns(); ++i) {
             sign_bits[i / 8] |=
                 static_cast<uint8_t>(static_cast<uint32_t>(sign_masks[i] != 0) << (i % 8));
         }
         out.write(
             reinterpret_cast<const char*>(sign_bits.get()),
-            static_cast<std::streamsize>(GetNumSigns() / 8)
+            static_cast<std::streamsize>(num_sign_bytes)
         );
     }
 
@@ -374,8 +375,9 @@ class ClusterSketchRotation {
     static std::unique_ptr<ClusterSketchRotation> Load(Reader& reader, uint32_t num_dimensions) {
         std::unique_ptr<ClusterSketchRotation> rotation(new ClusterSketchRotation(num_dimensions));
         const size_t num_signs = rotation->GetNumSigns();
-        std::unique_ptr<uint8_t[]> sign_bits(new uint8_t[num_signs / 8]);
-        reader.Read(sign_bits.get(), num_signs / 8);
+        const size_t num_sign_bytes = (num_signs + 7) / 8;
+        std::unique_ptr<uint8_t[]> sign_bits(new uint8_t[num_sign_bytes]);
+        reader.Read(sign_bits.get(), num_sign_bytes);
         for (size_t i = 0; i < num_signs; ++i) {
             rotation->sign_masks[i] = static_cast<uint32_t>((sign_bits[i / 8] >> (i % 8)) & 1u)
                                       << 31;
