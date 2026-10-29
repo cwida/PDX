@@ -450,8 +450,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         return ReduceAdd(_mm256_add_epi32(dot_vec_0, dot_vec_1));
     }
 
-    // scalar_computer documents it. RaBitQ-Library's accumulate_hacc: the u16 sums of a lane gain at
-    // most 2 * 255 per code byte, so they flush into u32 every 128 code bytes (1024 dimensions)
+    // scalar_computer documents it. RaBitQ-Library's accumulate_hacc: the u16 sums of a lane gain
+    // at most 2 * 255 per code byte, so they flush into u32 every 128 code bytes (1024 dimensions)
     static bool SketchBatchMayHoldNeighbor(
         const uint8_t* PDX_RESTRICT batch,
         size_t code_size_in_bytes,
@@ -521,12 +521,11 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                 const __m256i low_bytes = lane_sums[0][lane_half];
                 const __m256i high_bytes = lane_sums[1][lane_half];
                 for (size_t eighth = 0; eighth < 2; ++eighth) {
-                    const __m128i low_eight =
-                        eighth == 0 ? _mm256_castsi256_si128(low_bytes)
-                                    : _mm256_extracti128_si256(low_bytes, 1);
-                    const __m128i high_eight =
-                        eighth == 0 ? _mm256_castsi256_si128(high_bytes)
-                                    : _mm256_extracti128_si256(high_bytes, 1);
+                    const __m128i low_eight = eighth == 0 ? _mm256_castsi256_si128(low_bytes)
+                                                          : _mm256_extracti128_si256(low_bytes, 1);
+                    const __m128i high_eight = eighth == 0
+                                                   ? _mm256_castsi256_si128(high_bytes)
+                                                   : _mm256_extracti128_si256(high_bytes, 1);
                     __m256i& sum = sums[2 * lane_half + eighth];
                     sum = _mm256_add_epi32(
                         sum,
@@ -549,7 +548,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const __m256 threshold_vec = _mm256_set1_ps(threshold);
         for (size_t eighth = 0; eighth < 4; ++eighth) {
             const size_t lane = eighth * 8;
-            const __m256 dot = _mm256_fmadd_ps(_mm256_cvtepi32_ps(sums[eighth]), step_vec, offset_vec);
+            const __m256 dot =
+                _mm256_fmadd_ps(_mm256_cvtepi32_ps(sums[eighth]), step_vec, offset_vec);
             const __m256 estimate = _mm256_fmadd_ps(
                 _mm256_loadu_ps(f_rescale + lane),
                 dot,
@@ -565,8 +565,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         return false;
     }
 
-    // scalar_computer documents it. Per 8 dimensions, a code byte from the comparison's movemask with
-    // its bits reversed; 32 dimensions per step, then 8
+    // scalar_computer documents it. Per 8 dimensions, a code byte from the comparison's movemask
+    // with its bits reversed; 32 dimensions per step, then 8
     static void ComputeSketchCodeAndSums(
         const float* PDX_RESTRICT embedding,
         const float* PDX_RESTRICT mean,
@@ -590,7 +590,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             absolute_sum_vec[group] =
                 _mm256_add_ps(absolute_sum_vec[group], _mm256_andnot_ps(sign_bit, residual));
             mean_sum_by_sign_vec[group] = _mm256_add_ps(
-                mean_sum_by_sign_vec[group], _mm256_xor_ps(mean_vec, _mm256_andnot_ps(positive, sign_bit))
+                mean_sum_by_sign_vec[group],
+                _mm256_xor_ps(mean_vec, _mm256_andnot_ps(positive, sign_bit))
             );
             return CLUSTER_SKETCH_REVERSED_BITS_TABLE
                 .bytes[static_cast<uint32_t>(_mm256_movemask_ps(positive))];
@@ -599,7 +600,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         for (; i + 32 <= num_dimensions; i += 32) {
             uint32_t four_bytes = 0;
             for (size_t group = 0; group < 4; ++group) {
-                four_bytes |= static_cast<uint32_t>(accumulate(i + 8 * group, group)) << (8 * group);
+                four_bytes |= static_cast<uint32_t>(accumulate(i + 8 * group, group))
+                              << (8 * group);
             }
             std::memcpy(code + i / 8, &four_bytes, sizeof(four_bytes));
         }
@@ -650,7 +652,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
         TransposeBytes16x16Pair(lanes);
         for (size_t column = 0; column < num_columns; ++column) {
-            PackSketchColumn(lanes[column], batch + (first_column + column) * CLUSTER_SKETCH_BATCH_SIZE);
+            PackSketchColumn(
+                lanes[column], batch + (first_column + column) * CLUSTER_SKETCH_BATCH_SIZE
+            );
         }
     }
 
@@ -666,10 +670,11 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
         __m256i lanes[HALF_COLUMN];
         for (size_t column = 0; column < CLUSTER_SKETCH_TRANSPOSE_COLUMNS; ++column) {
-            lanes[column] =
-                column < num_columns
-                    ? UnpackSketchColumn(batch + (first_column + column) * CLUSTER_SKETCH_BATCH_SIZE)
-                    : _mm256_setzero_si256();
+            lanes[column] = column < num_columns
+                                ? UnpackSketchColumn(
+                                      batch + (first_column + column) * CLUSTER_SKETCH_BATCH_SIZE
+                                  )
+                                : _mm256_setzero_si256();
         }
         TransposeBytes16x16Pair(lanes);
         alignas(32) uint8_t row_bytes[CLUSTER_SKETCH_BATCH_SIZE];
@@ -712,7 +717,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const __m128i half_mask = _mm_and_si128(
             _mm_cmpeq_epi8(
                 _mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
-                _mm_set1_epi8(static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN]))
+                _mm_set1_epi8(static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN])
+                )
             ),
             _mm_set1_epi8(static_cast<char>(high_lanes ? 0xF0 : 0x0F))
         );
@@ -744,10 +750,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             }
         }
         scalar_computer::StoreSketchLane(
-            code + column,
-            num_columns - column,
-            columns + column * CLUSTER_SKETCH_BATCH_SIZE,
-            lane
+            code + column, num_columns - column, columns + column * CLUSTER_SKETCH_BATCH_SIZE, lane
         );
     }
 
@@ -762,7 +765,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
         const bool high_lanes = lane >= HALF_COLUMN;
         const __m256i position =
-            _mm256_set1_epi8(static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN]));
+            _mm256_set1_epi8(static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN])
+            );
         const __m128i low_nibble = _mm_set1_epi8(0x0F);
         size_t column = 0;
         for (; column + 16 <= num_columns; column += 16) {
@@ -792,8 +796,8 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
     }
 
     // scalar_computer documents it. Per 16 columns, ReadSketchLane's loop gathers the source lane's
-    // nibbles into one register (both halves), then StoreSketchLane's loop writes them: every source
-    // column is read before a target column is written
+    // nibbles into one register (both halves), then StoreSketchLane's loop writes them: every
+    // source column is read before a target column is written
     static void CopySketchLane(
         const uint8_t* source_columns,
         uint32_t source_lane,

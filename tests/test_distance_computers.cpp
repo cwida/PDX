@@ -395,8 +395,8 @@ TEST_F(DistanceComputerTest, F32_Int8Query_SIMD_MatchesScalar) {
 
 const std::vector<size_t> SKETCH_KERNEL_DIMENSIONS = {2, 16, 17, 64, 384, 1000, 1024, 1040, 2064};
 
-// The sketch scan answers like a bound computed from the rows, in scalar and SIMD, and cleared lanes
-// never hold a neighbour.
+// The sketch scan answers like a bound computed from the rows, in scalar and SIMD, and cleared
+// lanes never hold a neighbour.
 TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) {
     constexpr size_t NUM_ROWS = 40;
     for (size_t d : SKETCH_KERNEL_DIMENSIONS) {
@@ -460,13 +460,17 @@ TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) 
                     above_lowest_bound ? lowest_bound + margin : lowest_bound - margin
                 );
                 EXPECT_EQ(
-                    may_hold_neighbor(ScalarF32Computer::SketchBatchMayHoldNeighbor, batch, threshold),
+                    may_hold_neighbor(
+                        ScalarF32Computer::SketchBatchMayHoldNeighbor, batch, threshold
+                    ),
                     above_lowest_bound
-                ) << "batch " << batch;
+                ) << "batch "
+                  << batch;
                 EXPECT_EQ(
                     may_hold_neighbor(F32Computer::SketchBatchMayHoldNeighbor, batch, threshold),
                     above_lowest_bound
-                ) << "batch " << batch;
+                ) << "batch "
+                  << batch;
             }
         }
         quantizer.ClearBatches(batches.data(), 1);
@@ -585,7 +589,8 @@ TEST_F(DistanceComputerTest, F32_StoreSketchLane_SIMD_MatchesScalar) {
     constexpr size_t BATCH_SIZE = PDX::CLUSTER_SKETCH_BATCH_SIZE;
     std::mt19937 rng(42);
     std::uniform_int_distribution<int> byte_distribution(0, 255);
-    for (size_t num_columns : {size_t{1}, size_t{15}, size_t{16}, size_t{17}, size_t{130}, size_t{258}}) {
+    for (size_t num_columns :
+         {size_t{1}, size_t{15}, size_t{16}, size_t{17}, size_t{130}, size_t{258}}) {
         std::vector<uint8_t> code(num_columns);
         std::vector<uint8_t> batch(num_columns * BATCH_SIZE);
         for (auto& byte : code) {
@@ -595,7 +600,9 @@ TEST_F(DistanceComputerTest, F32_StoreSketchLane_SIMD_MatchesScalar) {
             byte = static_cast<uint8_t>(byte_distribution(rng));
         }
         for (uint32_t lane = 0; lane < BATCH_SIZE; ++lane) {
-            SCOPED_TRACE("num_columns=" + std::to_string(num_columns) + " lane=" + std::to_string(lane));
+            SCOPED_TRACE(
+                "num_columns=" + std::to_string(num_columns) + " lane=" + std::to_string(lane)
+            );
             std::vector<uint8_t> scalar_batch = batch;
             std::vector<uint8_t> simd_batch = batch;
             ScalarF32Computer::StoreSketchLane(code.data(), num_columns, scalar_batch.data(), lane);
@@ -603,7 +610,9 @@ TEST_F(DistanceComputerTest, F32_StoreSketchLane_SIMD_MatchesScalar) {
             EXPECT_EQ(simd_batch, scalar_batch);
             std::vector<uint8_t> scalar_code(num_columns);
             std::vector<uint8_t> simd_code(num_columns);
-            ScalarF32Computer::ReadSketchLane(simd_batch.data(), num_columns, lane, scalar_code.data());
+            ScalarF32Computer::ReadSketchLane(
+                simd_batch.data(), num_columns, lane, scalar_code.data()
+            );
             F32Computer::ReadSketchLane(simd_batch.data(), num_columns, lane, simd_code.data());
             EXPECT_EQ(scalar_code, code);
             EXPECT_EQ(simd_code, code);

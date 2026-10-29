@@ -279,7 +279,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
     }
 
     // The signs of embedding - mean as the bits of code (zeroed; bit 7 of byte i is dimension 8i),
-    // adding the residual's squares, its absolute values and the mean signed by the bits to the sums
+    // adding the residual's squares, its absolute values and the mean signed by the bits to the
+    // sums
     static void ComputeSketchCodeAndSums(
         const float* PDX_RESTRICT embedding,
         const float* PDX_RESTRICT mean,
@@ -299,9 +300,10 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
-    // Code bytes first_column to first_column + num_columns (at most CLUSTER_SKETCH_TRANSPOSE_COLUMNS)
-    // of 32 rows (row r at rows + r * row_stride) into those columns of a batch, in FastScan order.
-    // The SIMD backends read CLUSTER_SKETCH_TRANSPOSE_COLUMNS bytes of every row
+    // Code bytes first_column to first_column + num_columns (at most
+    // CLUSTER_SKETCH_TRANSPOSE_COLUMNS) of 32 rows (row r at rows + r * row_stride) into those
+    // columns of a batch, in FastScan order. The SIMD backends read
+    // CLUSTER_SKETCH_TRANSPOSE_COLUMNS bytes of every row
     static void PackSketchColumns(
         const uint8_t* PDX_RESTRICT rows,
         size_t row_stride,
@@ -323,9 +325,9 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
-    // One lane's code bytes (code byte i into column i of columns, a batch's first column or a later
-    // one) at the lane's position: the upper nibbles in the first half of the column, the lower ones
-    // in the second, in the low nibble for lanes 0-15 and the high one for 16-31
+    // One lane's code bytes (code byte i into column i of columns, a batch's first column or a
+    // later one) at the lane's position: the upper nibbles in the first half of the column, the
+    // lower ones in the second, in the low nibble for lanes 0-15 and the high one for 16-31
     static void StoreSketchLane(
         const uint8_t* PDX_RESTRICT code,
         size_t num_columns,
@@ -338,8 +340,9 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const auto kept_nibble = static_cast<uint8_t>(lane < HALF_COLUMN ? 0xF0 : 0x0F);
         for (size_t column = 0; column < num_columns; ++column) {
             uint8_t* packed = columns + column * CLUSTER_SKETCH_BATCH_SIZE;
-            packed[position] =
-                static_cast<uint8_t>((packed[position] & kept_nibble) | ((code[column] >> 4) << shift));
+            packed[position] = static_cast<uint8_t>(
+                (packed[position] & kept_nibble) | ((code[column] >> 4) << shift)
+            );
             packed[HALF_COLUMN + position] = static_cast<uint8_t>(
                 (packed[HALF_COLUMN + position] & kept_nibble) | ((code[column] & 0x0F) << shift)
             );
@@ -366,8 +369,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
         }
     }
 
-    // One lane's code bytes into another lane, of the same columns or others: per column, the source
-    // nibbles are read before the target ones are written
+    // One lane's code bytes into another lane, of the same columns or others: per column, the
+    // source nibbles are read before the target ones are written
     static void CopySketchLane(
         const uint8_t* source_columns,
         uint32_t source_lane,
@@ -385,7 +388,8 @@ class ScalarComputer<DistanceMetric::L2SQ, Quantization::F32> {
             const size_t offset = column * CLUSTER_SKETCH_BATCH_SIZE;
             for (size_t half = 0; half < 2; ++half) {
                 const uint32_t nibble =
-                    (source_columns[offset + half * HALF_COLUMN + source_position] >> source_shift) &
+                    (source_columns[offset + half * HALF_COLUMN + source_position] >> source_shift
+                    ) &
                     0x0F;
                 uint8_t& target = target_columns[offset + half * HALF_COLUMN + target_position];
                 target = static_cast<uint8_t>((target & kept_nibble) | (nibble << target_shift));

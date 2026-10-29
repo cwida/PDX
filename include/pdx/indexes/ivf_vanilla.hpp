@@ -1229,8 +1229,10 @@ class PDXIndex : public IPDXIndex {
         skmeans::AllocatedBuffer<uint8_t> sketches_a;
         skmeans::AllocatedBuffer<uint8_t> sketches_b;
         if (cluster.HasSketches()) {
-            sketches_a = skmeans::AllocateBuffer<uint8_t>(GetAllocator(), count_a * sketch_row_size);
-            sketches_b = skmeans::AllocateBuffer<uint8_t>(GetAllocator(), count_b * sketch_row_size);
+            sketches_a =
+                skmeans::AllocateBuffer<uint8_t>(GetAllocator(), count_a * sketch_row_size);
+            sketches_b =
+                skmeans::AllocateBuffer<uint8_t>(GetAllocator(), count_b * sketch_row_size);
         }
         auto centroid_sum_a = std::make_unique<float[]>(d); // zero-init needed
         auto centroid_sum_b = std::make_unique<float[]>(d); // zero-init needed

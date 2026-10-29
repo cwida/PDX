@@ -159,10 +159,10 @@ static constexpr uint32_t CLUSTER_SKETCH_DIMENSION_ALIGNMENT = 16;
 static constexpr size_t CLUSTER_SKETCH_MEAN_SAMPLE_SIZE = 12288;
 static constexpr size_t CLUSTER_SKETCH_TRANSPOSE_COLUMNS = 16;
 // Position j of a half column holds lane CLUSTER_SKETCH_LANE_AT_POSITION[j] (and that lane + 16)
-alignas(16) static constexpr uint8_t CLUSTER_SKETCH_LANE_AT_POSITION[16] =
-    {0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15};
-alignas(16) static constexpr uint8_t CLUSTER_SKETCH_POSITION_OF_LANE[16] =
-    {0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15};
+alignas(16) static constexpr uint8_t
+    CLUSTER_SKETCH_LANE_AT_POSITION[16] = {0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15};
+alignas(16) static constexpr uint8_t
+    CLUSTER_SKETCH_POSITION_OF_LANE[16] = {0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15};
 
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most

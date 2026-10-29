@@ -497,7 +497,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                     lookup_table + (column / 2) * CODEBOOK_GROUP_SIZE_IN_BYTES + (column % 2) * 32;
                 for (size_t half = 0; half < 2; ++half) {
                     const uint8x16_t code = vld1q_u8(codes + half * HALF_COLUMN);
-                    const uint8x16_t nibbles[2] = {vandq_u8(code, nibble_mask), vshrq_n_u8(code, 4)};
+                    const uint8x16_t nibbles[2] = {
+                        vandq_u8(code, nibble_mask), vshrq_n_u8(code, 4)
+                    };
                     const uint8x16_t table[2] = {
                         vld1q_u8(tables + half * 16), vld1q_u8(tables + 64 + half * 16)
                     };
@@ -542,7 +544,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const float32x4_t threshold_vec = vdupq_n_f32(threshold);
         for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
             // Position p holds lane p / 2 + 8 * (p % 2): the even positions are lanes 0-7
-            const uint32x4_t (&position_sums)[2][2] = sums[lane_half];
+            const uint32x4_t(&position_sums)[2][2] = sums[lane_half];
             const uint32x4_t lane_sums[4] = {
                 vuzp1q_u32(position_sums[0][0], position_sums[0][1]),
                 vuzp1q_u32(position_sums[1][0], position_sums[1][1]),
@@ -554,7 +556,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                 const float32x4_t dot =
                     vfmaq_f32(offset_vec, vcvtq_f32_u32(lane_sums[quarter]), step_vec);
                 const float32x4_t estimate = vfmaq_f32(
-                    vaddq_f32(vld1q_f32(f_add + lane), distance_vec), vld1q_f32(f_rescale + lane), dot
+                    vaddq_f32(vld1q_f32(f_add + lane), distance_vec),
+                    vld1q_f32(f_rescale + lane),
+                    dot
                 );
                 const float32x4_t lower_bound =
                     vfmsq_f32(estimate, vld1q_f32(f_error + lane), error_scale_vec);
@@ -578,8 +582,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         float& absolute_sum,
         float& mean_sum_by_sign
     ) {
-        alignas(16) static constexpr uint8_t BIT_WEIGHTS[16] =
-            {128, 64, 32, 16, 8, 4, 2, 1, 128, 64, 32, 16, 8, 4, 2, 1};
+        alignas(16) static constexpr uint8_t BIT_WEIGHTS[16] = {
+            128, 64, 32, 16, 8, 4, 2, 1, 128, 64, 32, 16, 8, 4, 2, 1
+        };
         const uint8x16_t bit_weights = vld1q_u8(BIT_WEIGHTS);
         const uint32x4_t sign_bit = vdupq_n_u32(0x80000000u);
         const float32x4_t zero = vdupq_n_f32(0.0f);
@@ -615,8 +620,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
                 const uint16x8_t second_masks = vuzp1q_u16(
                     vreinterpretq_u16_u32(positive[2]), vreinterpretq_u16_u32(positive[3])
                 );
-                mask_bytes[half] =
-                    vuzp1q_u8(vreinterpretq_u8_u16(first_masks), vreinterpretq_u8_u16(second_masks));
+                mask_bytes[half] = vuzp1q_u8(
+                    vreinterpretq_u8_u16(first_masks), vreinterpretq_u8_u16(second_masks)
+                );
             }
             uint8x16_t bytes = vpaddq_u8(
                 vandq_u8(mask_bytes[0], bit_weights), vandq_u8(mask_bytes[1], bit_weights)
@@ -732,12 +738,14 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         uint32_t lane
     ) {
         constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
-        alignas(16) static constexpr uint8_t BYTE_INDICES[16] =
-            {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+        alignas(16) static constexpr uint8_t BYTE_INDICES[16] = {
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+        };
         const bool high_lanes = lane >= HALF_COLUMN;
         const uint8x16_t lane_mask = vandq_u8(
             vceqq_u8(
-                vld1q_u8(BYTE_INDICES), vdupq_n_u8(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN])
+                vld1q_u8(BYTE_INDICES),
+                vdupq_n_u8(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN])
             ),
             vdupq_n_u8(high_lanes ? 0xF0 : 0x0F)
         );
@@ -768,10 +776,7 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             }
         }
         scalar_computer::StoreSketchLane(
-            code + column,
-            num_columns - column,
-            columns + column * CLUSTER_SKETCH_BATCH_SIZE,
-            lane
+            code + column, num_columns - column, columns + column * CLUSTER_SKETCH_BATCH_SIZE, lane
         );
     }
 
@@ -860,7 +865,9 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         const uint8x16_t lower_nibbles =
             vorrq_u8(vbicq_u8(low_lanes, high_nibble), vshlq_n_u8(high_lanes, 4));
         vst1q_u8(packed, vqtbl1q_u8(upper_nibbles, lane_at_position));
-        vst1q_u8(packed + CLUSTER_SKETCH_BATCH_SIZE / 2, vqtbl1q_u8(lower_nibbles, lane_at_position));
+        vst1q_u8(
+            packed + CLUSTER_SKETCH_BATCH_SIZE / 2, vqtbl1q_u8(lower_nibbles, lane_at_position)
+        );
     }
 
     static void UnpackSketchColumn(

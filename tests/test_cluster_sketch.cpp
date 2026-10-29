@@ -37,7 +37,10 @@ PDX::PDXIndexConfig SketchConfig() {
     };
 }
 
-std::vector<std::vector<uint32_t>> SearchTopKIds(const PDX::IPDXIndex& index, const float* queries) {
+std::vector<std::vector<uint32_t>> SearchTopKIds(
+    const PDX::IPDXIndex& index,
+    const float* queries
+) {
     std::vector<std::vector<uint32_t>> ids(NUM_QUERIES);
     for (size_t q = 0; q < NUM_QUERIES; ++q) {
         for (const auto& candidate : index.Search(queries + q * D, TestUtils::KNN)) {
@@ -183,10 +186,9 @@ TEST(ClusterSketchMaintenanceTest, SketchesFollowTheirRowsThroughMaintenance) {
         std::vector<float> rows(row_ids.size() * D);
         index.GetEmbeddingsFromIndexByRowIds(row_ids, rows.data());
         const auto* batches = reinterpret_cast<const uint8_t*>(source.AcquireSketch(cluster_id));
-        const size_t num_lanes = PDX::ClusterSketchQuantizer::GetNumBatches(
-                                     static_cast<uint32_t>(row_ids.size())
-                                 ) *
-                                 PDX::CLUSTER_SKETCH_BATCH_SIZE;
+        const size_t num_lanes =
+            PDX::ClusterSketchQuantizer::GetNumBatches(static_cast<uint32_t>(row_ids.size())) *
+            PDX::CLUSTER_SKETCH_BATCH_SIZE;
         for (size_t slot = 0; slot < num_lanes; ++slot) {
             quantizer.ReadRowFromBatch(
                 batches + quantizer.GetBatchOffsetInBytes(slot),
@@ -210,8 +212,8 @@ TEST(ClusterSketchMaintenanceTest, SketchesFollowTheirRowsThroughMaintenance) {
     EXPECT_EQ(num_uncleared_free_lanes, 0u);
 }
 
-// A full load of a stream prunes as the saved index did, and a paged load reads the sketches through
-// its cluster source instead of the clusters they rule out
+// A full load of a stream prunes as the saved index did, and a paged load reads the sketches
+// through its cluster source instead of the clusters they rule out
 TYPED_TEST(ClusterSketchTest, StreamsKeepTheSketchesAndPageThem) {
     const auto data = TestUtils::LoadTestData(D);
     const auto config = SketchConfig();
@@ -228,7 +230,9 @@ TYPED_TEST(ClusterSketchTest, StreamsKeepTheSketchesAndPageThem) {
     loaded->SetNProbe(N_PROBE);
     loaded->SetClusterSketchCheck(PDX::ClusterSketchCheck::ALWAYS);
     index.SetClusterSketchCheck(PDX::ClusterSketchCheck::ALWAYS);
-    EXPECT_EQ(SearchTopKIds(*loaded, data.queries.data()), SearchTopKIds(index, data.queries.data()));
+    EXPECT_EQ(
+        SearchTopKIds(*loaded, data.queries.data()), SearchTopKIds(index, data.queries.data())
+    );
 
     std::stringstream paged_stream(saved_stream);
     SavedStreamClusterAndSketchSource source(saved_stream);
@@ -248,8 +252,8 @@ TYPED_TEST(ClusterSketchTest, StreamsKeepTheSketchesAndPageThem) {
     EXPECT_TRUE(source.acquired_sketches.empty());
 }
 
-// Indexes on one rotation search alike with one table per query as with a table each, and a table of
-// other dimensions is refused
+// Indexes on one rotation search alike with one table per query as with a table each, and a table
+// of other dimensions is refused
 TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
     const auto data = TestUtils::LoadTestData(D);
     auto config = SketchConfig();
@@ -266,7 +270,9 @@ TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
         indexes.push_back(std::make_unique<TypeParam>(config, pruner));
         std::vector<size_t> row_ids(rows_per_index);
         std::iota(row_ids.begin(), row_ids.end(), config.base_row_id);
-        indexes.back()->BuildIndex(row_ids.data(), rows.data() + config.base_row_id * D, rows_per_index);
+        indexes.back()->BuildIndex(
+            row_ids.data(), rows.data() + config.base_row_id * D, rows_per_index
+        );
         indexes.back()->SetClusterSketchCheck(PDX::ClusterSketchCheck::ALWAYS);
     }
     const auto search = [&](bool share_table, size_t& vectors_accessed) {
@@ -316,7 +322,14 @@ TYPED_TEST(ClusterSketchTest, IndexesShareTheQueryTable) {
     PDX::TopKHeap heap;
     EXPECT_THROW(
         indexes[0]->BeginIterativeSearch(
-            queries.data(), TestUtils::KNN, heap, nullptr, true, nullptr, nullptr, &other_dimensions_table
+            queries.data(),
+            TestUtils::KNN,
+            heap,
+            nullptr,
+            true,
+            nullptr,
+            nullptr,
+            &other_dimensions_table
         ),
         std::invalid_argument
     );

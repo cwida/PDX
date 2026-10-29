@@ -986,9 +986,9 @@ class IVFUtils : public skmeans::AllocatorHolder {
             uint32_t* ids = ids_buffer.get() + worker * largest_range;
             uint32_t* positions = positions_buffer.get() + worker * largest_range;
             uint8_t* sketch_rows =
-                ivf.HasSketches()
-                    ? sketches_buffer.get() + worker * largest_range * sketch_quantizer.row_size_in_bytes
-                    : nullptr;
+                ivf.HasSketches() ? sketches_buffer.get() +
+                                        worker * largest_range * sketch_quantizer.row_size_in_bytes
+                                  : nullptr;
             ScalarQuantizer<Q> quantizer(d);
             const SAQQuantizer saq_quantizer(d);
             std::unique_ptr<SAQEncodingScratch> saq_scratch;

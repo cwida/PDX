@@ -133,7 +133,8 @@ class ClusterSketchQuantizer {
     // FastScan order (RaBitQ-Library's pack_codes): code byte i of the batch's rows is a column of
     // CLUSTER_SKETCH_BATCH_SIZE bytes, its upper nibbles in the first half and its lower nibbles
     // in the second; in each half, lanes 0 to 15 take the low nibbles of the bytes and lanes 16 to
-    // 31 the high ones, byte j holding lane kPerm0[j] (0, 8, 1, 9, ..., 7, 15) and lane kPerm0[j] + 16
+    // 31 the high ones, byte j holding lane kPerm0[j] (0, 8, 1, 9, ..., 7, 15) and lane kPerm0[j] +
+    // 16
     void StoreRowInBatch(
         const uint8_t* PDX_RESTRICT sketch_row,
         uint8_t* PDX_RESTRICT batch,
@@ -142,7 +143,8 @@ class ClusterSketchQuantizer {
         DistanceComputer<DistanceMetric::L2SQ, Quantization::F32>::StoreSketchLane(
             sketch_row, code_size_in_bytes, batch, lane
         );
-        uint8_t* factors = batch + static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE;
+        uint8_t* factors =
+            batch + static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE;
         for (uint32_t factor = 0; factor < 3; ++factor) {
             std::memcpy(
                 factors + (factor * CLUSTER_SKETCH_BATCH_SIZE + lane) * sizeof(float),
@@ -152,9 +154,9 @@ class ClusterSketchQuantizer {
         }
     }
 
-    // EncodeRow's rows into batches from lane 0: every CLUSTER_SKETCH_TRANSPOSE_COLUMNS code bytes of
-    // a batch's rows in one transpose, read in place. A batch short of rows, and a chunk whose loads
-    // would pass the end of a row, go through a zero-padded tile
+    // EncodeRow's rows into batches from lane 0: every CLUSTER_SKETCH_TRANSPOSE_COLUMNS code bytes
+    // of a batch's rows in one transpose, read in place. A batch short of rows, and a chunk whose
+    // loads would pass the end of a row, go through a zero-padded tile
     void StoreRowsInBatches(
         const uint8_t* PDX_RESTRICT sketch_rows,
         size_t num_rows,
@@ -282,19 +284,21 @@ class ClusterSketchQuantizer {
         const size_t factors = static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE;
         for (uint32_t factor = 0; factor < 3; ++factor) {
             std::memcpy(
-                target_batch + factors + (factor * CLUSTER_SKETCH_BATCH_SIZE + target_lane) * sizeof(float),
-                source_batch + factors + (factor * CLUSTER_SKETCH_BATCH_SIZE + source_lane) * sizeof(float),
+                target_batch + factors +
+                    (factor * CLUSTER_SKETCH_BATCH_SIZE + target_lane) * sizeof(float),
+                source_batch + factors +
+                    (factor * CLUSTER_SKETCH_BATCH_SIZE + source_lane) * sizeof(float),
                 sizeof(float)
             );
         }
     }
 
     void ClearLaneInBatch(uint8_t* batch, uint32_t lane) const {
-        float* lane_factors = reinterpret_cast<float*>(
-                                  batch + static_cast<size_t>(code_size_in_bytes) *
-                                              CLUSTER_SKETCH_BATCH_SIZE
-                              ) +
-                              lane;
+        float* lane_factors =
+            reinterpret_cast<float*>(
+                batch + static_cast<size_t>(code_size_in_bytes) * CLUSTER_SKETCH_BATCH_SIZE
+            ) +
+            lane;
         lane_factors[0] = std::numeric_limits<float>::infinity();
         lane_factors[CLUSTER_SKETCH_BATCH_SIZE] = 0.0f;
         lane_factors[2 * CLUSTER_SKETCH_BATCH_SIZE] = 0.0f;
@@ -358,7 +362,8 @@ class ClusterSketchQueryTable {
                     ((nibble & 2) ? values[2] : 0.0f) + ((nibble & 1) ? values[3] : 0.0f);
             }
         }
-        const auto [lowest, highest] = std::minmax_element(entries.get(), entries.get() + num_entries);
+        const auto [lowest, highest] =
+            std::minmax_element(entries.get(), entries.get() + num_entries);
         const float lowest_entry = *lowest;
         lookup_table_step = (*highest - lowest_entry) / 65535.0f;
         lookup_table_base_sum = lowest_entry * static_cast<float>(num_codebooks);
@@ -402,7 +407,8 @@ class ClusterSketchQuery {
         : owned_table(
               shared_table != nullptr ? nullptr
                                       : std::make_unique<ClusterSketchQueryTable>(
-                                            transformed_query, quantizer.num_dimensions
+                                            transformed_query,
+                                            quantizer.num_dimensions
                                         )
           ),
           table(shared_table != nullptr ? *shared_table : *owned_table) {
