@@ -227,8 +227,12 @@ fetching or scanning it (RemoteANN §3.2.1). `PDXIndex` (F32, U8 and SAQ): the t
   keeps S's image of it (derived, not saved). `IVF::GetSketchNumDimensions()` (P for SAQ, d otherwise),
   `ToSketchDomain`, `GetSketchDomainMean` and `CreateClusterSketchQueryTable` keep the domain out of the encode sites
   and the cursor: S runs on rows only where a code is made (build, `Append`, `BulkAppend`), and once per query table;
-  splits, merges and reassigns move sketch rows as they are. In S the bound behaves as on F32: 83–92% of checked probes
-  prunable on clip, mxbai and openai.
+  splits, merges and reassigns move sketch rows as they are. Measured (EC2 Zen 5, DuckIR's shape: 122,880-row groups
+  of 480 clusters, 48 probes each, one heap; clip, mxbai and openai at SAQ-3 and SAQ-4): `ALWAYS` scans 10–18% of
+  `NEVER`'s vectors and keeps the top-10 (one neighbour lost in 18,000). In memory it costs −16% to +75% per query,
+  SAQ's scans being cheap, which the default `WHEN_CLUSTER_NOT_CACHED` avoids. S costs 0.4/1.0/1.1 µs per vector at
+  d 512/1024/1536 on AVX-512 (AVX2 0.5/1.3/1.6 µs, as RaBitQ-Library's), the query table 7–21 µs, the build 4–6% and
+  `BulkAppend` 0–15%.
 - **Storage**: `Cluster::sketches`, apart from `data` and from the allocator: `GetNumBatches(max_capacity)` batches of
   `CLUSTER_SKETCH_BATCH_SIZE` lanes, every lane's code in FastScan order, then each factor of every lane. A batch doesn't
   depend on the stride, so `Restride` copies whole batches. A lane with `f_add = +inf` never blocks pruning: free slots,
