@@ -59,6 +59,9 @@ class PDXTreeIndex : public IPDXIndex {
 
     explicit PDXTreeIndex(PDXIndexConfig config) : config(config), d(config.num_dimensions) {
         config.Validate();
+        if (config.build_cluster_sketches) {
+            throw std::invalid_argument("PDXTreeIndex: the tree index has no cluster sketches");
+        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
@@ -72,6 +75,9 @@ class PDXTreeIndex : public IPDXIndex {
     PDXTreeIndex(PDXIndexConfig config, PDX::ADSamplingPruner& external_pruner)
         : config(config), d(config.num_dimensions), pruner(&external_pruner) {
         config.Validate();
+        if (config.build_cluster_sketches) {
+            throw std::invalid_argument("PDXTreeIndex: the tree index has no cluster sketches");
+        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         index.SetAllocator(config.allocator);
@@ -177,7 +183,8 @@ class PDXTreeIndex : public IPDXIndex {
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* /*sketch_query_table*/ = nullptr
     ) const override {
         const uint32_t* preset_clusters_access_order =
             clusters_access_order ? clusters_access_order->data() : nullptr;
@@ -221,7 +228,8 @@ class PDXTreeIndex : public IPDXIndex {
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* /*sketch_query_table*/ = nullptr
     ) const override {
         return std::make_unique<typename PDXearch<Q>::template IterativeSearch<true>>(
             searcher->BeginFilteredIterativeSearch(

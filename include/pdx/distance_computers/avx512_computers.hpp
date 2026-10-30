@@ -11,6 +11,26 @@ namespace PDX {
 template <DistanceMetric alpha, Quantization Q>
 class SIMDComputer {};
 
+struct ClusterSketchReversedBitsTable {
+    uint8_t bytes[256];
+};
+
+// Bit k of a comparison mask is dimension k, which a sketch code byte holds at bit 7 - k
+constexpr ClusterSketchReversedBitsTable MakeClusterSketchReversedBitsTable() {
+    ClusterSketchReversedBitsTable table{};
+    for (uint32_t value = 0; value < 256; ++value) {
+        uint32_t reversed = 0;
+        for (uint32_t bit = 0; bit < 8; ++bit) {
+            reversed |= ((value >> bit) & 1u) << (7 - bit);
+        }
+        table.bytes[value] = static_cast<uint8_t>(reversed);
+    }
+    return table;
+}
+
+inline constexpr ClusterSketchReversedBitsTable CLUSTER_SKETCH_REVERSED_BITS_TABLE =
+    MakeClusterSketchReversedBitsTable();
+
 template <>
 class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
   public:
@@ -100,6 +120,39 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         auto out_bits = reinterpret_cast<uint32_t*>(out);
         for (; j < d; ++j) {
             out_bits[j] = data_bits[j] ^ masks[j];
+        }
+    }
+
+    // scalar_computer documents it. One pass applies the scale and the strides 1, 2, 4 and 8 inside
+    // each register (a lane swap, then a multiply-add by the butterfly's signs); from stride 16 on,
+    // registers pair up
+    static void FastHadamardTransform(float* PDX_RESTRICT values, size_t n) {
+        const __m512 stride_1_signs =
+            _mm512_setr_ps(1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1);
+        const __m512 stride_2_signs =
+            _mm512_setr_ps(1, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1);
+        const __m512 stride_4_signs =
+            _mm512_setr_ps(1, 1, 1, 1, -1, -1, -1, -1, 1, 1, 1, 1, -1, -1, -1, -1);
+        const __m512 stride_8_signs =
+            _mm512_setr_ps(1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1);
+        const __m512 scale = _mm512_set1_ps(1.0f / std::sqrt(static_cast<float>(n)));
+        for (size_t i = 0; i < n; i += 16) {
+            __m512 v = _mm512_mul_ps(_mm512_loadu_ps(values + i), scale);
+            v = _mm512_fmadd_ps(v, stride_1_signs, _mm512_permute_ps(v, 0xB1));
+            v = _mm512_fmadd_ps(v, stride_2_signs, _mm512_permute_ps(v, 0x4E));
+            v = _mm512_fmadd_ps(v, stride_4_signs, _mm512_shuffle_f32x4(v, v, 0xB1));
+            v = _mm512_fmadd_ps(v, stride_8_signs, _mm512_shuffle_f32x4(v, v, 0x4E));
+            _mm512_storeu_ps(values + i, v);
+        }
+        for (size_t stride = 16; stride < n; stride *= 2) {
+            for (size_t first = 0; first < n; first += 2 * stride) {
+                for (size_t i = first; i < first + stride; i += 16) {
+                    const __m512 a = _mm512_loadu_ps(values + i);
+                    const __m512 b = _mm512_loadu_ps(values + i + stride);
+                    _mm512_storeu_ps(values + i, _mm512_add_ps(a, b));
+                    _mm512_storeu_ps(values + i + stride, _mm512_sub_ps(a, b));
+                }
+            }
         }
     }
 
@@ -378,6 +431,441 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
         return _mm512_reduce_add_epi32(_mm512_add_epi32(dot_vec_0, dot_vec_1));
     }
 
+    // scalar_computer documents it. RaBitQ-Library's accumulate_hacc: 64 code bytes are one group
+    // of 4 codebooks of the lookup table; the u16 sums of a lane gain at most 2 * 255 per code
+    // byte, so they flush into u32 every 128 code bytes (1024 dimensions)
+    template <bool MASKED>
+    static bool SketchBatchMayHoldNeighbor(
+        const uint8_t* PDX_RESTRICT batch,
+        size_t code_size_in_bytes,
+        const uint8_t* PDX_RESTRICT lookup_table,
+        float lookup_table_step,
+        float lookup_table_base_sum,
+        float centering_correction,
+        float squared_distance_to_mean,
+        float error_scale,
+        float threshold,
+        uint32_t lane_mask
+    ) {
+        constexpr size_t CODEBOOK_GROUP_SIZE_IN_BYTES = 128;
+        constexpr size_t COLUMNS_PER_FLUSH = 128;
+        const __m512i nibble_mask = _mm512_set1_epi8(0x0F);
+        // Lanes 0-15 and 16-31
+        __m512i sums[2] = {_mm512_setzero_si512(), _mm512_setzero_si512()};
+        for (size_t first = 0; first < code_size_in_bytes; first += COLUMNS_PER_FLUSH) {
+            const size_t last = std::min(code_size_in_bytes, first + COLUMNS_PER_FLUSH);
+            // [low-byte table, high-byte table][lanes 0-15: words, words >> 8; lanes 16-31: same]
+            __m512i partial_sums[2][4];
+            for (auto& byte_table : partial_sums) {
+                for (auto& partial : byte_table) {
+                    partial = _mm512_setzero_si512();
+                }
+            }
+            for (size_t column = first; column < last; column += 2) {
+                // The 128-bit lanes are codebooks 2 * column to 2 * column + 3
+                const __m512i codes =
+                    _mm512_loadu_si512(batch + column * CLUSTER_SKETCH_BATCH_SIZE);
+                const __m512i low_nibbles = _mm512_and_si512(codes, nibble_mask);
+                const __m512i high_nibbles =
+                    _mm512_and_si512(_mm512_srli_epi16(codes, 4), nibble_mask);
+                const uint8_t* tables = lookup_table + (column / 2) * CODEBOOK_GROUP_SIZE_IN_BYTES;
+                for (size_t byte_table = 0; byte_table < 2; ++byte_table) {
+                    const __m512i table = _mm512_loadu_si512(tables + byte_table * 64);
+                    const __m512i low_lanes = _mm512_shuffle_epi8(table, low_nibbles);
+                    const __m512i high_lanes = _mm512_shuffle_epi8(table, high_nibbles);
+                    __m512i* partial = partial_sums[byte_table];
+                    partial[0] = _mm512_add_epi16(partial[0], low_lanes);
+                    partial[1] = _mm512_add_epi16(partial[1], _mm512_srli_epi16(low_lanes, 8));
+                    partial[2] = _mm512_add_epi16(partial[2], high_lanes);
+                    partial[3] = _mm512_add_epi16(partial[3], _mm512_srli_epi16(high_lanes, 8));
+                }
+            }
+            // Per byte table: lanes 0-15 and 16-31 as u32, in lane order (the even positions are
+            // lanes 0-7, the odd ones lanes 8-15)
+            __m512i lane_sums[2][2];
+            for (size_t byte_table = 0; byte_table < 2; ++byte_table) {
+                const __m512i* partial = partial_sums[byte_table];
+                for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
+                    const __m256i words = _mm256_add_epi16(
+                        _mm512_castsi512_si256(partial[2 * lane_half]),
+                        _mm512_extracti64x4_epi64(partial[2 * lane_half], 1)
+                    );
+                    const __m256i odd_positions = _mm256_add_epi16(
+                        _mm512_castsi512_si256(partial[2 * lane_half + 1]),
+                        _mm512_extracti64x4_epi64(partial[2 * lane_half + 1], 1)
+                    );
+                    const __m256i even_positions =
+                        _mm256_sub_epi16(words, _mm256_slli_epi16(odd_positions, 8));
+                    lane_sums[byte_table][lane_half] = _mm512_add_epi32(
+                        _mm512_cvtepu16_epi32(
+                            _mm256_permute2f128_si256(even_positions, odd_positions, 0x21)
+                        ),
+                        _mm512_cvtepu16_epi32(
+                            _mm256_blend_epi32(even_positions, odd_positions, 0xF0)
+                        )
+                    );
+                }
+            }
+            for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
+                sums[lane_half] = _mm512_add_epi32(
+                    sums[lane_half],
+                    _mm512_add_epi32(
+                        lane_sums[0][lane_half], _mm512_slli_epi32(lane_sums[1][lane_half], 8)
+                    )
+                );
+            }
+        }
+        const auto* f_add =
+            reinterpret_cast<const float*>(batch + code_size_in_bytes * CLUSTER_SKETCH_BATCH_SIZE);
+        const float* f_rescale = f_add + CLUSTER_SKETCH_BATCH_SIZE;
+        const float* f_error = f_rescale + CLUSTER_SKETCH_BATCH_SIZE;
+        const __m512 step_vec = _mm512_set1_ps(lookup_table_step);
+        const __m512 offset_vec = _mm512_set1_ps(lookup_table_base_sum + centering_correction);
+        const __m512 distance_vec = _mm512_set1_ps(squared_distance_to_mean);
+        const __m512 error_scale_vec = _mm512_set1_ps(error_scale);
+        const __m512 threshold_vec = _mm512_set1_ps(threshold);
+        for (size_t lane_half = 0; lane_half < 2; ++lane_half) {
+            const size_t lane = lane_half * 16;
+            const __m512 dot =
+                _mm512_fmadd_ps(_mm512_cvtepi32_ps(sums[lane_half]), step_vec, offset_vec);
+            const __m512 estimate = _mm512_fmadd_ps(
+                _mm512_loadu_ps(f_rescale + lane),
+                dot,
+                _mm512_add_ps(_mm512_loadu_ps(f_add + lane), distance_vec)
+            );
+            const __m512 lower_bound =
+                _mm512_fnmadd_ps(_mm512_loadu_ps(f_error + lane), error_scale_vec, estimate);
+            // A NaN bound compares false (ordered), so it never prunes a cluster
+            const auto above =
+                static_cast<uint32_t>(_mm512_cmp_ps_mask(lower_bound, threshold_vec, _CMP_GT_OQ));
+            if constexpr (MASKED) {
+                if ((~above & (lane_mask >> lane) & 0xFFFFu) != 0) {
+                    return true;
+                }
+            } else if (above != 0xFFFFu) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // scalar_computer documents it. Per 8 dimensions, a code byte from the comparison mask with its
+    // bits reversed; 32 dimensions per step, then 8 (a masked half)
+    static void ComputeSketchCodeAndSums(
+        const float* PDX_RESTRICT embedding,
+        const float* PDX_RESTRICT mean,
+        size_t num_dimensions,
+        uint8_t* PDX_RESTRICT code,
+        float& squared_norm,
+        float& absolute_sum,
+        float& mean_sum_by_sign
+    ) {
+        const __m512 zero = _mm512_setzero_ps();
+        __m512 squared_norm_vec[2] = {zero, zero};
+        __m512 absolute_sum_vec[2] = {zero, zero};
+        __m512 mean_sum_by_sign_vec[2] = {zero, zero};
+        // Adds a residual to the sums; returns its positive lanes
+        const auto accumulate = [&](const __m512 embedding_vec, const __m512 mean_vec, size_t half
+                                ) {
+            const __m512 residual = _mm512_sub_ps(embedding_vec, mean_vec);
+            const __mmask16 positive = _mm512_cmp_ps_mask(residual, zero, _CMP_GT_OQ);
+            squared_norm_vec[half] = _mm512_fmadd_ps(residual, residual, squared_norm_vec[half]);
+            absolute_sum_vec[half] = _mm512_add_ps(absolute_sum_vec[half], _mm512_abs_ps(residual));
+            mean_sum_by_sign_vec[half] = _mm512_mask_add_ps(
+                mean_sum_by_sign_vec[half], positive, mean_sum_by_sign_vec[half], mean_vec
+            );
+            mean_sum_by_sign_vec[half] = _mm512_mask_sub_ps(
+                mean_sum_by_sign_vec[half],
+                static_cast<__mmask16>(~positive),
+                mean_sum_by_sign_vec[half],
+                mean_vec
+            );
+            return positive;
+        };
+        size_t i = 0;
+        for (; i + 32 <= num_dimensions; i += 32) {
+            uint32_t masks = 0;
+            for (size_t half = 0; half < 2; ++half) {
+                const size_t offset = i + 16 * half;
+                masks |=
+                    static_cast<uint32_t>(accumulate(
+                        _mm512_loadu_ps(embedding + offset), _mm512_loadu_ps(mean + offset), half
+                    ))
+                    << (16 * half);
+            }
+            uint32_t four_bytes = 0;
+            for (size_t byte = 0; byte < 4; ++byte) {
+                four_bytes |=
+                    static_cast<uint32_t>(
+                        CLUSTER_SKETCH_REVERSED_BITS_TABLE.bytes[(masks >> (8 * byte)) & 0xFF]
+                    )
+                    << (8 * byte);
+            }
+            std::memcpy(code + i / 8, &four_bytes, sizeof(four_bytes));
+        }
+        constexpr auto EIGHT_DIMENSIONS = static_cast<__mmask16>(0x00FF);
+        for (; i + 8 <= num_dimensions; i += 8) {
+            const __mmask16 positive = accumulate(
+                _mm512_maskz_loadu_ps(EIGHT_DIMENSIONS, embedding + i),
+                _mm512_maskz_loadu_ps(EIGHT_DIMENSIONS, mean + i),
+                0
+            );
+            code[i / 8] = CLUSTER_SKETCH_REVERSED_BITS_TABLE.bytes[positive & 0xFF];
+        }
+        squared_norm +=
+            _mm512_reduce_add_ps(_mm512_add_ps(squared_norm_vec[0], squared_norm_vec[1]));
+        absolute_sum +=
+            _mm512_reduce_add_ps(_mm512_add_ps(absolute_sum_vec[0], absolute_sum_vec[1]));
+        mean_sum_by_sign +=
+            _mm512_reduce_add_ps(_mm512_add_ps(mean_sum_by_sign_vec[0], mean_sum_by_sign_vec[1]));
+        scalar_computer::ComputeSketchCodeAndSums(
+            embedding + i,
+            mean + i,
+            num_dimensions - i,
+            code + i / 8,
+            squared_norm,
+            absolute_sum,
+            mean_sum_by_sign
+        );
+    }
+
+    // scalar_computer documents it. Rows i and i + 16 share a register, so one transpose pair
+    // turns the 32 rows into columns
+    static void PackSketchColumns(
+        const uint8_t* PDX_RESTRICT rows,
+        size_t row_stride,
+        size_t first_column,
+        size_t num_columns,
+        uint8_t* PDX_RESTRICT batch
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        __m256i lanes[HALF_COLUMN];
+        for (size_t lane = 0; lane < HALF_COLUMN; ++lane) {
+            lanes[lane] = _mm256_loadu2_m128i(
+                reinterpret_cast<const __m128i*>(
+                    rows + (lane + HALF_COLUMN) * row_stride + first_column
+                ),
+                reinterpret_cast<const __m128i*>(rows + lane * row_stride + first_column)
+            );
+        }
+        TransposeBytes16x16Pair(lanes);
+        for (size_t column = 0; column < num_columns; ++column) {
+            PackSketchColumn(
+                lanes[column], batch + (first_column + column) * CLUSTER_SKETCH_BATCH_SIZE
+            );
+        }
+    }
+
+    // scalar_computer documents it
+    static void UnpackSketchColumns(
+        const uint8_t* PDX_RESTRICT batch,
+        size_t first_column,
+        size_t num_columns,
+        size_t num_rows,
+        uint8_t* PDX_RESTRICT rows,
+        size_t row_stride
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        __m256i lanes[HALF_COLUMN];
+        for (size_t column = 0; column < CLUSTER_SKETCH_TRANSPOSE_COLUMNS; ++column) {
+            lanes[column] = column < num_columns
+                                ? UnpackSketchColumn(
+                                      batch + (first_column + column) * CLUSTER_SKETCH_BATCH_SIZE
+                                  )
+                                : _mm256_setzero_si256();
+        }
+        TransposeBytes16x16Pair(lanes);
+        alignas(32) uint8_t row_bytes[CLUSTER_SKETCH_BATCH_SIZE];
+        const auto row = [&](size_t lane) { return rows + lane * row_stride + first_column; };
+        for (size_t lane = 0; lane < HALF_COLUMN; ++lane) {
+            if (num_columns == CLUSTER_SKETCH_TRANSPOSE_COLUMNS) {
+                if (lane < num_rows) {
+                    _mm_storeu_si128(
+                        reinterpret_cast<__m128i*>(row(lane)), _mm256_castsi256_si128(lanes[lane])
+                    );
+                }
+                if (lane + HALF_COLUMN < num_rows) {
+                    _mm_storeu_si128(
+                        reinterpret_cast<__m128i*>(row(lane + HALF_COLUMN)),
+                        _mm256_extracti128_si256(lanes[lane], 1)
+                    );
+                }
+            } else {
+                _mm256_store_si256(reinterpret_cast<__m256i*>(row_bytes), lanes[lane]);
+                if (lane < num_rows) {
+                    std::memcpy(row(lane), row_bytes, num_columns);
+                }
+                if (lane + HALF_COLUMN < num_rows) {
+                    std::memcpy(row(lane + HALF_COLUMN), row_bytes + HALF_COLUMN, num_columns);
+                }
+            }
+        }
+    }
+
+    // scalar_computer documents it. Per column (its halves in the two 128-bit lanes), the lane's
+    // nibbles broadcast (vpshufb) and merged under the lane's mask; 16 columns per step
+    static void StoreSketchLane(
+        const uint8_t* PDX_RESTRICT code,
+        size_t num_columns,
+        uint8_t* PDX_RESTRICT columns,
+        uint32_t lane
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        const bool high_lanes = lane >= HALF_COLUMN;
+        const __m128i half_mask = _mm_and_si128(
+            _mm_cmpeq_epi8(
+                _mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+                _mm_set1_epi8(static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN])
+                )
+            ),
+            _mm_set1_epi8(static_cast<char>(high_lanes ? 0xF0 : 0x0F))
+        );
+        const __m256i lane_mask = _mm256_set_m128i(half_mask, half_mask);
+        const __m128i low_nibble = _mm_set1_epi8(0x0F);
+        const __m256i one = _mm256_set1_epi8(1);
+        size_t column = 0;
+        for (; column + 16 <= num_columns; column += 16) {
+            const __m128i bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(code + column));
+            __m128i upper_nibbles = _mm_and_si128(_mm_srli_epi16(bytes, 4), low_nibble);
+            __m128i lower_nibbles = _mm_and_si128(bytes, low_nibble);
+            if (high_lanes) {
+                upper_nibbles = _mm_slli_epi16(upper_nibbles, 4);
+                lower_nibbles = _mm_slli_epi16(lower_nibbles, 4);
+            }
+            const __m256i nibbles = _mm256_set_m128i(lower_nibbles, upper_nibbles);
+            __m256i index = _mm256_setzero_si256();
+            for (size_t c = 0; c < 16; ++c) {
+                auto* packed =
+                    reinterpret_cast<__m256i*>(columns + (column + c) * CLUSTER_SKETCH_BATCH_SIZE);
+                const __m256i values = _mm256_shuffle_epi8(nibbles, index);
+                _mm256_storeu_si256(
+                    packed,
+                    _mm256_or_si256(
+                        _mm256_andnot_si256(lane_mask, _mm256_loadu_si256(packed)),
+                        _mm256_and_si256(lane_mask, values)
+                    )
+                );
+                index = _mm256_add_epi8(index, one);
+            }
+        }
+        scalar_computer::StoreSketchLane(
+            code + column, num_columns - column, columns + column * CLUSTER_SKETCH_BATCH_SIZE, lane
+        );
+    }
+
+    // scalar_computer documents it. Per column, the lane's byte of both halves broadcast (vpshufb)
+    // and slid into a 16-byte accumulator per half (vpalignr), byte c holding column c after 16
+    static void ReadSketchLane(
+        const uint8_t* PDX_RESTRICT columns,
+        size_t num_columns,
+        uint32_t lane,
+        uint8_t* PDX_RESTRICT code
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        const bool high_lanes = lane >= HALF_COLUMN;
+        const __m256i position =
+            _mm256_set1_epi8(static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[lane % HALF_COLUMN])
+            );
+        const __m128i low_nibble = _mm_set1_epi8(0x0F);
+        size_t column = 0;
+        for (; column + 16 <= num_columns; column += 16) {
+            __m256i halves = _mm256_setzero_si256();
+            for (size_t c = 0; c < 16; ++c) {
+                const __m256i lane_bytes = _mm256_shuffle_epi8(
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(
+                        columns + (column + c) * CLUSTER_SKETCH_BATCH_SIZE
+                    )),
+                    position
+                );
+                halves = _mm256_alignr_epi8(lane_bytes, halves, 1);
+            }
+            __m128i upper_nibbles = _mm256_castsi256_si128(halves);
+            __m128i lower_nibbles = _mm256_extracti128_si256(halves, 1);
+            if (high_lanes) {
+                upper_nibbles = _mm_srli_epi16(upper_nibbles, 4);
+                lower_nibbles = _mm_srli_epi16(lower_nibbles, 4);
+            }
+            upper_nibbles = _mm_and_si128(upper_nibbles, low_nibble);
+            lower_nibbles = _mm_and_si128(lower_nibbles, low_nibble);
+            _mm_storeu_si128(
+                reinterpret_cast<__m128i*>(code + column),
+                _mm_or_si128(_mm_slli_epi16(upper_nibbles, 4), lower_nibbles)
+            );
+        }
+        scalar_computer::ReadSketchLane(
+            columns + column * CLUSTER_SKETCH_BATCH_SIZE, num_columns - column, lane, code + column
+        );
+    }
+
+    // scalar_computer documents it. Per 16 columns, ReadSketchLane's loop gathers the source lane's
+    // nibbles into one register (both halves), then StoreSketchLane's loop writes them: every
+    // source column is read before a target column is written
+    static void CopySketchLane(
+        const uint8_t* source_columns,
+        uint32_t source_lane,
+        uint8_t* target_columns,
+        uint32_t target_lane,
+        size_t num_columns
+    ) {
+        constexpr size_t HALF_COLUMN = CLUSTER_SKETCH_BATCH_SIZE / 2;
+        const __m256i source_position = _mm256_set1_epi8(
+            static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[source_lane % HALF_COLUMN])
+        );
+        const __m128i half_mask = _mm_and_si128(
+            _mm_cmpeq_epi8(
+                _mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+                _mm_set1_epi8(
+                    static_cast<char>(CLUSTER_SKETCH_POSITION_OF_LANE[target_lane % HALF_COLUMN])
+                )
+            ),
+            _mm_set1_epi8(static_cast<char>(target_lane >= HALF_COLUMN ? 0xF0 : 0x0F))
+        );
+        const __m256i target_mask = _mm256_set_m128i(half_mask, half_mask);
+        const __m256i low_nibble = _mm256_set1_epi8(0x0F);
+        const __m256i one = _mm256_set1_epi8(1);
+        size_t column = 0;
+        for (; column + 16 <= num_columns; column += 16) {
+            __m256i nibbles = _mm256_setzero_si256();
+            for (size_t c = 0; c < 16; ++c) {
+                const __m256i lane_bytes = _mm256_shuffle_epi8(
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(
+                        source_columns + (column + c) * CLUSTER_SKETCH_BATCH_SIZE
+                    )),
+                    source_position
+                );
+                nibbles = _mm256_alignr_epi8(lane_bytes, nibbles, 1);
+            }
+            if (source_lane >= HALF_COLUMN) {
+                nibbles = _mm256_srli_epi16(nibbles, 4);
+            }
+            nibbles = _mm256_and_si256(nibbles, low_nibble);
+            if (target_lane >= HALF_COLUMN) {
+                nibbles = _mm256_slli_epi16(nibbles, 4);
+            }
+            __m256i index = _mm256_setzero_si256();
+            for (size_t c = 0; c < 16; ++c) {
+                auto* packed = reinterpret_cast<__m256i*>(
+                    target_columns + (column + c) * CLUSTER_SKETCH_BATCH_SIZE
+                );
+                _mm256_storeu_si256(
+                    packed,
+                    _mm256_or_si256(
+                        _mm256_andnot_si256(target_mask, _mm256_loadu_si256(packed)),
+                        _mm256_and_si256(target_mask, _mm256_shuffle_epi8(nibbles, index))
+                    )
+                );
+                index = _mm256_add_epi8(index, one);
+            }
+        }
+        scalar_computer::CopySketchLane(
+            source_columns + column * CLUSTER_SKETCH_BATCH_SIZE,
+            source_lane,
+            target_columns + column * CLUSTER_SKETCH_BATCH_SIZE,
+            target_lane,
+            num_columns - column
+        );
+    }
+
   private:
     static __mmask16 TailMask(size_t remaining) {
         return remaining >= 16 ? static_cast<__mmask16>(0xFFFF)
@@ -409,6 +897,68 @@ class SIMDComputer<DistanceMetric::L2SQ, Quantization::F32> {
             _mm512_fmadd_ps(_mm512_cvtepi32_ps(codes_vec), step_vec, lower_vec);
         squared_norm_vec = _mm512_mask3_fmadd_ps(dequantized, dequantized, squared_norm_vec, mask);
         return _mm512_cvtepi32_epi8(codes_vec);
+    }
+
+    // One sketch column from its code byte of lanes 0-15 (low 128 bits) and 16-31 (high 128 bits)
+    static void PackSketchColumn(const __m256i lanes, uint8_t* PDX_RESTRICT packed) {
+        const __m128i low_lanes = _mm256_castsi256_si128(lanes);
+        const __m128i high_lanes = _mm256_extracti128_si256(lanes, 1);
+        const __m128i low_nibble = _mm_set1_epi8(0x0F);
+        const __m128i high_nibble = _mm_set1_epi8(static_cast<char>(0xF0));
+        const __m128i upper_nibbles = _mm_or_si128(
+            _mm_and_si128(_mm_srli_epi16(low_lanes, 4), low_nibble),
+            _mm_and_si128(high_lanes, high_nibble)
+        );
+        const __m128i lower_nibbles = _mm_or_si128(
+            _mm_and_si128(low_lanes, low_nibble),
+            _mm_and_si128(_mm_slli_epi16(high_lanes, 4), high_nibble)
+        );
+        const __m128i lane_at_position =
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(CLUSTER_SKETCH_LANE_AT_POSITION));
+        _mm256_storeu_si256(
+            reinterpret_cast<__m256i*>(packed),
+            _mm256_shuffle_epi8(
+                _mm256_set_m128i(lower_nibbles, upper_nibbles),
+                _mm256_set_m128i(lane_at_position, lane_at_position)
+            )
+        );
+    }
+
+    static __m256i UnpackSketchColumn(const uint8_t* PDX_RESTRICT packed) {
+        const __m128i position_of_lane =
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(CLUSTER_SKETCH_POSITION_OF_LANE));
+        const __m256i nibbles = _mm256_shuffle_epi8(
+            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(packed)),
+            _mm256_set_m128i(position_of_lane, position_of_lane)
+        );
+        const __m128i upper_nibbles = _mm256_castsi256_si128(nibbles);
+        const __m128i lower_nibbles = _mm256_extracti128_si256(nibbles, 1);
+        const __m128i low_nibble = _mm_set1_epi8(0x0F);
+        const __m128i high_nibble = _mm_set1_epi8(static_cast<char>(0xF0));
+        const __m128i low_lanes = _mm_or_si128(
+            _mm_and_si128(_mm_slli_epi16(upper_nibbles, 4), high_nibble),
+            _mm_and_si128(lower_nibbles, low_nibble)
+        );
+        const __m128i high_lanes = _mm_or_si128(
+            _mm_and_si128(upper_nibbles, high_nibble),
+            _mm_and_si128(_mm_srli_epi16(lower_nibbles, 4), low_nibble)
+        );
+        return _mm256_set_m128i(high_lanes, low_lanes);
+    }
+
+    // A 16 x 16 byte transpose in each 128-bit half, in place. Each round interleaves rows i and
+    // i + 8, rotating the 8 bits of (row, byte) by one; four rounds swap them
+    static void TransposeBytes16x16Pair(__m256i* rows) {
+        __m256i interleaved[16];
+        for (size_t round = 0; round < 4; ++round) {
+            for (size_t i = 0; i < 8; ++i) {
+                interleaved[2 * i] = _mm256_unpacklo_epi8(rows[i], rows[i + 8]);
+                interleaved[2 * i + 1] = _mm256_unpackhi_epi8(rows[i], rows[i + 8]);
+            }
+            for (size_t i = 0; i < 16; ++i) {
+                rows[i] = interleaved[i];
+            }
+        }
     }
 };
 

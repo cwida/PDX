@@ -19,12 +19,17 @@ namespace PDX {
 
 // Gives searches the bytes of the clusters an index holds no data for (LoadResidentDataFromStream):
 // Acquire returns them as SaveClusterData wrote them, valid until the matching Release. Called
-// concurrently by the searches.
+// concurrently by the searches. AcquireSketch returns a cluster's sketch batches as SaveToStream
+// wrote them (nullptr: none, the search scans the cluster), and IsClusterCached whether Acquire
+// would find the cluster's bytes already in memory (a hint).
 class IClusterSource {
   public:
     virtual ~IClusterSource() = default;
     virtual const char* Acquire(uint32_t cluster_id) = 0;
     virtual void Release(uint32_t cluster_id) = 0;
+    virtual bool IsClusterCached(uint32_t /*cluster_id*/) const { return false; }
+    virtual const char* AcquireSketch(uint32_t /*cluster_id*/) { return nullptr; }
+    virtual void ReleaseSketch(uint32_t /*cluster_id*/) {}
 };
 
 template <Quantization Q>
@@ -43,8 +48,10 @@ class IVF : public skmeans::AllocatorHolder {
     size_t total_capacity{0};
     std::unique_ptr<size_t[]> cluster_offsets;
     std::vector<uint64_t> cluster_data_offsets;
+    std::vector<uint64_t> cluster_sketch_offsets;
     bool is_normalized{};
     Centroids centroids;
+    std::unique_ptr<float[]> sketch_mean;
 
     // U8-specific quantization parameters
     float quantization_scale = 1.0f;
@@ -56,6 +63,8 @@ class IVF : public skmeans::AllocatorHolder {
     SAQModel saq_model;
     std::unique_ptr<float[]> saq_chunk_epsilons;
     uint64_t num_embeddings_at_calibration = 0;
+    std::unique_ptr<ClusterSketchRotation> sketch_rotation;
+    std::unique_ptr<float[]> rotated_sketch_mean;
 
     IVF() = default;
     ~IVF() = default;
@@ -103,17 +112,66 @@ class IVF : public skmeans::AllocatorHolder {
         }
     }
 
+    bool HasSketches() const { return sketch_mean != nullptr; }
+
+    uint32_t GetSketchNumDimensions() const {
+        if (!HasSketches()) {
+            return 0;
+        }
+        if constexpr (Q == Quantization::SAQ) {
+            return AlignValue<uint32_t, CLUSTER_SKETCH_DIMENSION_ALIGNMENT>(num_dimensions);
+        } else {
+            return num_dimensions;
+        }
+    }
+
     ClusterFormat<Q> GetClusterFormat() const {
         if constexpr (Q == Quantization::SAQ) {
             return {
                 saq_model.chunk_record_offsets.get(),
                 saq_model.num_chunks,
                 saq_model.num_segments,
-                saq_model.HasPDXU8Head()
+                saq_model.HasPDXU8Head(),
+                GetSketchNumDimensions()
             };
         } else {
-            return num_dimensions;
+            return {num_dimensions, GetSketchNumDimensions()};
         }
+    }
+
+    const float* ToSketchDomain(const float* vector, float* scratch) const {
+        if constexpr (Q == Quantization::SAQ) {
+            sketch_rotation->Rotate(vector, scratch);
+            return scratch;
+        } else {
+            return vector;
+        }
+    }
+
+    const float* GetSketchDomainMean() const {
+        // NOLINTNEXTLINE(bugprone-branch-clone)
+        if constexpr (Q == Quantization::SAQ) {
+            return rotated_sketch_mean.get();
+        } else {
+            return sketch_mean.get();
+        }
+    }
+
+    std::unique_ptr<ClusterSketchQueryTable> CreateClusterSketchQueryTable(
+        const float* transformed_query
+    ) const {
+        std::unique_ptr<float[]> scratch(
+            Q == Quantization::SAQ ? new float[GetSketchNumDimensions()] : nullptr
+        );
+        return std::make_unique<ClusterSketchQueryTable>(
+            ToSketchDomain(transformed_query, scratch.get()), GetSketchNumDimensions()
+        );
+    }
+
+    void SetSketchRotation(std::unique_ptr<ClusterSketchRotation> rotation) {
+        sketch_rotation = std::move(rotation);
+        rotated_sketch_mean.reset(new float[sketch_rotation->padded_num_dimensions]);
+        sketch_rotation->Rotate(sketch_mean.get(), rotated_sketch_mean.get());
     }
 
     // Compute cluster_offsets, total_capacity, and max_cluster_capacity from current clusters.
@@ -254,6 +312,16 @@ class IVF : public skmeans::AllocatorHolder {
             );
             WriteValue(out, num_embeddings_at_calibration);
         }
+        WriteValue(out, static_cast<uint8_t>(HasSketches()));
+        if (HasSketches()) {
+            out.write(
+                reinterpret_cast<const char*>(sketch_mean.get()),
+                static_cast<std::streamsize>(num_dimensions * sizeof(float))
+            );
+            if constexpr (Q == Quantization::SAQ) {
+                sketch_rotation->Save(out);
+            }
+        }
         std::unique_ptr<uint64_t[]> cluster_data_offsets_to_save(new uint64_t[num_clusters]);
         uint64_t cluster_data_offset = 0;
         for (size_t position = 0; position < num_clusters; ++position) {
@@ -261,10 +329,24 @@ class IVF : public skmeans::AllocatorHolder {
             cluster_data_offsets_to_save[cluster_id] = cluster_data_offset;
             cluster_data_offset += GetClusterDataSizeInBytes(clusters[cluster_id].num_embeddings);
         }
+        // The sketch section follows the cluster data, in the same storage order
+        std::unique_ptr<uint64_t[]> cluster_sketch_offsets_to_save;
+        if (HasSketches()) {
+            cluster_sketch_offsets_to_save.reset(new uint64_t[num_clusters]);
+            uint64_t cluster_sketch_offset = cluster_data_offset;
+            for (size_t position = 0; position < num_clusters; ++position) {
+                const uint32_t cluster_id = storage_order[position];
+                cluster_sketch_offsets_to_save[cluster_id] = cluster_sketch_offset;
+                cluster_sketch_offset += clusters[cluster_id].GetSavedSketchesSizeInBytes();
+            }
+        }
         for (size_t i = 0; i < num_clusters; ++i) {
             WriteValue(out, clusters[i].num_embeddings);
             WriteValue(out, clusters[i].max_capacity);
             WriteValue(out, cluster_data_offsets_to_save[i]);
+            if (HasSketches()) {
+                WriteValue(out, cluster_sketch_offsets_to_save[i]);
+            }
         }
         WriteValue(out, static_cast<char>(is_normalized));
         centroids.Save(out);
@@ -286,6 +368,13 @@ class IVF : public skmeans::AllocatorHolder {
         }
     }
 
+    // After the cluster data: each cluster's sketch batches, in storage order.
+    void SaveSketchData(std::ostream& out, const uint32_t* storage_order) const {
+        for (size_t position = 0; position < num_clusters; ++position) {
+            clusters[storage_order[position]].SaveSketches(out);
+        }
+    }
+
     template <class Reader>
     void LoadResidentData(
         Reader& reader,
@@ -302,6 +391,15 @@ class IVF : public skmeans::AllocatorHolder {
             reader.Read(saq_chunk_epsilons.get(), saq_model.num_chunks * sizeof(float));
             num_embeddings_at_calibration = ReadValue<uint64_t>(reader);
         }
+        const bool has_sketches = ReadValue<uint8_t>(reader) != 0;
+        if (has_sketches) {
+            sketch_mean.reset(new float[num_dimensions]);
+            reader.Read(sketch_mean.get(), num_dimensions * sizeof(float));
+            if constexpr (Q == Quantization::SAQ) {
+                SetSketchRotation(ClusterSketchRotation::Load(reader, num_dimensions));
+            }
+            cluster_sketch_offsets.resize(num_clusters);
+        }
         clusters.reserve(num_clusters);
         cluster_data_offsets.resize(num_clusters);
         const ClusterFormat<Q> cluster_format = GetClusterFormat();
@@ -313,6 +411,9 @@ class IVF : public skmeans::AllocatorHolder {
             );
             clusters[i].id = i;
             cluster_data_offsets[i] = ReadValue<uint64_t>(reader);
+            if (has_sketches) {
+                cluster_sketch_offsets[i] = ReadValue<uint64_t>(reader);
+            }
             total_num_embeddings += num_embeddings;
         }
         is_normalized = ReadValue<char>(reader) != 0;
@@ -329,8 +430,9 @@ class IVF : public skmeans::AllocatorHolder {
 
     // Reads the clusters in the order of their offsets, skipping the bytes between them. An empty
     // cluster holds no bytes (it shares its offset with the next cluster), so it is not read.
+    // Returns where it stopped, from the start of the cluster data.
     template <class Reader>
-    void LoadClusterData(Reader& reader) {
+    uint64_t LoadClusterData(Reader& reader) {
         std::vector<uint32_t> clusters_in_stream_order(num_clusters);
         std::iota(clusters_in_stream_order.begin(), clusters_in_stream_order.end(), 0);
         std::sort(
@@ -355,6 +457,34 @@ class IVF : public skmeans::AllocatorHolder {
             position = cluster_data_offsets[cluster_id] +
                        GetClusterDataSizeInBytes(cluster.num_embeddings);
         }
+        return position;
+    }
+
+    // The sketch section, as LoadClusterData reads the cluster data, from position (where
+    // LoadClusterData stopped).
+    template <class Reader>
+    void LoadSketchData(Reader& reader, uint64_t position) {
+        std::vector<uint32_t> clusters_in_stream_order(num_clusters);
+        std::iota(clusters_in_stream_order.begin(), clusters_in_stream_order.end(), 0);
+        std::sort(
+            clusters_in_stream_order.begin(),
+            clusters_in_stream_order.end(),
+            [&](uint32_t a, uint32_t b) {
+                return cluster_sketch_offsets[a] < cluster_sketch_offsets[b];
+            }
+        );
+        for (const uint32_t cluster_id : clusters_in_stream_order) {
+            auto& cluster = clusters[cluster_id];
+            if (cluster.num_embeddings == 0) {
+                continue;
+            }
+            if (cluster_sketch_offsets[cluster_id] < position) {
+                throw std::runtime_error("Overlapping cluster sketches in a PDX index stream");
+            }
+            reader.Skip(cluster_sketch_offsets[cluster_id] - position);
+            cluster.LoadSketches(reader);
+            position = cluster_sketch_offsets[cluster_id] + cluster.GetSavedSketchesSizeInBytes();
+        }
     }
 
     size_t GetAllocatedSizeInBytes() const {
@@ -376,6 +506,15 @@ class IVF : public skmeans::AllocatorHolder {
         in_memory_size_in_bytes += centroids.GetAllocatedSizeInBytes();
         in_memory_size_in_bytes += num_clusters * sizeof(size_t); // cluster_offsets
         in_memory_size_in_bytes += cluster_data_offsets.capacity() * sizeof(uint64_t);
+        in_memory_size_in_bytes += cluster_sketch_offsets.capacity() * sizeof(uint64_t);
+        if (HasSketches()) {
+            in_memory_size_in_bytes += num_dimensions * sizeof(float);
+        }
+        if (sketch_rotation != nullptr) {
+            in_memory_size_in_bytes += sizeof(*sketch_rotation) +
+                                       sketch_rotation->GetInMemorySizeInBytes() +
+                                       sketch_rotation->padded_num_dimensions * sizeof(float);
+        }
         if constexpr (Q == Quantization::SAQ) {
             // The model's sizeof is already in the IVF's
             in_memory_size_in_bytes += saq_model.GetInMemorySizeInBytes() - sizeof(saq_model) +

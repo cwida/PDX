@@ -153,6 +153,19 @@ static constexpr uint32_t SAQ_SCALE_GRID_POINTS = 4;
 static constexpr float SAQ_SCALE_GRID_SPAN = 0.25f;
 static constexpr float SAQ_LEVEL_ROUNDING_EPSILON = 1e-5f;
 
+static constexpr float CLUSTER_SKETCH_EPSILON = 1.9f;
+static constexpr size_t CLUSTER_SKETCH_BATCH_SIZE = 32;
+static constexpr uint32_t CLUSTER_SKETCH_DIMENSION_ALIGNMENT = 16;
+static constexpr size_t CLUSTER_SKETCH_MEAN_SAMPLE_SIZE = 12288;
+static constexpr size_t CLUSTER_SKETCH_ROTATION_ROUNDS = 4;
+static constexpr size_t CLUSTER_SKETCH_TRANSPOSE_COLUMNS = 16;
+static constexpr uint32_t CLUSTER_SKETCH_ALL_LANES = 0xFFFFFFFFu;
+// Position j of a half column holds lane CLUSTER_SKETCH_LANE_AT_POSITION[j] (and that lane + 16)
+alignas(16) static constexpr uint8_t
+    CLUSTER_SKETCH_LANE_AT_POSITION[16] = {0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15};
+alignas(16) static constexpr uint8_t
+    CLUSTER_SKETCH_POSITION_OF_LANE[16] = {0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15};
+
 // Maintenance (SPFresh-like)
 // When a cluster splits, points may be stolen from / reassigned to at most
 // SPLIT_MAX_NEIGHBOR_CLUSTERS
@@ -225,6 +238,8 @@ enum class CentroidQuantization : uint8_t { F32 = 0, LVQ8 = 1, LVQ4 = 2 };
 
 enum class ClusterStorageOrder : uint8_t { ID = 0, NEAREST_CENTROID_CHAIN = 1 };
 
+enum class ClusterSketchCheck : uint8_t { NEVER = 0, WHEN_CLUSTER_NOT_CACHED = 1, ALWAYS = 2 };
+
 // A saved index's type byte: its PDXIndexType in the low nibble, its CentroidQuantization in the
 // high
 [[nodiscard]] constexpr uint8_t MakeIndexTypeByte(
@@ -244,7 +259,7 @@ enum class ClusterStorageOrder : uint8_t { ID = 0, NEAREST_CENTROID_CHAIN = 1 };
     return static_cast<CentroidQuantization>(type_byte >> 4);
 }
 
-static constexpr uint8_t PDX_SERIALIZATION_VERSION = 5;
+static constexpr uint8_t PDX_SERIALIZATION_VERSION = 6;
 
 template <Quantization Q>
 struct DistanceType {

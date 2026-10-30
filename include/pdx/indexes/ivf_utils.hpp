@@ -38,7 +38,8 @@ struct PDXIndexConfig {
     bool is_data_transformed = false;
     size_t base_row_id = 0;
     uint32_t max_cluster_size = 0; // Clusters split at this size (0 = at 1.3x their initial size)
-    bool expect_appends = true;    // false: built clusters get one free slot (not serialized)
+    bool build_cluster_sketches = false;
+    bool expect_appends = true; // false: built clusters get one free slot (not serialized)
     CentroidQuantization centroid_quantization = CentroidQuantization::F32;
     ClusterStorageOrder cluster_storage_order = ClusterStorageOrder::NEAREST_CENTROID_CHAIN;
     uint32_t saq_bits_per_dimension = 3;
@@ -65,6 +66,7 @@ struct PDXIndexConfig {
         WriteValue(out, static_cast<uint8_t>(is_data_transformed));
         WriteValue(out, static_cast<uint64_t>(base_row_id));
         WriteValue(out, max_cluster_size);
+        WriteValue(out, static_cast<uint8_t>(build_cluster_sketches));
     }
 
     template <class Reader>
@@ -82,6 +84,7 @@ struct PDXIndexConfig {
         is_data_transformed = ReadValue<uint8_t>(reader) != 0;
         base_row_id = static_cast<size_t>(ReadValue<uint64_t>(reader));
         max_cluster_size = ReadValue<uint32_t>(reader);
+        build_cluster_sketches = ReadValue<uint8_t>(reader) != 0;
     }
 
     void Validate() const {
@@ -600,13 +603,27 @@ class IVFUtils : public skmeans::AllocatorHolder {
                 GetAllocator(), static_cast<uint64_t>(largest_cluster_size) * values_per_embedding
             );
         }
+        const ClusterSketchQuantizer sketch_quantizer(cluster_format.sketch_num_dimensions);
+        std::vector<skmeans::AllocatedBuffer<uint8_t>> sketch_buffers(n_workers);
+        if (ivf.HasSketches()) {
+            for (size_t w = 0; w < n_workers; w++) {
+                sketch_buffers[w] = skmeans::AllocateBuffer<uint8_t>(
+                    GetAllocator(), largest_cluster_size * sketch_quantizer.row_size_in_bytes
+                );
+            }
+        }
 
         executor.ParallelFor(num_clusters, [&](size_t begin, size_t end, size_t worker) {
             auto* tmp = tmp_buffers[worker].get();
+            uint8_t* sketch_rows = sketch_buffers[worker].get();
             const SAQQuantizer saq_quantizer(num_dimensions);
             std::unique_ptr<SAQEncodingScratch> saq_scratch;
+            std::unique_ptr<float[]> sketch_domain_row;
             if constexpr (Q == SAQ) {
                 saq_scratch = std::make_unique<SAQEncodingScratch>(num_dimensions);
+                if (sketch_rows != nullptr) {
+                    sketch_domain_row.reset(new float[sketch_quantizer.num_dimensions]);
+                }
             }
             for (size_t cluster_idx = begin; cluster_idx < end; cluster_idx++) {
                 const auto cluster_size = kmeans_result.assignments[cluster_idx].size();
@@ -615,6 +632,15 @@ class IVFUtils : public skmeans::AllocatorHolder {
                 for (size_t pos = 0; pos < cluster_size; pos++) {
                     const auto emb_idx = kmeans_result.assignments[cluster_idx][pos];
                     cluster.indices[pos] = row_ids[emb_idx];
+                    if (sketch_rows != nullptr) {
+                        sketch_quantizer.EncodeRow(
+                            ivf.ToSketchDomain(
+                                source_data + (emb_idx * num_dimensions), sketch_domain_row.get()
+                            ),
+                            ivf.GetSketchDomainMean(),
+                            sketch_rows + pos * sketch_quantizer.row_size_in_bytes
+                        );
+                    }
 
                     if constexpr (Q == SAQ) {
                         saq_quantizer.EncodeEmbedding(
@@ -639,7 +665,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
                         );
                     }
                 }
-                cluster.StoreEmbeddings(tmp, cluster_size);
+                cluster.StoreEmbeddings(tmp, cluster_size, sketch_rows);
             }
         });
 
@@ -954,21 +980,43 @@ class IVFUtils : public skmeans::AllocatorHolder {
             skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_workers * largest_range);
         auto positions_buffer =
             skmeans::AllocateBuffer<uint32_t>(GetAllocator(), n_workers * largest_range);
+        const ClusterSketchQuantizer sketch_quantizer(ivf.GetSketchNumDimensions());
+        skmeans::AllocatedBuffer<uint8_t> sketches_buffer;
+        if (ivf.HasSketches()) {
+            sketches_buffer = skmeans::AllocateBuffer<uint8_t>(
+                GetAllocator(), n_workers * largest_range * sketch_quantizer.row_size_in_bytes
+            );
+        }
         executor.ParallelFor(ranges.size(), [&](size_t begin, size_t end, size_t worker) {
             storage_t* rows = rows_buffer.get() + worker * largest_range * values_per_embedding;
             uint32_t* ids = ids_buffer.get() + worker * largest_range;
             uint32_t* positions = positions_buffer.get() + worker * largest_range;
+            uint8_t* sketch_rows =
+                ivf.HasSketches() ? sketches_buffer.get() +
+                                        worker * largest_range * sketch_quantizer.row_size_in_bytes
+                                  : nullptr;
             ScalarQuantizer<Q> quantizer(d);
             const SAQQuantizer saq_quantizer(d);
             std::unique_ptr<SAQEncodingScratch> saq_scratch;
+            std::unique_ptr<float[]> sketch_domain_row;
             if constexpr (Q == SAQ) {
                 saq_scratch = std::make_unique<SAQEncodingScratch>(d);
+                if (sketch_rows != nullptr) {
+                    sketch_domain_row.reset(new float[sketch_quantizer.num_dimensions]);
+                }
             }
             for (size_t r = begin; r < end; r++) {
                 const ClusterAppendRange& range = ranges[r];
                 for (uint32_t j = 0; j < range.num_rows; j++) {
                     const uint32_t row = rows_by_cluster[range.first_row + j];
                     ids[j] = row_ids[row];
+                    if (sketch_rows != nullptr) {
+                        sketch_quantizer.EncodeRow(
+                            ivf.ToSketchDomain(embeddings + row * d, sketch_domain_row.get()),
+                            ivf.GetSketchDomainMean(),
+                            sketch_rows + j * sketch_quantizer.row_size_in_bytes
+                        );
+                    }
                     if constexpr (Q == SAQ) {
                         saq_quantizer.EncodeEmbedding(
                             embeddings + row * d,
@@ -990,7 +1038,7 @@ class IVFUtils : public skmeans::AllocatorHolder {
                     }
                 }
                 ivf.clusters[range.cluster_id].AppendEmbeddings(
-                    rows, ids, range.num_rows, positions
+                    rows, ids, range.num_rows, positions, sketch_rows
                 );
                 for (uint32_t j = 0; j < range.num_rows; j++) {
                     out_positions[rows_by_cluster[range.first_row + j]] = positions[j];
@@ -1234,20 +1282,33 @@ inline uint32_t QuantizeAndAppend(
     uint32_t row_id,
     const float* embedding
 ) {
+    std::unique_ptr<uint8_t[]> sketch_row;
+    if (index.HasSketches()) {
+        const ClusterSketchQuantizer sketch_quantizer(index.GetSketchNumDimensions());
+        sketch_row.reset(new uint8_t[sketch_quantizer.row_size_in_bytes]);
+        std::unique_ptr<float[]> sketch_domain_embedding(
+            Q == SAQ ? new float[sketch_quantizer.num_dimensions] : nullptr
+        );
+        sketch_quantizer.EncodeRow(
+            index.ToSketchDomain(embedding, sketch_domain_embedding.get()),
+            index.GetSketchDomainMean(),
+            sketch_row.get()
+        );
+    }
     if constexpr (Q == SAQ) {
         std::unique_ptr<uint8_t[]> encoded(new uint8_t[index.GetValuesPerEmbedding()]);
         SAQEncodingScratch scratch(index.num_dimensions);
         SAQQuantizer(index.num_dimensions)
             .EncodeEmbedding(embedding, index.saq_model, encoded.get(), scratch);
-        return cluster.AppendEmbedding(row_id, encoded.get());
+        return cluster.AppendEmbedding(row_id, encoded.get(), sketch_row.get());
     } else if constexpr (Q == U8) {
         std::unique_ptr<pdx_data_t<Q>[]> quantized(new pdx_data_t<Q>[index.num_dimensions]);
         quantizer.QuantizeEmbedding(
             embedding, index.quantization_base, index.quantization_scale, quantized.get()
         );
-        return cluster.AppendEmbedding(row_id, quantized.get());
+        return cluster.AppendEmbedding(row_id, quantized.get(), sketch_row.get());
     } else {
-        return cluster.AppendEmbedding(row_id, embedding);
+        return cluster.AppendEmbedding(row_id, embedding, sketch_row.get());
     }
 }
 
@@ -1262,10 +1323,13 @@ inline void GatherGroupEmbeddings(
     const float* float_embeddings,
     pdx_data_t<Q>* embs_out,
     uint32_t* ids_out,
-    float* centroid_sum
+    float* centroid_sum,
+    const uint8_t* sketch_rows = nullptr,
+    uint8_t* sketches_out = nullptr
 ) {
     const size_t d = index.num_dimensions;
     const size_t values_per_embedding = index.GetValuesPerEmbedding();
+    const size_t sketch_row_size = ClusterSketchQuantizer(index.num_dimensions).row_size_in_bytes;
     for (size_t i = 0; i < group_idx.size(); i++) {
         const uint32_t idx = group_idx[i];
         std::memcpy(
@@ -1273,6 +1337,13 @@ inline void GatherGroupEmbeddings(
             raw_embeddings + static_cast<size_t>(idx) * values_per_embedding,
             values_per_embedding * sizeof(pdx_data_t<Q>)
         );
+        if (sketch_rows != nullptr) {
+            std::memcpy(
+                sketches_out + i * sketch_row_size,
+                sketch_rows + static_cast<size_t>(idx) * sketch_row_size,
+                sketch_row_size
+            );
+        }
         ids_out[i] = cluster.indices[idx];
         const float* emb_f = float_embeddings + static_cast<size_t>(idx) * d;
         for (size_t j = 0; j < d; j++) {
@@ -1588,11 +1659,14 @@ inline void StealNeighborEmbeddings(
     float* centroid_sum_a,
     pdx_data_t<Q>* embs_b,
     uint32_t* ids_b,
-    float* centroid_sum_b
+    float* centroid_sum_b,
+    uint8_t* sketches_a = nullptr,
+    uint8_t* sketches_b = nullptr
 ) {
     PDX_PROFILE_SCOPE("Split/NeighborReassign");
     const size_t d = index.num_dimensions;
     const size_t values_per_embedding = index.GetValuesPerEmbedding();
+    const size_t sketch_row_size = ClusterSketchQuantizer(index.num_dimensions).row_size_in_bytes;
     ScalarQuantizer<Q> quantizer(d);
     const SAQQuantizer saq_quantizer(d);
     std::unique_ptr<float[]> emb_f32(new float[d]);
@@ -1616,8 +1690,14 @@ inline void StealNeighborEmbeddings(
             }
 
             const uint32_t row_id = neighbor.indices[slot];
-            neighbor.DeleteEmbedding(slot);
             const size_t position = goes_to_a ? num_rows_to_a++ : num_rows_to_b++;
+            // Before DeleteEmbedding clears the lane
+            if (sketches_a != nullptr) {
+                neighbor.ReadSketchRow(
+                    slot, (goes_to_a ? sketches_a : sketches_b) + position * sketch_row_size
+                );
+            }
+            neighbor.DeleteEmbedding(slot);
             pdx_data_t<Q>* embs = goes_to_a ? embs_a : embs_b;
             uint32_t* ids = goes_to_a ? ids_a : ids_b;
             float* centroid_sum = goes_to_a ? centroid_sum_a : centroid_sum_b;

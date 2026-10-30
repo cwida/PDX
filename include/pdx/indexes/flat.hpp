@@ -35,6 +35,9 @@ class FlatIndex : public IPDXIndex {
     explicit FlatIndex(PDXIndexConfig config)
         : config(config), index(config.num_dimensions, Normalize(config)) {
         config.Validate();
+        if (config.build_cluster_sketches) {
+            throw std::invalid_argument("FlatIndex: the flat index has no cluster sketches");
+        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         owned_pruner = std::make_unique<ADSamplingPruner>(
@@ -49,6 +52,9 @@ class FlatIndex : public IPDXIndex {
         : config(config), index(config.num_dimensions, Normalize(config)),
           pruner(&external_pruner) {
         config.Validate();
+        if (config.build_cluster_sketches) {
+            throw std::invalid_argument("FlatIndex: the flat index has no cluster sketches");
+        }
         BindExecutor(config);
         SetAllocator(config.allocator);
         searcher = std::make_unique<FlatSearcher>(index, *pruner);
@@ -183,7 +189,8 @@ class FlatIndex : public IPDXIndex {
         const std::vector<size_t>* passing_row_ids,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr,
-        const CentroidRankingQuery* /*ranking_query*/ = nullptr
+        const CentroidRankingQuery* /*ranking_query*/ = nullptr,
+        const ClusterSketchQueryTable* /*sketch_query_table*/ = nullptr
     ) const override {
         if (!passing_row_ids) {
             return std::make_unique<FlatSearcher::IterativeSearch>(searcher->BeginIterativeSearch(
@@ -223,7 +230,8 @@ class FlatIndex : public IPDXIndex {
         const PredicateEvaluator& evaluator,
         bool is_query_transformed = false,
         const std::vector<uint32_t>* /*clusters_access_order*/ = nullptr,
-        const CentroidRankingQuery* /*ranking_query*/ = nullptr
+        const CentroidRankingQuery* /*ranking_query*/ = nullptr,
+        const ClusterSketchQueryTable* /*sketch_query_table*/ = nullptr
     ) const override {
         auto positions = std::make_unique<std::vector<uint32_t>>();
         positions->reserve(evaluator.total_passing_tuples);

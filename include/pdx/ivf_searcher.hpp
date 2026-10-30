@@ -97,6 +97,8 @@ class PDXearch {
 
     size_t GetNProbe() const { return ivf_nprobe; }
 
+    void SetClusterSketchCheck(ClusterSketchCheck check) { cluster_sketch_check = check; }
+
     void SetClusterAccessOrder(const std::vector<uint32_t>& cluster_indexes) {
         cluster_access_order_size = cluster_indexes.size();
         cluster_indices_in_access_order.reset(new uint32_t[cluster_indexes.size()]);
@@ -108,6 +110,7 @@ class PDXearch {
   protected:
     float selectivity_threshold = 0.80;
     size_t ivf_nprobe = 0;
+    ClusterSketchCheck cluster_sketch_check = ClusterSketchCheck::WHEN_CLUSTER_NOT_CACHED;
 
     // Prioritized list of indices of the clusters to probe. E.g., [0, 2, 1].
     std::unique_ptr<uint32_t[]> cluster_indices_in_access_order;
@@ -903,11 +906,101 @@ class PDXearch {
             num_ordered_clusters = target;
         }
 
+        // Whether the cluster's sketch proves that none of its rows can enter the heap (then the
+        // cluster is neither fetched nor scanned), when SetClusterSketchCheck's policy checks it
+        bool SketchProvesClusterCannotChangeHeap(uint32_t cluster_id, const cluster_t& cluster) {
+            PDXearch& s = *searcher;
+            if (!cluster.HasSketches() || s.cluster_sketch_check == ClusterSketchCheck::NEVER) {
+                return false;
+            }
+            const float threshold = top_k_heap->kth_distance.load(std::memory_order_relaxed);
+            if (threshold == TopKHeap::NOT_FULL_KTH_DISTANCE) {
+                return false;
+            }
+            if (s.cluster_sketch_check == ClusterSketchCheck::WHEN_CLUSTER_NOT_CACHED &&
+                (cluster.data || s.cluster_source->IsClusterCached(cluster_id))) {
+                return false;
+            }
+            // A paged index (LoadResidentDataFromStream) keeps no sketches: they are acquired
+            const bool sketch_comes_from_source = !cluster.sketches;
+            const uint8_t* batches =
+                sketch_comes_from_source
+                    ? reinterpret_cast<const uint8_t*>(s.cluster_source->AcquireSketch(cluster_id))
+                    : cluster.sketches.get();
+            if (batches == nullptr) {
+                return false;
+            }
+            const ClusterSketchQuantizer& quantizer = cluster.sketch_quantizer;
+            if (!sketch_query) {
+                if (shared_sketch_query_table == nullptr) {
+                    owned_sketch_query_table =
+                        s.pdx_data.CreateClusterSketchQueryTable(query.get());
+                }
+                sketch_query = std::make_unique<ClusterSketchQuery>(
+                    query.get(),
+                    s.pdx_data.sketch_mean.get(),
+                    s.pdx_data.num_dimensions,
+                    shared_sketch_query_table != nullptr ? *shared_sketch_query_table
+                                                         : *owned_sketch_query_table
+                );
+            }
+            const ClusterSketchQueryTable& table = sketch_query->table;
+            using computer = DistanceComputer<DistanceMetric::L2SQ, F32>;
+            const size_t num_batches = ClusterSketchQuantizer::GetNumBatches(cluster.used_capacity);
+            // Under a filter only the passing lanes count, and a batch without one is not checked
+            const uint8_t* selection_vector = nullptr;
+            if constexpr (FILTERED) {
+                selection_vector =
+                    evaluator
+                        ->GetSelectionVector(cluster_id, s.pdx_data.cluster_offsets[cluster_id])
+                        .first;
+            }
+            constexpr auto batch_may_hold_neighbor =
+                FILTERED ? computer::SketchBatchMayHoldNeighborMasked
+                         : computer::SketchBatchMayHoldNeighbor;
+            bool may_hold_neighbor = false;
+            for (size_t batch = 0; batch < num_batches && !may_hold_neighbor; ++batch) {
+                uint32_t lane_mask = CLUSTER_SKETCH_ALL_LANES;
+                if constexpr (FILTERED) {
+                    const size_t first_slot = batch * CLUSTER_SKETCH_BATCH_SIZE;
+                    const size_t num_lanes =
+                        std::min(CLUSTER_SKETCH_BATCH_SIZE, cluster.used_capacity - first_slot);
+                    lane_mask = 0;
+                    for (size_t lane = 0; lane < num_lanes; ++lane) {
+                        lane_mask |= static_cast<uint32_t>(selection_vector[first_slot + lane] != 0)
+                                     << lane;
+                    }
+                    if (lane_mask == 0) {
+                        continue;
+                    }
+                }
+                may_hold_neighbor = batch_may_hold_neighbor(
+                    batches + batch * quantizer.batch_size_in_bytes,
+                    quantizer.code_size_in_bytes,
+                    table.lookup_table.get(),
+                    table.lookup_table_step,
+                    table.lookup_table_base_sum,
+                    table.centering_correction,
+                    sketch_query->squared_distance_to_mean,
+                    sketch_query->error_scale,
+                    threshold,
+                    lane_mask
+                );
+            }
+            if (sketch_comes_from_source) {
+                s.cluster_source->ReleaseSketch(cluster_id);
+            }
+            return !may_hold_neighbor;
+        }
+
         // A cluster without data (LoadResidentDataFromStream) comes from the cluster source: its
         // row ids, then its PDX data with the stride of the embeddings it was saved with.
         void ProbeCluster(uint32_t cluster_id) {
             PDXearch& s = *searcher;
             const cluster_t& cluster = s.pdx_data.clusters[cluster_id];
+            if (SketchProvesClusterCannotChangeHeap(cluster_id, cluster)) {
+                return;
+            }
             if (cluster.data) {
                 ProbeClusterData(
                     cluster_id, cluster.data.get(), cluster.indices.get(), cluster.max_capacity
@@ -1078,6 +1171,9 @@ class PDXearch {
         std::unique_ptr<quantized_embedding_t[]> quantized_query;
         const quantized_embedding_t* prepared_query = nullptr;
         std::unique_ptr<SAQQuery> saq_query;
+        const ClusterSketchQueryTable* shared_sketch_query_table = nullptr;
+        std::unique_ptr<ClusterSketchQueryTable> owned_sketch_query_table;
+        std::unique_ptr<ClusterSketchQuery> sketch_query;
         std::unique_ptr<float[]> saq_chunk_margins;
         std::unique_ptr<float[]> saq_rescales;
         std::unique_ptr<uint32_t[]> queued_clusters;
@@ -1090,14 +1186,16 @@ class PDXearch {
     };
 
     // `clusters_access_order`: the query's GetClustersAccessOrder, to skip ranking the clusters
-    // again (nullptr: rank).
+    // again (nullptr: rank). `sketch_query_table`: the query's ClusterSketchQueryTable, shared by
+    // the searches of many indexes (nullptr: built at the first sketch check).
     [[nodiscard]] IterativeSearch<false> BeginIterativeSearch(
         const float* PDX_RESTRICT raw_query,
         uint32_t k,
         TopKHeap& top_k_heap,
         bool is_query_transformed = false,
         const uint32_t* clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* sketch_query_table = nullptr
     ) {
         IterativeSearch<false> search_cursor(*this, k, top_k_heap, nullptr);
         InitializeSearchCursor(
@@ -1106,7 +1204,8 @@ class PDXearch {
             is_query_transformed,
             pdx_data.num_clusters,
             clusters_access_order,
-            ranking_query
+            ranking_query,
+            sketch_query_table
         );
         return search_cursor;
     }
@@ -1118,7 +1217,8 @@ class PDXearch {
         TopKHeap& top_k_heap,
         bool is_query_transformed = false,
         const uint32_t* clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* sketch_query_table = nullptr
     ) {
         assert(evaluator);
         IterativeSearch<true> search_cursor(*this, k, top_k_heap, evaluator.get());
@@ -1129,7 +1229,8 @@ class PDXearch {
             is_query_transformed,
             pdx_data.num_clusters,
             clusters_access_order,
-            ranking_query
+            ranking_query,
+            sketch_query_table
         );
         return search_cursor;
     }
@@ -1143,7 +1244,8 @@ class PDXearch {
         TopKHeap& top_k_heap,
         bool is_query_transformed = false,
         const uint32_t* clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* sketch_query_table = nullptr
     ) {
         IterativeSearch<true> search_cursor(*this, k, top_k_heap, &evaluator);
         InitializeSearchCursor(
@@ -1152,7 +1254,8 @@ class PDXearch {
             is_query_transformed,
             pdx_data.num_clusters,
             clusters_access_order,
-            ranking_query
+            ranking_query,
+            sketch_query_table
         );
         return search_cursor;
     }
@@ -1174,6 +1277,18 @@ class PDXearch {
             ranking_query
         );
         return clusters_access_order;
+    }
+
+    [[nodiscard]] std::unique_ptr<ClusterSketchQueryTable> CreateClusterSketchQueryTable(
+        const float* PDX_RESTRICT raw_query,
+        bool is_query_transformed
+    ) {
+        if (!pdx_data.HasSketches()) {
+            return nullptr;
+        }
+        std::unique_ptr<float[]> query(new float[pdx_data.num_dimensions]);
+        TransformQuery(raw_query, is_query_transformed, query.get());
+        return pdx_data.CreateClusterSketchQueryTable(query.get());
     }
 
     // The query's distance to every centroid, unsorted (out holds num_clusters floats): to rank
@@ -1216,9 +1331,20 @@ class PDXearch {
         bool is_query_transformed,
         size_t n_clusters_to_rank,
         const uint32_t* preset_clusters_access_order = nullptr,
-        const CentroidRankingQuery* ranking_query = nullptr
+        const CentroidRankingQuery* ranking_query = nullptr,
+        const ClusterSketchQueryTable* sketch_query_table = nullptr
     ) {
         const size_t d = pdx_data.num_dimensions;
+        if (sketch_query_table != nullptr && pdx_data.HasSketches() &&
+            sketch_query_table->num_dimensions != pdx_data.GetSketchNumDimensions()) {
+            throw std::invalid_argument(
+                "ClusterSketchQueryTable built for " +
+                std::to_string(sketch_query_table->num_dimensions) +
+                " dimensions, the index's sketches have " +
+                std::to_string(pdx_data.GetSketchNumDimensions())
+            );
+        }
+        search_cursor.shared_sketch_query_table = sketch_query_table;
         search_cursor.query.reset(new float[d]);
         TransformQuery(raw_query, is_query_transformed, search_cursor.query.get());
         if constexpr (Q == U8) {

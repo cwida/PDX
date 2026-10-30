@@ -10,6 +10,7 @@
 #include "pdx/common.hpp"
 #include "pdx/distance_computers/base_computers.hpp"
 #include "pdx/distance_computers/scalar_computers.hpp"
+#include "pdx/quantizers/cluster_sketch.hpp"
 #include "superkmeans/pdx/utils.h"
 
 namespace {
@@ -392,6 +393,315 @@ TEST_F(DistanceComputerTest, F32_Int8Query_SIMD_MatchesScalar) {
     }
 }
 
+const std::vector<size_t> SKETCH_KERNEL_DIMENSIONS = {2, 16, 17, 64, 384, 1000, 1024, 1040, 2064};
+
+// The sketch scan answers like a bound computed from the rows, in scalar and SIMD, and cleared
+// lanes never hold a neighbour.
+TEST_F(DistanceComputerTest, F32_SketchBatchMayHoldNeighbor_SIMD_MatchesScalar) {
+    constexpr size_t NUM_ROWS = 40;
+    for (size_t d : SKETCH_KERNEL_DIMENSIONS) {
+        SCOPED_TRACE("d=" + std::to_string(d));
+        const PDX::ClusterSketchQuantizer quantizer(static_cast<uint32_t>(d));
+        const auto rows = skmeans::GenerateRandomVectors(NUM_ROWS, d, -1.0f, 1.0f, 42);
+        const auto mean = skmeans::GenerateRandomVectors(1, d, -0.1f, 0.1f, 7);
+        const auto query = skmeans::GenerateRandomVectors(1, d, -1.0f, 1.0f, 13);
+        const size_t num_batches = PDX::ClusterSketchQuantizer::GetNumBatches(NUM_ROWS);
+        std::vector<uint8_t> sketch_rows(NUM_ROWS * quantizer.row_size_in_bytes);
+        std::vector<uint8_t> batches(num_batches * quantizer.batch_size_in_bytes);
+        quantizer.ClearBatches(batches.data(), num_batches);
+        for (size_t i = 0; i < NUM_ROWS; ++i) {
+            uint8_t* sketch_row = sketch_rows.data() + i * quantizer.row_size_in_bytes;
+            quantizer.EncodeRow(rows.data() + i * d, mean.data(), sketch_row);
+            quantizer.StoreRowInBatch(
+                sketch_row,
+                batches.data() + quantizer.GetBatchOffsetInBytes(i),
+                static_cast<uint32_t>(i % PDX::CLUSTER_SKETCH_BATCH_SIZE)
+            );
+        }
+        const PDX::ClusterSketchQueryTable table(query.data(), static_cast<uint32_t>(d));
+        const PDX::ClusterSketchQuery sketch_query(
+            query.data(), mean.data(), static_cast<uint32_t>(d), table
+        );
+        auto may_hold_neighbor = [&](auto kernel, size_t batch, float threshold, uint32_t lane_mask
+                                 ) {
+            return kernel(
+                batches.data() + batch * quantizer.batch_size_in_bytes,
+                quantizer.code_size_in_bytes,
+                sketch_query.table.lookup_table.get(),
+                sketch_query.table.lookup_table_step,
+                sketch_query.table.lookup_table_base_sum,
+                sketch_query.table.centering_correction,
+                sketch_query.squared_distance_to_mean,
+                sketch_query.error_scale,
+                threshold,
+                lane_mask
+            );
+        };
+        for (size_t batch = 0; batch < num_batches; ++batch) {
+            std::vector<double> lane_bounds(
+                PDX::CLUSTER_SKETCH_BATCH_SIZE, std::numeric_limits<double>::infinity()
+            );
+            const size_t end = std::min(NUM_ROWS, (batch + 1) * PDX::CLUSTER_SKETCH_BATCH_SIZE);
+            for (size_t i = batch * PDX::CLUSTER_SKETCH_BATCH_SIZE; i < end; ++i) {
+                const uint8_t* sketch_row = sketch_rows.data() + i * quantizer.row_size_in_bytes;
+                double centered_dot = 0.0;
+                double squared_distance_to_mean = 0.0;
+                for (size_t j = 0; j < d; ++j) {
+                    const int bit = (sketch_row[j / 8] >> (7 - j % 8)) & 1;
+                    centered_dot += (bit - 0.5) * query[j];
+                    squared_distance_to_mean += (query[j] - mean[j]) * (query[j] - mean[j]);
+                }
+                float factors[3];
+                std::memcpy(factors, sketch_row + quantizer.code_size_in_bytes, sizeof(factors));
+                const double estimate =
+                    factors[0] + squared_distance_to_mean + factors[1] * centered_dot;
+                lane_bounds[i % PDX::CLUSTER_SKETCH_BATCH_SIZE] =
+                    estimate -
+                    factors[2] * PDX::CLUSTER_SKETCH_EPSILON * std::sqrt(squared_distance_to_mean);
+            }
+            for (const uint32_t lane_mask :
+                 {PDX::CLUSTER_SKETCH_ALL_LANES, 0x55555555u, 0xAAAAAAAAu, 1u << 3}) {
+                double lowest_bound = std::numeric_limits<double>::infinity();
+                for (size_t lane = 0; lane < PDX::CLUSTER_SKETCH_BATCH_SIZE; ++lane) {
+                    if ((lane_mask >> lane) & 1u) {
+                        lowest_bound = std::min(lowest_bound, lane_bounds[lane]);
+                    }
+                }
+                const double margin = 1e-2 * (std::abs(lowest_bound) + 1.0);
+                for (const bool above_lowest_bound : {false, true}) {
+                    const auto threshold = static_cast<float>(
+                        above_lowest_bound ? lowest_bound + margin : lowest_bound - margin
+                    );
+                    const auto expect_answer = [&](auto kernel, const char* kernel_name) {
+                        EXPECT_EQ(
+                            may_hold_neighbor(kernel, batch, threshold, lane_mask),
+                            above_lowest_bound
+                        ) << kernel_name
+                          << ", batch " << batch << ", lane mask " << lane_mask;
+                    };
+                    expect_answer(
+                        ScalarF32Computer::SketchBatchMayHoldNeighbor<true>, "scalar masked"
+                    );
+                    expect_answer(F32Computer::SketchBatchMayHoldNeighborMasked, "masked");
+                    if (lane_mask == PDX::CLUSTER_SKETCH_ALL_LANES) {
+                        expect_answer(
+                            ScalarF32Computer::SketchBatchMayHoldNeighbor<false>, "scalar"
+                        );
+                        expect_answer(F32Computer::SketchBatchMayHoldNeighbor, "unmasked");
+                    }
+                }
+            }
+        }
+        quantizer.ClearBatches(batches.data(), 1);
+        EXPECT_FALSE(may_hold_neighbor(
+            F32Computer::SketchBatchMayHoldNeighbor,
+            0,
+            std::numeric_limits<float>::max(),
+            PDX::CLUSTER_SKETCH_ALL_LANES
+        ));
+    }
+}
+
+// The SIMD row pass gives the scalar code and sums
+TEST_F(DistanceComputerTest, F32_ComputeSketchCodeAndSums_SIMD_MatchesScalar) {
+    constexpr size_t NUM_ROWS = 20;
+    for (size_t d : SKETCH_KERNEL_DIMENSIONS) {
+        SCOPED_TRACE("d=" + std::to_string(d));
+        const auto rows = skmeans::GenerateRandomVectors(NUM_ROWS, d, -1.0f, 1.0f, 42);
+        const auto mean = skmeans::GenerateRandomVectors(1, d, -0.1f, 0.1f, 7);
+        for (size_t i = 0; i < NUM_ROWS; ++i) {
+            std::vector<uint8_t> scalar_code((d + 7) / 8, 0);
+            std::vector<uint8_t> simd_code((d + 7) / 8, 0);
+            float scalar_sums[3] = {};
+            float simd_sums[3] = {};
+            ScalarF32Computer::ComputeSketchCodeAndSums(
+                rows.data() + i * d,
+                mean.data(),
+                d,
+                scalar_code.data(),
+                scalar_sums[0],
+                scalar_sums[1],
+                scalar_sums[2]
+            );
+            F32Computer::ComputeSketchCodeAndSums(
+                rows.data() + i * d,
+                mean.data(),
+                d,
+                simd_code.data(),
+                simd_sums[0],
+                simd_sums[1],
+                simd_sums[2]
+            );
+            EXPECT_EQ(simd_code, scalar_code) << "row " << i;
+            for (size_t sum = 0; sum < 3; ++sum) {
+                EXPECT_NEAR(
+                    simd_sums[sum], scalar_sums[sum], 1e-4f * (std::abs(scalar_sums[sum]) + 1.0f)
+                ) << "row "
+                  << i << ", sum " << sum;
+            }
+        }
+    }
+}
+
+// The SIMD pack writes the scalar columns, and both unpacks write back those columns of the rows
+// and nothing else
+TEST_F(DistanceComputerTest, F32_PackSketchColumns_SIMD_MatchesScalar) {
+    constexpr size_t ROW_STRIDE = 40;
+    constexpr size_t BATCH_SIZE = PDX::CLUSTER_SKETCH_BATCH_SIZE;
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<int> byte_distribution(0, 255);
+    std::vector<uint8_t> rows(BATCH_SIZE * ROW_STRIDE);
+    for (auto& byte : rows) {
+        byte = static_cast<uint8_t>(byte_distribution(rng));
+    }
+    for (size_t first_column : {size_t{0}, PDX::CLUSTER_SKETCH_TRANSPOSE_COLUMNS}) {
+        for (size_t num_columns = 1; num_columns <= PDX::CLUSTER_SKETCH_TRANSPOSE_COLUMNS;
+             ++num_columns) {
+            SCOPED_TRACE(
+                "first_column=" + std::to_string(first_column) +
+                " num_columns=" + std::to_string(num_columns)
+            );
+            const size_t batch_size = (first_column + num_columns) * BATCH_SIZE;
+            std::vector<uint8_t> scalar_batch(batch_size, 0);
+            std::vector<uint8_t> simd_batch(batch_size, 0);
+            ScalarF32Computer::PackSketchColumns(
+                rows.data(), ROW_STRIDE, first_column, num_columns, scalar_batch.data()
+            );
+            F32Computer::PackSketchColumns(
+                rows.data(), ROW_STRIDE, first_column, num_columns, simd_batch.data()
+            );
+            EXPECT_EQ(simd_batch, scalar_batch);
+            for (size_t num_rows : {size_t{1}, size_t{17}, BATCH_SIZE}) {
+                std::vector<uint8_t> scalar_rows(rows.size(), 0xAA);
+                std::vector<uint8_t> simd_rows(rows.size(), 0xAA);
+                ScalarF32Computer::UnpackSketchColumns(
+                    scalar_batch.data(),
+                    first_column,
+                    num_columns,
+                    num_rows,
+                    scalar_rows.data(),
+                    ROW_STRIDE
+                );
+                F32Computer::UnpackSketchColumns(
+                    scalar_batch.data(),
+                    first_column,
+                    num_columns,
+                    num_rows,
+                    simd_rows.data(),
+                    ROW_STRIDE
+                );
+                EXPECT_EQ(simd_rows, scalar_rows) << "num_rows " << num_rows;
+                for (size_t row = 0; row < num_rows; ++row) {
+                    for (size_t column = first_column; column < first_column + num_columns;
+                         ++column) {
+                        ASSERT_EQ(
+                            scalar_rows[row * ROW_STRIDE + column], rows[row * ROW_STRIDE + column]
+                        ) << "row "
+                          << row << ", column " << column;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The SIMD lane store and copy write the scalar bytes (only the target lane's nibbles change), and
+// both lane reads give the code back, for every lane
+TEST_F(DistanceComputerTest, F32_StoreSketchLane_SIMD_MatchesScalar) {
+    constexpr size_t BATCH_SIZE = PDX::CLUSTER_SKETCH_BATCH_SIZE;
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<int> byte_distribution(0, 255);
+    for (size_t num_columns :
+         {size_t{1}, size_t{15}, size_t{16}, size_t{17}, size_t{130}, size_t{258}}) {
+        std::vector<uint8_t> code(num_columns);
+        std::vector<uint8_t> batch(num_columns * BATCH_SIZE);
+        for (auto& byte : code) {
+            byte = static_cast<uint8_t>(byte_distribution(rng));
+        }
+        for (auto& byte : batch) {
+            byte = static_cast<uint8_t>(byte_distribution(rng));
+        }
+        for (uint32_t lane = 0; lane < BATCH_SIZE; ++lane) {
+            SCOPED_TRACE(
+                "num_columns=" + std::to_string(num_columns) + " lane=" + std::to_string(lane)
+            );
+            std::vector<uint8_t> scalar_batch = batch;
+            std::vector<uint8_t> simd_batch = batch;
+            ScalarF32Computer::StoreSketchLane(code.data(), num_columns, scalar_batch.data(), lane);
+            F32Computer::StoreSketchLane(code.data(), num_columns, simd_batch.data(), lane);
+            EXPECT_EQ(simd_batch, scalar_batch);
+            std::vector<uint8_t> scalar_code(num_columns);
+            std::vector<uint8_t> simd_code(num_columns);
+            ScalarF32Computer::ReadSketchLane(
+                simd_batch.data(), num_columns, lane, scalar_code.data()
+            );
+            F32Computer::ReadSketchLane(simd_batch.data(), num_columns, lane, simd_code.data());
+            EXPECT_EQ(scalar_code, code);
+            EXPECT_EQ(simd_code, code);
+            // Lane + 16 shares the lane's bytes
+            const uint32_t target_lanes[2] = {(lane + 5) % 32u, (lane + 16) % 32u};
+            for (const uint32_t target_lane : target_lanes) {
+                for (const bool same_batch : {true, false}) {
+                    std::vector<uint8_t> scalar_target = same_batch ? simd_batch : batch;
+                    std::vector<uint8_t> simd_target = scalar_target;
+                    ScalarF32Computer::CopySketchLane(
+                        same_batch ? scalar_target.data() : simd_batch.data(),
+                        lane,
+                        scalar_target.data(),
+                        target_lane,
+                        num_columns
+                    );
+                    F32Computer::CopySketchLane(
+                        same_batch ? simd_target.data() : simd_batch.data(),
+                        lane,
+                        simd_target.data(),
+                        target_lane,
+                        num_columns
+                    );
+                    EXPECT_EQ(simd_target, scalar_target) << "target lane " << target_lane;
+                    F32Computer::ReadSketchLane(
+                        simd_target.data(), num_columns, target_lane, simd_code.data()
+                    );
+                    EXPECT_EQ(simd_code, code) << "target lane " << target_lane;
+                }
+            }
+        }
+    }
+}
+
+// Storing whole batches writes the bytes of storing lane by lane, and reading them gives the rows
+// back, also for a batch short of rows
+TEST_F(DistanceComputerTest, F32_StoreRowsInBatches_MatchesStoreRowInBatch) {
+    for (size_t d : SKETCH_KERNEL_DIMENSIONS) {
+        const PDX::ClusterSketchQuantizer quantizer(static_cast<uint32_t>(d));
+        for (size_t num_rows : {size_t{1}, PDX::CLUSTER_SKETCH_BATCH_SIZE, size_t{40}}) {
+            SCOPED_TRACE("d=" + std::to_string(d) + " num_rows=" + std::to_string(num_rows));
+            const auto rows = skmeans::GenerateRandomVectors(num_rows, d, -1.0f, 1.0f, 42);
+            const auto mean = skmeans::GenerateRandomVectors(1, d, -0.1f, 0.1f, 7);
+            const size_t num_batches = PDX::ClusterSketchQuantizer::GetNumBatches(num_rows);
+            std::vector<uint8_t> sketch_rows(num_rows * quantizer.row_size_in_bytes);
+            std::vector<uint8_t> lane_by_lane(num_batches * quantizer.batch_size_in_bytes);
+            quantizer.ClearBatches(lane_by_lane.data(), num_batches);
+            for (size_t i = 0; i < num_rows; ++i) {
+                uint8_t* sketch_row = sketch_rows.data() + i * quantizer.row_size_in_bytes;
+                quantizer.EncodeRow(rows.data() + i * d, mean.data(), sketch_row);
+                quantizer.StoreRowInBatch(
+                    sketch_row,
+                    lane_by_lane.data() + quantizer.GetBatchOffsetInBytes(i),
+                    static_cast<uint32_t>(i % PDX::CLUSTER_SKETCH_BATCH_SIZE)
+                );
+            }
+            std::vector<uint8_t> whole_batches(lane_by_lane.size());
+            quantizer.ClearBatches(whole_batches.data(), num_batches);
+            quantizer.StoreRowsInBatches(sketch_rows.data(), num_rows, whole_batches.data());
+            EXPECT_EQ(whole_batches, lane_by_lane);
+            std::vector<uint8_t> read_rows(sketch_rows.size());
+            quantizer.ReadRowsFromBatches(whole_batches.data(), num_rows, read_rows.data());
+            EXPECT_EQ(read_rows, sketch_rows);
+        }
+    }
+}
+
 std::vector<uint16_t> RandomHalves(size_t n, float low, float high, std::mt19937& rng) {
     std::uniform_real_distribution<float> distribution(low, high);
     std::vector<uint16_t> halves(n + 16);
@@ -440,6 +750,30 @@ void ExpectSameSurvivors(
         ) << "survivor "
           << i;
         EXPECT_EQ(expected.rescales[i], actual.rescales[i]) << "survivor " << i;
+    }
+}
+
+// Scalar and SIMD match the orthonormal Walsh-Hadamard matrix: (-1)^popcount(i & j) / sqrt(n).
+TEST_F(DistanceComputerTest, F32_FastHadamardTransform_SIMD_MatchesScalar) {
+    for (size_t n = 16; n <= 2048; n *= 2) {
+        SCOPED_TRACE("n=" + std::to_string(n));
+        const auto values = skmeans::GenerateRandomVectors(1, n, -10.0f, 10.0f, 42);
+        std::vector<float> expected(n, 0.0f);
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                const bool negative = PDX_POPCOUNT(static_cast<uint32_t>(i & j)) % 2 == 1;
+                expected[i] += negative ? -values[j] : values[j];
+            }
+            expected[i] /= std::sqrt(static_cast<float>(n));
+        }
+        std::vector<float> scalar_out(values.begin(), values.end());
+        std::vector<float> simd_out(values.begin(), values.end());
+        ScalarF32Computer::FastHadamardTransform(scalar_out.data(), n);
+        F32Computer::FastHadamardTransform(simd_out.data(), n);
+        for (size_t i = 0; i < n; ++i) {
+            EXPECT_NEAR(scalar_out[i], expected[i], 1e-3f) << "idx " << i;
+            EXPECT_NEAR(simd_out[i], expected[i], 1e-3f) << "idx " << i;
+        }
     }
 }
 
