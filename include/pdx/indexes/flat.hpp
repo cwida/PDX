@@ -136,7 +136,7 @@ class FlatIndex : public IPDXIndex {
         }
     }
 
-    bool Delete(size_t row_id) override {
+    bool Delete(size_t row_id, bool /*logical_only*/ = false) override {
         const auto [cluster_id, position] = GetRowIdMapping(row_id);
         if (cluster_id == DELETED_MARKER) {
             return false;
@@ -326,6 +326,8 @@ class FlatIndex : public IPDXIndex {
     uint32_t GetNumDimensions() const override { return index.num_dimensions; }
 
     uint32_t GetNumClusters() const override { return 1; }
+
+    size_t GetNumEmbeddings() const override { return index.num_embeddings; }
 
     uint32_t GetClusterSize(uint32_t) const override {
         return static_cast<uint32_t>(index.num_embeddings);

@@ -357,20 +357,33 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     // Concurrent deletes must always go through a single writer thread
-    bool Delete(size_t row_id) override {
+    bool Delete(size_t row_id, bool logical_only = false) override {
         PDX_PROFILE_SCOPE("Delete");
         const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
         if (cluster_id == DELETED_MARKER) {
             return false;
         }
-        ReserveClusterSlotIfNeeded();
+        if (!logical_only) {
+            ReserveClusterSlotIfNeeded();
+        }
         skmeans::ParallelSection parallel_section(GetExecutor());
         auto& cluster = index.clusters[cluster_id];
         cluster.DeleteEmbedding(index_in_cluster);
         DeleteRowIdMapping(row_id);
         index.total_num_embeddings--;
-        CheckClusterHealth(cluster);
+        if (!logical_only) {
+            CheckClusterHealth(cluster);
+        }
         return true;
+    }
+
+    void CheckClustersHealth() override {
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        // Backwards: a merge moves the last cluster, already checked, into the merged one's slot
+        for (uint32_t c = index.num_clusters; c-- > 0;) {
+            ReserveClusterSlotIfNeeded();
+            CheckClusterHealth(index.clusters[c]);
+        }
     }
 
     void ShrinkToFit() override {
@@ -546,6 +559,10 @@ class PDXTreeIndex : public IPDXIndex {
     uint32_t GetNumDimensions() const override { return d; }
 
     uint32_t GetNumClusters() const override { return index.num_clusters; }
+
+    size_t GetNumEmbeddings() const override {
+        return static_cast<size_t>(index.total_num_embeddings);
+    }
 
     uint32_t GetClusterSize(uint32_t cluster_id) const override {
         return index.clusters[cluster_id].num_embeddings;
@@ -980,7 +997,9 @@ class PDXTreeIndex : public IPDXIndex {
 
     void DestroyAndMergeCluster(cluster_t& cluster) {
         PDX_PROFILE_SCOPE("Merge");
-        cluster.CompactCluster();
+        for (const auto& [row_id, new_idx] : cluster.CompactCluster()) {
+            SetRowIdMapping(row_id, cluster.id, new_idx);
+        }
         const uint32_t cluster_id = cluster.id;
         const uint32_t mesocluster_id = cluster.mesocluster_id;
         const uint32_t n_emb = cluster.num_embeddings;
@@ -1021,18 +1040,32 @@ class PDXTreeIndex : public IPDXIndex {
         index.centroids.RemoveCentroidBySwapWithLast(cluster_id);
         index.num_clusters--;
 
-        index.ComputeClusterOffsets();
-        index.l0.ComputeClusterOffsets();
+        // Its rows are absent until ReassignEmbeddings places them again: a merge that throws loses
+        // the rows it did not place yet, but the index stays consistent
+        for (uint32_t i = 0; i < n_emb; i++) {
+            DeleteRowIdMapping(cluster_indices[i]);
+        }
+        try {
+            index.ComputeClusterOffsets();
+            index.l0.ComputeClusterOffsets();
 
-        // Fully removed the dying cluster before reassignment
-        ReassignEmbeddings(
-            cluster_indices.get(),
-            cluster_embeddings.get(),
-            raw_embeddings.get(),
-            n_emb,
-            mesocluster_id,
-            false
-        );
+            // Fully removed the dying cluster before reassignment
+            ReassignEmbeddings(
+                cluster_indices.get(),
+                cluster_embeddings.get(),
+                raw_embeddings.get(),
+                n_emb,
+                mesocluster_id,
+                false
+            );
+        } catch (...) {
+            for (uint32_t i = 0; i < n_emb; i++) {
+                if (!Contains(cluster_indices[i])) {
+                    index.total_num_embeddings--;
+                }
+            }
+            throw;
+        }
 
         CheckL0ClusterHealth(index.l0.clusters[mesocluster_id]);
     }

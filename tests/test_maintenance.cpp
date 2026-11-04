@@ -1007,6 +1007,60 @@ TEST_P(MaintenanceTest, SplitsAndMergesKeepStoredRows) {
     });
 }
 
+// Test 24: Logical deletes only tombstone: no merge, nothing from the allocator.
+// CheckClustersHealth then merges the cluster they left underfull, as Delete would have
+template <typename IndexT>
+void RunLogicalDeleteThenCheckClustersHealth() {
+    auto data = TestUtils::LoadTestData(D);
+    const size_t n_build = TestUtils::N_TRAIN;
+    TestUtils::CountingAllocator allocator;
+    auto config = MakeConfig(D);
+    config.allocator = &allocator;
+    IndexT index(config);
+    index.BuildIndex(data.train.data(), n_build);
+    const uint32_t clusters_before = index.GetNumClusters();
+    ASSERT_GT(clusters_before, 1u);
+    EXPECT_EQ(index.GetNumEmbeddings(), n_build);
+
+    uint32_t victim = 0;
+    for (uint32_t c = 1; c < clusters_before; c++) {
+        if (index.GetClusterSize(c) > index.GetClusterSize(victim)) {
+            victim = c;
+        }
+    }
+    auto victim_ids = index.GetClusterRowIds(victim);
+    ASSERT_GE(victim_ids.size(), 2u);
+    const size_t n_delete = victim_ids.size() / 2 + 1;
+    std::vector<uint32_t> deleted(victim_ids.begin(), victim_ids.begin() + n_delete);
+    std::vector<uint32_t> kept(victim_ids.begin() + n_delete, victim_ids.end());
+
+    const size_t live_bytes = allocator.live_bytes;
+    for (uint32_t row_id : deleted) {
+        EXPECT_TRUE(index.Delete(row_id, /*logical_only=*/true));
+    }
+    EXPECT_EQ(index.GetNumClusters(), clusters_before) << "A logical delete merged a cluster";
+    EXPECT_EQ(allocator.live_bytes, live_bytes);
+    EXPECT_EQ(index.GetNumEmbeddings(), n_build - n_delete);
+
+    index.CheckClustersHealth();
+    EXPECT_EQ(index.GetNumClusters(), clusters_before - 1) << "Cluster was not merged away";
+    EXPECT_EQ(index.GetNumEmbeddings(), n_build - n_delete);
+    ExpectIndexHoldsExactly(index, n_build - n_delete);
+
+    index.SetNProbe(0);
+    for (uint32_t row_id : kept) {
+        auto results = index.Search(data.train.data() + row_id * D, TestUtils::KNN);
+        EXPECT_TRUE(Contains(results, row_id))
+            << "Reassigned point (row_id=" << row_id << ") not found after the merge";
+    }
+}
+
+TEST_P(MaintenanceTest, LogicalDeleteThenCheckClustersHealth) {
+    ForIndexType(GetParam(), [](auto tag) {
+        RunLogicalDeleteThenCheckClustersHealth<typename decltype(tag)::type>();
+    });
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AllIndexTypes,
     MaintenanceTest,
