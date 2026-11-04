@@ -66,6 +66,7 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     }
     virtual uint32_t GetNumDimensions() const = 0;
     virtual uint32_t GetNumClusters() const = 0;
+    virtual size_t GetNumEmbeddings() const = 0;
     virtual uint32_t GetClusterSize(uint32_t cluster_id) const = 0;
     virtual std::vector<uint32_t> GetClusterRowIds(uint32_t cluster_id) const = 0;
     virtual size_t GetInMemorySizeInBytes() const = 0;
@@ -84,11 +85,15 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
         const float* embeddings,
         size_t num_embeddings
     ) = 0;
-    // Returns whether the row was in the index: deleting an absent row is a no-op.
-    virtual bool Delete(size_t row_id) = 0;
+    // Returns whether the row was in the index: deleting an absent row is a no-op. logical_only:
+    // the row is only tombstoned, without merging its cluster (CheckClustersHealth merges later):
+    // nothing from the allocator.
+    virtual bool Delete(size_t row_id, bool logical_only = false) = 0;
     // Leaves one free slot per cluster, for an index that stops receiving appends.
     virtual void ShrinkToFit() {}
     virtual void SetMaxClusterSize(uint32_t /*max_cluster_size*/) {}
+    // Merges the clusters that logical deletes left underfull, as a Delete would have.
+    virtual void CheckClustersHealth() {}
     virtual std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const = 0;
     bool Contains(size_t row_id) const { return GetRowIdMapping(row_id).first != DELETED_MARKER; }
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
@@ -488,6 +493,10 @@ class PDXIndex : public IPDXIndex {
 
     uint32_t GetNumClusters() const override { return index.num_clusters; }
 
+    size_t GetNumEmbeddings() const override {
+        return static_cast<size_t>(index.total_num_embeddings);
+    }
+
     size_t GetNumVectorsAccessed() const {
         size_t total = 0;
         for (uint32_t c = 0; c < index.num_clusters; c++) {
@@ -780,22 +789,36 @@ class PDXIndex : public IPDXIndex {
     }
 
     // Concurrent deletes must always go through a single writer thread
-    bool Delete(size_t row_id) override {
+    bool Delete(size_t row_id, bool logical_only = false) override {
         PDX_PROFILE_SCOPE("Delete");
         const auto [cluster_id, index_in_cluster] = GetRowIdMapping(row_id);
         if (cluster_id == DELETED_MARKER) {
             return false;
         }
-        ReserveClusterSlotIfNeeded();
+        if (!logical_only) {
+            ReserveClusterSlotIfNeeded();
+        }
         skmeans::ParallelSection parallel_section(GetExecutor());
         auto& cluster = index.clusters[cluster_id];
         cluster.DeleteEmbedding(index_in_cluster);
         DeleteRowIdMapping(row_id);
         index.total_num_embeddings--;
-        if (cluster.data) {
+        if (cluster.data && !logical_only) {
             CheckClusterHealth(cluster);
         }
         return true;
+    }
+
+    void CheckClustersHealth() override {
+        skmeans::ParallelSection parallel_section(GetExecutor());
+        // Backwards: a merge moves the last cluster, already checked, into the merged one's slot
+        for (uint32_t c = index.num_clusters; c-- > 0;) {
+            ReserveClusterSlotIfNeeded();
+            auto& cluster = index.clusters[c];
+            if (cluster.data) {
+                CheckClusterHealth(cluster);
+            }
+        }
     }
 
     void ShrinkToFit() override {
@@ -1128,7 +1151,9 @@ class PDXIndex : public IPDXIndex {
 
     void DestroyAndMergeCluster(cluster_t& cluster) {
         PDX_PROFILE_SCOPE("Merge");
-        cluster.CompactCluster();
+        for (const auto& [row_id, new_idx] : cluster.CompactCluster()) {
+            SetRowIdMapping(row_id, cluster.id, new_idx);
+        }
         const uint32_t cluster_id = cluster.id;
         const uint32_t n_emb = cluster.num_embeddings;
 
@@ -1162,17 +1187,31 @@ class PDXIndex : public IPDXIndex {
         index.centroids.RemoveCentroidBySwapWithLast(cluster_id);
         index.num_clusters--;
 
-        index.ComputeClusterOffsets();
+        // Its rows are absent until ReassignEmbeddings places them again: a merge that throws loses
+        // the rows it did not place yet, but the index stays consistent
+        for (uint32_t i = 0; i < n_emb; i++) {
+            DeleteRowIdMapping(cluster_indices[i]);
+        }
+        try {
+            index.ComputeClusterOffsets();
 
-        // Fully removed the dying cluster before reassignment
-        ReassignEmbeddings(
-            cluster_indices.get(),
-            cluster_embeddings.get(),
-            raw_embeddings.get(),
-            sketch_rows.get(),
-            n_emb,
-            false
-        );
+            // Fully removed the dying cluster before reassignment
+            ReassignEmbeddings(
+                cluster_indices.get(),
+                cluster_embeddings.get(),
+                raw_embeddings.get(),
+                sketch_rows.get(),
+                n_emb,
+                false
+            );
+        } catch (...) {
+            for (uint32_t i = 0; i < n_emb; i++) {
+                if (!Contains(cluster_indices[i])) {
+                    index.total_num_embeddings--;
+                }
+            }
+            throw;
+        }
     }
 
     // Assumes cluster is compacted and has no tombstones
