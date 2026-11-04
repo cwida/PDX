@@ -673,4 +673,39 @@ TEST(StreamSerialization, SAQRecalibrationGrowthSurvivesAStreamLoad) {
     EXPECT_NE(epsilons(), saved_epsilons);
 }
 
+// A stream-loaded SAQ index recalibrates its pruning bound at the significance of the saved one
+TEST(StreamSerialization, SAQPruningSignificanceSurvivesAStreamLoad) {
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+        .saq_pruning_significance = 0.01f,
+    };
+    auto shared_rotation =
+        MakeSharedRotation("pdx_saq4", config, data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
+    PDX::PDXIndexSAQ index(config, pruner, shared_rotation.saq_model);
+    index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+
+    std::stringstream stream;
+    index.SaveToStream(stream);
+    auto loaded = PDX::LoadPDXIndexFromStream(stream, pruner);
+    auto& loaded_saq = dynamic_cast<PDX::PDXIndexSAQ&>(*loaded);
+    const auto epsilons = [](const PDX::PDXIndexSAQ& saq_index) {
+        const auto& pdx_data = saq_index.GetSearcher().pdx_data;
+        return std::vector<float>(
+            pdx_data.saq_chunk_epsilons.get(),
+            pdx_data.saq_chunk_epsilons.get() + pdx_data.saq_model.num_chunks
+        );
+    };
+    index.CalibratePruningBound();
+    loaded_saq.CalibratePruningBound();
+    EXPECT_EQ(epsilons(loaded_saq), epsilons(index));
+}
+
 } // namespace
