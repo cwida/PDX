@@ -259,7 +259,7 @@ enum class ClusterSketchCheck : uint8_t { NEVER = 0, WHEN_CLUSTER_NOT_CACHED = 1
     return static_cast<CentroidQuantization>(type_byte >> 4);
 }
 
-static constexpr uint8_t PDX_SERIALIZATION_VERSION = 6;
+static constexpr uint8_t PDX_SERIALIZATION_VERSION = 7;
 
 template <Quantization Q>
 struct DistanceType {

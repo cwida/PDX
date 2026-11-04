@@ -67,6 +67,7 @@ struct PDXIndexConfig {
         WriteValue(out, static_cast<uint64_t>(base_row_id));
         WriteValue(out, max_cluster_size);
         WriteValue(out, static_cast<uint8_t>(build_cluster_sketches));
+        WriteValue(out, saq_pruning_significance);
     }
 
     template <class Reader>
@@ -85,6 +86,7 @@ struct PDXIndexConfig {
         base_row_id = static_cast<size_t>(ReadValue<uint64_t>(reader));
         max_cluster_size = ReadValue<uint32_t>(reader);
         build_cluster_sketches = ReadValue<uint8_t>(reader) != 0;
+        saq_pruning_significance = ReadValue<float>(reader);
     }
 
     static void ValidateMaxClusterSize(uint32_t max_cluster_size) {
