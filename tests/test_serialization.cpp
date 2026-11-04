@@ -465,6 +465,56 @@ TEST_P(StreamSerializationTest, KeepsMaxClusterSize) {
     }
 }
 
+// An index built without append headroom, emptied, saved, loaded and shrunk (DuckIR's closed row
+// group after a truncate) takes a bulk reload: a full 1-row cluster grows instead of splitting
+TEST_P(StreamSerializationTest, EmptiedAndShrunkIndexTakesABulkReload) {
+    const std::string& index_type = GetParam();
+    if (index_type == "flat") {
+        GTEST_SKIP() << "Flat has no clusters to split";
+    }
+    const size_t d = 128;
+    const size_t n_build = TestUtils::N_TRAIN / 2;
+    auto data = TestUtils::LoadTestData(d);
+    const PDX::PDXIndexConfig config{
+        .num_dimensions = static_cast<uint32_t>(d),
+        .distance_metric = PDX::DistanceMetric::L2SQ,
+        .seed = TestUtils::SEED,
+        .normalize = true,
+        .sampling_fraction = 1.0f,
+        .hierarchical_indexing = true,
+        .expect_appends = false,
+    };
+    auto shared_rotation =
+        MakeSharedRotation(index_type, config, data.train.data(), TestUtils::N_TRAIN);
+    PDX::ADSamplingPruner& pruner = *shared_rotation.pruner;
+    auto index = BuildOnPruner(index_type, config, pruner, shared_rotation.saq_model);
+    index->BuildIndex(data.train.data(), n_build);
+    for (size_t row_id = 0; row_id < n_build; ++row_id) {
+        index->Delete(row_id);
+    }
+
+    std::stringstream stream;
+    index->SaveToStream(stream);
+    auto loaded = PDX::LoadPDXIndexFromStream(stream, pruner);
+    ASSERT_NE(loaded, nullptr);
+    loaded->ShrinkToFit();
+
+    // The reload reuses the row ids
+    std::vector<size_t> row_ids;
+    for (size_t row_id = 0; row_id < n_build; ++row_id) {
+        row_ids.push_back(row_id);
+    }
+    loaded->BulkAppend(row_ids.data(), data.train.data() + n_build * d, n_build);
+    size_t num_rows = 0;
+    for (uint32_t c = 0; c < loaded->GetNumClusters(); ++c) {
+        num_rows += loaded->GetClusterSize(c);
+    }
+    EXPECT_EQ(num_rows, n_build);
+    for (const size_t row_id : row_ids) {
+        EXPECT_TRUE(loaded->Contains(row_id)) << "row " << row_id;
+    }
+}
+
 // Quantized centroids survive a full and a paged stream load and a file round trip. Flat holds no
 // centroids, so its type byte stays as before.
 TEST_P(StreamSerializationTest, KeepsCentroidQuantization) {

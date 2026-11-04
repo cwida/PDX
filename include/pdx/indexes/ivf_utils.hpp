@@ -87,6 +87,16 @@ struct PDXIndexConfig {
         build_cluster_sketches = ReadValue<uint8_t>(reader) != 0;
     }
 
+    static void ValidateMaxClusterSize(uint32_t max_cluster_size) {
+        if (max_cluster_size > 0 && max_cluster_size < MAX_CLUSTER_SIZE_LOWER_BOUND) {
+            throw std::invalid_argument(
+                "max_cluster_size must be 0 or at least " +
+                std::to_string(MAX_CLUSTER_SIZE_LOWER_BOUND) + ", got " +
+                std::to_string(max_cluster_size)
+            );
+        }
+    }
+
     void Validate() const {
         if (num_dimensions == 0 || num_dimensions > PDX_MAX_DIMS) {
             throw std::invalid_argument(
@@ -111,13 +121,7 @@ struct PDXIndexConfig {
                 "kmeans_iters must be between 1 and 99, got " + std::to_string(kmeans_iters)
             );
         }
-        if (max_cluster_size > 0 && max_cluster_size < MAX_CLUSTER_SIZE_LOWER_BOUND) {
-            throw std::invalid_argument(
-                "max_cluster_size must be 0 or at least " +
-                std::to_string(MAX_CLUSTER_SIZE_LOWER_BOUND) + ", got " +
-                std::to_string(max_cluster_size)
-            );
-        }
+        ValidateMaxClusterSize(max_cluster_size);
         if (saq_bits_per_dimension < SAQ_MIN_BITS_PER_DIMENSION ||
             saq_bits_per_dimension > SAQ_MAX_BITS_PER_DIMENSION) {
             throw std::invalid_argument(

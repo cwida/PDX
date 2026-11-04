@@ -88,6 +88,7 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     virtual bool Delete(size_t row_id) = 0;
     // Leaves one free slot per cluster, for an index that stops receiving appends.
     virtual void ShrinkToFit() {}
+    virtual void SetMaxClusterSize(uint32_t /*max_cluster_size*/) {}
     virtual std::pair<uint32_t, uint32_t> GetRowIdMapping(size_t row_id) const = 0;
     bool Contains(size_t row_id) const { return GetRowIdMapping(row_id).first != DELETED_MARKER; }
     // Resumable search into the caller's TopKHeap (construct it thread_safe when several cursors
@@ -470,6 +471,11 @@ class PDXIndex : public IPDXIndex {
 
     void SetClusterSketchCheck(ClusterSketchCheck check) override {
         searcher->SetClusterSketchCheck(check);
+    }
+
+    void SetMaxClusterSize(uint32_t max_cluster_size) override {
+        PDXIndexConfig::ValidateMaxClusterSize(max_cluster_size);
+        config.max_cluster_size = max_cluster_size;
     }
 
     const PDX::PDXearch<Q>& GetSearcher() const { return *searcher; }
@@ -1108,7 +1114,7 @@ class PDXIndex : public IPDXIndex {
                     cluster_t::CapacityFor(cluster.num_embeddings, config.max_cluster_size)
                 );
                 index.ComputeClusterOffsets();
-            } else if (split_depth >= SPLIT_CASCADE_MAX_DEPTH) {
+            } else if (split_depth >= SPLIT_CASCADE_MAX_DEPTH || cluster.num_embeddings < 2) {
                 cluster.Grow();
                 index.ComputeClusterOffsets();
             } else {
@@ -1464,6 +1470,11 @@ class PDXIndex : public IPDXIndex {
             }
             cluster_t& cluster = index.clusters[c];
             if (cluster.GrowToFit(num_cluster_rows, config.max_cluster_size)) {
+                index.ComputeClusterOffsets();
+            }
+            // When a split fails (e.g., because it threw) we give it its free slot back
+            if (cluster.used_capacity == cluster.max_capacity && cluster.tombstones.empty()) {
+                cluster.Grow();
                 index.ComputeClusterOffsets();
             }
             const uint32_t free_slots = cluster.max_capacity - cluster.used_capacity +
