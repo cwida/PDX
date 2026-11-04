@@ -536,6 +536,11 @@ class PDXTreeIndex : public IPDXIndex {
 
     void SetNProbe(uint32_t n_probe) override { searcher->SetNProbe(n_probe); }
 
+    void SetMaxClusterSize(uint32_t max_cluster_size) override {
+        PDXIndexConfig::ValidateMaxClusterSize(max_cluster_size);
+        config.max_cluster_size = max_cluster_size;
+    }
+
     const PDX::PDXearch<Q>& GetSearcher() const { return *searcher; }
 
     uint32_t GetNumDimensions() const override { return d; }
@@ -961,7 +966,7 @@ class PDXTreeIndex : public IPDXIndex {
                     cluster_t::CapacityFor(cluster.num_embeddings, config.max_cluster_size)
                 );
                 index.ComputeClusterOffsets();
-            } else if (split_depth >= SPLIT_CASCADE_MAX_DEPTH) {
+            } else if (split_depth >= SPLIT_CASCADE_MAX_DEPTH || cluster.num_embeddings < 2) {
                 cluster.Grow();
                 index.ComputeClusterOffsets();
             } else {
@@ -1296,6 +1301,11 @@ class PDXTreeIndex : public IPDXIndex {
             }
             cluster_t& cluster = index.clusters[c];
             if (cluster.GrowToFit(num_cluster_rows, config.max_cluster_size)) {
+                index.ComputeClusterOffsets();
+            }
+            // When a split fails (e.g., because it threw) we give it its free slot back
+            if (cluster.used_capacity == cluster.max_capacity && cluster.tombstones.empty()) {
+                cluster.Grow();
                 index.ComputeClusterOffsets();
             }
             const uint32_t free_slots = cluster.max_capacity - cluster.used_capacity +
