@@ -654,7 +654,7 @@ class PDXTreeIndex : public IPDXIndex {
     PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids
     ) const {
         PDX_PROFILE_SCOPE("Search/PredicateEvaluator");
-        PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
+        PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity, GetAllocator());
         if (index.num_clusters == 0 || index.total_capacity == 0) {
             return evaluator;
         }

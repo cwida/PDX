@@ -376,8 +376,9 @@ can claim it on CPUs that lack it), else a widening `vmlal_s16`),
   the centroids (`Centroids`: the encoded centroids and their squared norms) and their decode scratch,
   `NormalizeAndRotate`, the population gathers, split/merge/reassign scratch
   (the split's A/B embeddings and ids, sized up front by `CountRowsToSteal`), `BulkAppend`'s row-id
-  arrays, `ReadRotationMatrix`, `FlatIndex::GetEmbeddings`. On the heap: the k-means centroids
-  (SuperKMeans' `Train` vector, until stored), `RowIdClusterMapping`, tombstones, `Flat` storage, per-query searcher buffers, the
+  arrays, `ReadRotationMatrix`, `FlatIndex::GetEmbeddings`, the filters (`PredicateEvaluator`: a byte
+  per slot of the index, built per filtered search or shared). On the heap: the k-means centroids
+  (SuperKMeans' `Train` vector, until stored), `RowIdClusterMapping`, tombstones, `Flat` storage, the other per-query searcher buffers, the
   single-embedding transform in `Append`, d-sized and per-cluster (k-sized) arrays, the split's
   `SplitPartition` positions and k=2 assignments, `MmapFile` and Eigen's QR internals.
   `IPDXIndex::GetAllocatedSizeInBytes()` counts the routed buffers an index keeps (cluster data, centroids,

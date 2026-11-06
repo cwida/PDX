@@ -212,7 +212,8 @@ class FlatIndex : public IPDXIndex {
     std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
         const std::vector<size_t>& passing_row_ids
     ) const override {
-        auto evaluator = std::make_unique<PredicateEvaluator>(1, index.UsedCapacity());
+        auto evaluator =
+            std::make_unique<PredicateEvaluator>(1, index.UsedCapacity(), GetAllocator());
         const auto positions = PassingPositions(passing_row_ids);
         for (const uint32_t position : *positions) {
             evaluator->selection_vector[position] = 1;

@@ -4,23 +4,29 @@
 #include <cstdio>
 #include <memory>
 
+#include "superkmeans/allocator.h"
+
 namespace PDX {
 
 class PredicateEvaluator {
 
   public:
     // Number of tuples per cluster that passed the predicate.
-    std::unique_ptr<uint32_t[]> n_passing_tuples;
+    skmeans::AllocatedBuffer<uint32_t> n_passing_tuples;
     // Contiguous array of selection vectors for each cluster.
     // [(cluster 1): 0, 1, 1, (cluster 2): 1, 1, 1, 1].
-    std::unique_ptr<uint8_t[]> selection_vector;
+    skmeans::AllocatedBuffer<uint8_t> selection_vector;
     size_t n_clusters;
     size_t total_passing_tuples = 0;
 
-    explicit PredicateEvaluator(size_t n_clusters, size_t total_num_embeddings)
+    PredicateEvaluator(
+        size_t n_clusters,
+        size_t total_num_embeddings,
+        skmeans::MemoryAllocator& allocator
+    )
         : n_clusters(n_clusters) {
-        n_passing_tuples = std::make_unique<uint32_t[]>(n_clusters);
-        selection_vector = std::make_unique<uint8_t[]>(total_num_embeddings);
+        n_passing_tuples = skmeans::AllocateZeroedBuffer<uint32_t>(allocator, n_clusters);
+        selection_vector = skmeans::AllocateZeroedBuffer<uint8_t>(allocator, total_num_embeddings);
     };
 
     std::pair<uint8_t*, uint32_t> GetSelectionVector(
