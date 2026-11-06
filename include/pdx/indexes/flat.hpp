@@ -210,7 +210,7 @@ class FlatIndex : public IPDXIndex {
 
     // One cluster: the selection vector is indexed by position.
     std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
-        Span<const size_t> passing_row_ids
+        const std::vector<size_t>& passing_row_ids
     ) const override {
         auto evaluator =
             std::make_unique<PredicateEvaluator>(1, index.UsedCapacity(), GetAllocator());
@@ -248,7 +248,8 @@ class FlatIndex : public IPDXIndex {
         );
     }
 
-    void GetEmbeddingsFromIndexByRowIds(Span<const size_t> row_ids, float* out) const override {
+    void GetEmbeddingsFromIndexByRowIds(const std::vector<size_t>& row_ids, float* out)
+        const override {
         const size_t d = config.num_dimensions;
         for (size_t i = 0; i < row_ids.size(); i++) {
             const auto [cluster_id, position] = GetRowIdMapping(row_ids[i]);
@@ -403,7 +404,8 @@ class FlatIndex : public IPDXIndex {
         }
     }
 
-    std::unique_ptr<std::vector<uint32_t>> PassingPositions(Span<const size_t> passing_row_ids
+    std::unique_ptr<std::vector<uint32_t>> PassingPositions(
+        const std::vector<size_t>& passing_row_ids
     ) const {
         auto positions = std::make_unique<std::vector<uint32_t>>();
         positions->reserve(passing_row_ids.size());

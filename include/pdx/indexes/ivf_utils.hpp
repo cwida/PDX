@@ -1219,7 +1219,7 @@ inline void GetEmbeddingsFromIndexByRowIdsImpl(
     const IVF<Q>& index,
     [[maybe_unused]] ScalarQuantizer<Q>& quantizer,
     const RowIdClusterMapping& row_id_cluster_mapping,
-    Span<const size_t> row_ids,
+    const std::vector<size_t>& row_ids,
     float* out,
     IClusterSource* cluster_source
 ) {

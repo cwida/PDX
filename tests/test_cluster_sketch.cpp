@@ -286,7 +286,7 @@ TEST(ClusterSketchMaintenanceTest, SketchesFollowTheirRowsThroughMaintenance) {
         pruner,
         static_cast<uint32_t>(D),
         [&](size_t row_id, uint8_t* sketch_row) {
-            index.GetEmbeddingsFromIndexByRowIds({&row_id, 1}, row.data());
+            index.GetEmbeddingsFromIndexByRowIds({row_id}, row.data());
             quantizer.EncodeRow(row.data(), mean.get(), sketch_row);
         }
     );

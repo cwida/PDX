@@ -216,7 +216,7 @@ class PDXTreeIndex : public IPDXIndex {
     }
 
     std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
-        Span<const size_t> passing_row_ids
+        const std::vector<size_t>& passing_row_ids
     ) const override {
         return std::make_unique<PredicateEvaluator>(CreatePredicateEvaluator(passing_row_ids));
     }
@@ -244,7 +244,8 @@ class PDXTreeIndex : public IPDXIndex {
         );
     }
 
-    void GetEmbeddingsFromIndexByRowIds(Span<const size_t> row_ids, float* out) const override {
+    void GetEmbeddingsFromIndexByRowIds(const std::vector<size_t>& row_ids, float* out)
+        const override {
         GetEmbeddingsFromIndexByRowIdsImpl<Q>(
             index,
             searcher->quantizer,
@@ -650,7 +651,8 @@ class PDXTreeIndex : public IPDXIndex {
         }
     }
 
-    PDX::PredicateEvaluator CreatePredicateEvaluator(Span<const size_t> passing_row_ids) const {
+    PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids
+    ) const {
         PDX_PROFILE_SCOPE("Search/PredicateEvaluator");
         PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity, GetAllocator());
         if (index.num_clusters == 0 || index.total_capacity == 0) {
