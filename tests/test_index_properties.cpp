@@ -122,6 +122,25 @@ TEST_P(IndexPropertiesTest, SelfManagedMemoryExcludesAllocatedBytes) {
     );
 }
 
+// A filter's buffers come from the index's allocator, and go back to it when the filter is
+// destroyed
+TEST_P(IndexPropertiesTest, PredicateEvaluatorComesFromIndexAllocator) {
+    const std::string index_type = GetParam();
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    TestUtils::CountingAllocator allocator;
+    auto index = TestUtils::BuildIndexWithConfig(
+        index_type, MakeConfigWithAllocator(d, &allocator), data.train.data(), TestUtils::N_TRAIN
+    );
+    const size_t live_bytes_before = allocator.live_bytes.load();
+    std::vector<size_t> passing_row_ids(100);
+    std::iota(passing_row_ids.begin(), passing_row_ids.end(), 0);
+    auto evaluator = index->CreateSharedPredicateEvaluator(passing_row_ids);
+    EXPECT_GE(allocator.live_bytes.load() - live_bytes_before, TestUtils::N_TRAIN);
+    evaluator.reset();
+    EXPECT_EQ(allocator.live_bytes.load(), live_bytes_before);
+}
+
 TEST(FlatIndexSizeTest, SelfManagedMemoryExcludesAllocatedBytes) {
     const size_t d = 128;
     auto data = TestUtils::LoadTestData(d);
@@ -132,6 +151,21 @@ TEST(FlatIndexSizeTest, SelfManagedMemoryExcludesAllocatedBytes) {
         index.GetSelfManagedMemorySizeInBytes() + allocator.live_bytes,
         index.GetInMemorySizeInBytes()
     );
+}
+
+TEST(FlatIndexSizeTest, PredicateEvaluatorComesFromIndexAllocator) {
+    const size_t d = 128;
+    auto data = TestUtils::LoadTestData(d);
+    TestUtils::CountingAllocator allocator;
+    PDX::FlatIndex index(MakeConfigWithAllocator(d, &allocator));
+    index.BuildIndex(data.train.data(), TestUtils::N_TRAIN);
+    const size_t live_bytes_before = allocator.live_bytes.load();
+    std::vector<size_t> passing_row_ids(100);
+    std::iota(passing_row_ids.begin(), passing_row_ids.end(), 0);
+    auto evaluator = index.CreateSharedPredicateEvaluator(passing_row_ids);
+    EXPECT_GE(allocator.live_bytes.load() - live_bytes_before, TestUtils::N_TRAIN);
+    evaluator.reset();
+    EXPECT_EQ(allocator.live_bytes.load(), live_bytes_before);
 }
 
 TEST_P(IndexPropertiesTest, KnnLargerThanDataReturnsAvailable) {

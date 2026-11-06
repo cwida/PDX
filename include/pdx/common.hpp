@@ -330,6 +330,25 @@ struct KNNCandidate {
     float distance;
 };
 
+// A view of contiguous values the caller owns, like C++20's std::span: Span<const T> only reads
+// them. A std::vector with any allocator converts to it.
+template <class T>
+class Span {
+  public:
+    Span(T* values, size_t num_values) : values(values), num_values(num_values) {}
+    template <class Allocator>
+    Span(const std::vector<std::remove_const_t<T>, Allocator>& vector)
+        : values(vector.data()), num_values(vector.size()) {}
+    size_t size() const { return num_values; }
+    T& operator[](size_t i) const { return values[i]; }
+    T* begin() const { return values; }
+    T* end() const { return values + num_values; }
+
+  private:
+    T* values;
+    size_t num_values;
+};
+
 struct VectorComparator {
     bool operator()(const KNNCandidate& a, const KNNCandidate& b) {
         return a.distance < b.distance;

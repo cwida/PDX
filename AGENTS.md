@@ -133,7 +133,7 @@ same reason (null: each cursor builds its own at its first sketch check). A curs
 
 Cursors may share one `thread_safe` `TopKHeap`. Only merges take its lock (`Start`'s full scan of the first clusters runs unlocked), and each merge ends with `PublishKthDistance(k)`; the pruning thresholds read that atomic `kth_distance` (+inf while fewer than k) without the lock, as a stale value is only looser. Every change to `heap` must be followed by `PublishKthDistance(k)` under the lock, and a heap reused for another query is reset with `Clear()`.
 
-For many queries over one filter (e.g. a LATERAL join over a partition): `CreateSharedPredicateEvaluator(passing_row_ids)` builds the filter once and `BeginIterativeSearchWithSharedEvaluator` starts each query's cursor on it (the evaluator must outlive them).
+For many queries over one filter (e.g. a LATERAL join over a partition): `CreateSharedPredicateEvaluator(passing_row_ids)` builds the filter once and `BeginIterativeSearchWithSharedEvaluator` starts each query's cursor on it (the evaluator must outlive them). It and `GetEmbeddingsFromIndexByRowIds` take the row ids as a `Span<const size_t>` (`common.hpp`, like C++20's `std::span`), to which a `std::vector` with any allocator converts: a caller can keep them in its own memory.
 
 Single-shot `Search`/`FilteredSearch` are thin wrappers: a non-thread-safe `TopKHeap`, one cursor over the n_probe-clamped ranking. Note: The tree's meso-cluster (L0) layer is not supported by cursors or by `FilteredSearch`. Both rank all leaf centroids flat, so a tree cursor is a vanilla IVF search over the tree's leaves.
 
@@ -376,8 +376,9 @@ can claim it on CPUs that lack it), else a widening `vmlal_s16`),
   the centroids (`Centroids`: the encoded centroids and their squared norms) and their decode scratch,
   `NormalizeAndRotate`, the population gathers, split/merge/reassign scratch
   (the split's A/B embeddings and ids, sized up front by `CountRowsToSteal`), `BulkAppend`'s row-id
-  arrays, `ReadRotationMatrix`, `FlatIndex::GetEmbeddings`. On the heap: the k-means centroids
-  (SuperKMeans' `Train` vector, until stored), `RowIdClusterMapping`, tombstones, `Flat` storage, per-query searcher buffers, the
+  arrays, `ReadRotationMatrix`, `FlatIndex::GetEmbeddings`, the filters (`PredicateEvaluator`: a byte
+  per slot of the index, built per filtered search or shared). On the heap: the k-means centroids
+  (SuperKMeans' `Train` vector, until stored), `RowIdClusterMapping`, tombstones, `Flat` storage, the other per-query searcher buffers, the
   single-embedding transform in `Append`, d-sized and per-cluster (k-sized) arrays, the split's
   `SplitPartition` positions and k=2 assignments, `MmapFile` and Eigen's QR internals.
   `IPDXIndex::GetAllocatedSizeInBytes()` counts the routed buffers an index keeps (cluster data, centroids,

@@ -115,7 +115,7 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     ) const = 0;
     // Builds the evaluator of passing_row_ids once, for the filtered searches of many queries.
     virtual std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
-        const std::vector<size_t>& passing_row_ids
+        Span<const size_t> passing_row_ids
     ) const = 0;
     // BeginIterativeSearch filtered by an evaluator from CreateSharedPredicateEvaluator, which must
     // outlive the cursor.
@@ -132,8 +132,7 @@ class IPDXIndex : public skmeans::ExecutorHolder, public skmeans::AllocatorHolde
     // Writes the embeddings of row_ids as the index stores them (normalized and rotated; u8
     // dequantized), row-major into out (row_ids.size() x num_dimensions), in the order of row_ids.
     // Every row id must be in the index.
-    virtual void GetEmbeddingsFromIndexByRowIds(const std::vector<size_t>& row_ids, float* out)
-        const = 0;
+    virtual void GetEmbeddingsFromIndexByRowIds(Span<const size_t> row_ids, float* out) const = 0;
     // The query's distance to each centroid, unsorted (out holds GetNumClusters() floats), to rank
     // the clusters of several indexes together. Flat: its one centroid is the mean of its live
     // embeddings.
@@ -403,7 +402,7 @@ class PDXIndex : public IPDXIndex {
     }
 
     std::unique_ptr<PredicateEvaluator> CreateSharedPredicateEvaluator(
-        const std::vector<size_t>& passing_row_ids
+        Span<const size_t> passing_row_ids
     ) const override {
         return std::make_unique<PredicateEvaluator>(CreatePredicateEvaluator(passing_row_ids));
     }
@@ -432,8 +431,7 @@ class PDXIndex : public IPDXIndex {
         );
     }
 
-    void GetEmbeddingsFromIndexByRowIds(const std::vector<size_t>& row_ids, float* out)
-        const override {
+    void GetEmbeddingsFromIndexByRowIds(Span<const size_t> row_ids, float* out) const override {
         GetEmbeddingsFromIndexByRowIdsImpl<Q>(
             index,
             searcher->quantizer,
@@ -1048,10 +1046,9 @@ class PDXIndex : public IPDXIndex {
         }
     }
 
-    PDX::PredicateEvaluator CreatePredicateEvaluator(const std::vector<size_t>& passing_row_ids
-    ) const {
+    PDX::PredicateEvaluator CreatePredicateEvaluator(Span<const size_t> passing_row_ids) const {
         PDX_PROFILE_SCOPE("PredicateEvaluator");
-        PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity);
+        PDX::PredicateEvaluator evaluator(index.num_clusters, index.total_capacity, GetAllocator());
         if (index.num_clusters == 0 || index.total_capacity == 0) {
             return evaluator;
         }
